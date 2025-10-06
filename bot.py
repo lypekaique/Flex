@@ -126,6 +126,7 @@ class FlexGuideView(discord.ui.View):
                 "`/configurar comandos #canal` - Definir canal de comandos\n"
                 "`/configurar alertas #canal` - Canal de alertas\n"
                 "`/configurar partidas #canal` - Canal de partidas\n"
+                "`/configurar live #canal` - Canal de live tracking\n"
                 "• Admins podem usar comandos em **qualquer lugar**\n"
                 "• Usuários comuns só no **canal configurado**"
             ),
@@ -253,6 +254,9 @@ async def on_ready():
     
     # Inicia verificação de partidas
     check_new_matches.start()
+    
+    # Inicia verificação de live games
+    check_live_games.start()
 
 # Auto-complete para regiões
 async def region_autocomplete(
@@ -629,6 +633,7 @@ async def config_type_autocomplete(
         ('🔔 Alertas - Notificações de performance', 'alertas'),
         ('🎮 Partidas - Notificações de jogos', 'partidas'),
         ('💬 Comandos - Canal onde usuários podem usar comandos', 'comandos'),
+        ('🔴 Live - Notificações de partidas ao vivo', 'live'),
     ]
     return [
         app_commands.Choice(name=name, value=value)
@@ -638,7 +643,7 @@ async def config_type_autocomplete(
 
 @bot.tree.command(name="configurar", description="⚙️ [ADMIN] Configure os canais do bot ou veja a configuração atual")
 @app_commands.describe(
-    tipo="Tipo de configuração: alertas, partidas ou comandos (deixe vazio para ver config atual)",
+    tipo="Tipo de configuração: alertas, partidas, comandos ou live (deixe vazio para ver config atual)",
     canal="Canal onde serão enviadas as mensagens (obrigatório se tipo for especificado)"
 )
 @app_commands.autocomplete(tipo=config_type_autocomplete)
@@ -698,6 +703,19 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
                     value="❌ Não configurado",
                     inline=False
                 )
+            
+            if config['live_game_channel_id']:
+                embed.add_field(
+                    name="🔴 Canal de Partidas Ao Vivo",
+                    value=f"<#{config['live_game_channel_id']}>\nNotificações quando jogadores entrarem em partida serão enviadas aqui.",
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="🔴 Canal de Partidas Ao Vivo",
+                    value="❌ Não configurado",
+                    inline=False
+                )
         else:
             embed.description = "❌ Nenhuma configuração encontrada para este servidor."
         
@@ -717,9 +735,9 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
     channel_id = str(canal.id)
     tipo = tipo.lower()
     
-    if tipo not in ['alertas', 'partidas', 'comandos']:
+    if tipo not in ['alertas', 'partidas', 'comandos', 'live']:
         await interaction.followup.send(
-            "❌ Tipo inválido! Use: `alertas`, `partidas` ou `comandos`",
+            "❌ Tipo inválido! Use: `alertas`, `partidas`, `comandos` ou `live`",
             ephemeral=True
         )
         return
@@ -768,7 +786,7 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
             await interaction.followup.send("❌ Erro ao configurar canal.", ephemeral=True)
             return
     
-    else:  # comandos
+    elif tipo == 'comandos':
         success = db.set_command_channel(guild_id, channel_id)
         if success:
             embed = discord.Embed(
@@ -782,6 +800,30 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
                     "• **Usuários comuns** podem usar comandos apenas neste canal\n"
                     "• **Administradores** podem usar comandos em qualquer lugar\n"
                     "• Isso organiza melhor o uso do bot no servidor!"
+                ),
+                inline=False
+            )
+        else:
+            await interaction.followup.send("❌ Erro ao configurar canal.", ephemeral=True)
+            return
+    
+    else:  # live
+        success = db.set_live_game_channel(guild_id, channel_id)
+        if success:
+            embed = discord.Embed(
+                title="✅ Canal de Partidas Ao Vivo Configurado!",
+                description=f"Notificações de live games serão enviadas em {canal.mention}",
+                color=discord.Color.red()
+            )
+            embed.add_field(
+                name="🔴 O que será notificado?",
+                value=(
+                    "• Quando um jogador **entrar em partida**\n"
+                    "• **Champion e Role** do jogador\n"
+                    "• **Modo de jogo** (Ranked Flex, Solo/Duo, etc)\n"
+                    "• **Composição dos times**\n"
+                    "• Link para **op.gg** e trackers\n"
+                    "• Verificado a cada 2 minutos"
                 ),
                 inline=False
             )
@@ -808,6 +850,11 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
             config_text += f"🎮 Partidas: <#{config['match_channel_id']}>\n"
         else:
             config_text += "🎮 Partidas: Não configurado\n"
+        
+        if config['live_game_channel_id']:
+            config_text += f"🔴 Live: <#{config['live_game_channel_id']}>\n"
+        else:
+            config_text += "🔴 Live: Não configurado\n"
     
     embed.add_field(name="⚙️ Status do Servidor", value=config_text, inline=False)
     embed.set_footer(text="Use /configurar para ver todas as configurações")
@@ -1198,6 +1245,190 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
     
     except Exception as e:
         print(f"Erro ao verificar performance: {e}")
+
+async def send_live_game_notification(lol_account_id: int, live_info: Dict):
+    """Envia notificação quando um jogador entra em partida ao vivo"""
+    try:
+        # Busca informações da conta
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT discord_id, summoner_name, region FROM lol_accounts
+            WHERE id = ?
+        ''', (lol_account_id,))
+        account_info = cursor.fetchone()
+        conn.close()
+        
+        if not account_info:
+            return
+        
+        discord_id, summoner_name, region = account_info
+        
+        # Busca todos os servidores onde está o bot
+        for guild in bot.guilds:
+            # Verifica se o usuário está nesse servidor
+            member = guild.get_member(int(discord_id))
+            if not member:
+                continue
+            
+            # Busca canal de live games configurado
+            channel_id = db.get_live_game_channel(str(guild.id))
+            if not channel_id:
+                continue
+            
+            # Busca o canal
+            channel = guild.get_channel(int(channel_id))
+            if not channel:
+                continue
+            
+            # Determina cor baseada no modo de jogo
+            queue_id = live_info.get('queueId', 0)
+            if queue_id == 440:  # Ranked Flex
+                color = discord.Color.gold()
+            elif queue_id == 420:  # Ranked Solo/Duo
+                color = discord.Color.purple()
+            else:
+                color = discord.Color.blue()
+            
+            # Cria embed
+            embed = discord.Embed(
+                title="🔴 PARTIDA AO VIVO!",
+                description=f"{member.mention} **entrou em partida!**",
+                color=color,
+                timestamp=datetime.now()
+            )
+            
+            # Informações principais
+            embed.add_field(
+                name="🎮 Modo de Jogo",
+                value=f"**{live_info['gameMode']}**",
+                inline=True
+            )
+            
+            embed.add_field(
+                name="🏆 Campeão",
+                value=f"**{live_info['champion']}**",
+                inline=True
+            )
+            
+            # Calcula tempo de jogo
+            game_length = live_info.get('gameLength', 0)
+            game_time_min = game_length // 60
+            game_time_sec = game_length % 60
+            
+            embed.add_field(
+                name="⏱️ Tempo de Jogo",
+                value=f"**{game_time_min}:{game_time_sec:02d}**",
+                inline=True
+            )
+            
+            # Composições de time
+            team_100 = live_info.get('team_100', [])
+            team_200 = live_info.get('team_200', [])
+            
+            if team_100:
+                team_100_text = "\n".join([f"• **{p['champion']}** - {p['summonerName']}" for p in team_100[:5]])
+                embed.add_field(
+                    name="🔵 Time Azul",
+                    value=team_100_text,
+                    inline=True
+                )
+            
+            if team_200:
+                team_200_text = "\n".join([f"• **{p['champion']}** - {p['summonerName']}" for p in team_200[:5]])
+                embed.add_field(
+                    name="🔴 Time Vermelho",
+                    value=team_200_text,
+                    inline=True
+                )
+            
+            # Links úteis
+            region_map = {
+                'br1': 'br', 'na1': 'na', 'euw1': 'euw', 'eun1': 'eune',
+                'kr': 'kr', 'jp1': 'jp', 'la1': 'lan', 'la2': 'las',
+                'oc1': 'oce', 'tr1': 'tr', 'ru': 'ru'
+            }
+            region_short = region_map.get(region.lower(), region.lower())
+            
+            # Remove #TAG do summoner name para os links
+            summoner_clean = summoner_name.split('#')[0] if '#' in summoner_name else summoner_name
+            
+            links = f"""
+[OP.GG](https://www.op.gg/summoners/{region_short}/{summoner_clean}) • 
+[U.GG](https://u.gg/lol/profile/{region_short}/{summoner_clean}/overview) • 
+[Porofessor](https://porofessor.gg/live/{region_short}/{summoner_clean})
+            """
+            
+            embed.add_field(
+                name="📊 Live Trackers",
+                value=links.strip(),
+                inline=False
+            )
+            
+            embed.set_thumbnail(url=member.display_avatar.url)
+            embed.set_footer(
+                text=f"{summoner_name} • {region.upper()}",
+                icon_url="https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-shared-components/global/default/ranked-emblem-flex.png"
+            )
+            
+            # Envia notificação
+            try:
+                await channel.send(embed=embed)
+                print(f"🔴 Live game: {summoner_name} - {live_info['champion']} ({live_info['gameMode']})")
+            except Exception as e:
+                print(f"Erro ao enviar notificação de live game: {e}")
+    
+    except Exception as e:
+        print(f"Erro ao processar notificação de live game: {e}")
+
+@tasks.loop(minutes=2)
+async def check_live_games():
+    """Task que verifica se jogadores estão em partidas ao vivo a cada 2 minutos"""
+    try:
+        # Limpa notificações antigas (mais de 6 horas)
+        db.cleanup_old_live_game_notifications(hours=6)
+        
+        # Busca todas as contas vinculadas
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT id, puuid, region FROM lol_accounts')
+        accounts = cursor.fetchall()
+        conn.close()
+        
+        for account_id, puuid, region in accounts:
+            try:
+                # Busca se está em partida ativa
+                game_data = await riot_api.get_active_game(puuid, region)
+                
+                if game_data:
+                    game_id = str(game_data.get('gameId'))
+                    
+                    # Verifica se já foi notificado
+                    if not db.is_live_game_notified(account_id, game_id):
+                        # Extrai informações
+                        live_info = riot_api.extract_live_game_info(game_data, puuid)
+                        
+                        if live_info:
+                            # Envia notificação
+                            await send_live_game_notification(account_id, live_info)
+                            
+                            # Marca como notificado
+                            db.mark_live_game_notified(account_id, game_id)
+                
+                # Delay para não sobrecarregar a API
+                await asyncio.sleep(0.5)
+                
+            except Exception as e:
+                print(f"Erro ao verificar live game para conta {account_id}: {e}")
+                continue
+    
+    except Exception as e:
+        print(f"Erro ao verificar live games: {e}")
+
+@check_live_games.before_loop
+async def before_check_live_games():
+    """Espera o bot estar pronto antes de iniciar o loop de live games"""
+    await bot.wait_until_ready()
 
 @tasks.loop(minutes=5)
 async def check_new_matches():

@@ -122,6 +122,138 @@ class RiotAPI:
                 print(f"Erro ao buscar detalhes da partida: {e}")
                 return None
     
+    async def get_active_game(self, puuid: str, region: str = 'br1') -> Optional[Dict]:
+        """Busca informações de partida em andamento (Spectator API)"""
+        if region not in self.REGIONS:
+            return None
+        
+        url = f"https://{self.REGIONS[region]}/lol/spectator/v5/active-games/by-summoner/{puuid}"
+        
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.get(url, headers=self.headers) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    elif response.status == 404:
+                        # Jogador não está em partida
+                        return None
+                    else:
+                        print(f"Erro ao buscar partida ativa: {response.status}")
+                        return None
+            except Exception as e:
+                print(f"Erro ao buscar partida ativa: {e}")
+                return None
+    
+    def extract_live_game_info(self, game_data: Dict, puuid: str) -> Optional[Dict]:
+        """Extrai informações relevantes de uma partida ao vivo"""
+        try:
+            # Encontra o participante
+            participant = None
+            for p in game_data.get('participants', []):
+                if p.get('puuid') == puuid:
+                    participant = p
+                    break
+            
+            if not participant:
+                return None
+            
+            # Mapeamento de game mode
+            game_modes = {
+                440: 'Ranked Flex',
+                420: 'Ranked Solo/Duo',
+                400: 'Normal Draft',
+                430: 'Normal Blind',
+                450: 'ARAM',
+            }
+            
+            queue_id = game_data.get('gameQueueConfigId', 0)
+            game_mode = game_modes.get(queue_id, f'Queue {queue_id}')
+            
+            # Mapeamento de roles
+            role_names = {
+                'TOP': 'Top',
+                'JUNGLE': 'Jungle',
+                'MIDDLE': 'Mid',
+                'BOTTOM': 'ADC',
+                'UTILITY': 'Support'
+            }
+            
+            # Pega informações dos times
+            team_100 = []
+            team_200 = []
+            
+            for p in game_data.get('participants', []):
+                player_info = {
+                    'summonerName': p.get('riotId', p.get('summonerName', 'Unknown')),
+                    'championId': p.get('championId', 0),
+                    'champion': self.get_champion_name(p.get('championId', 0))
+                }
+                
+                if p.get('teamId') == 100:
+                    team_100.append(player_info)
+                else:
+                    team_200.append(player_info)
+            
+            live_info = {
+                'gameId': game_data.get('gameId'),
+                'gameMode': game_mode,
+                'queueId': queue_id,
+                'champion': self.get_champion_name(participant.get('championId', 0)),
+                'championId': participant.get('championId', 0),
+                'summonerName': participant.get('riotId', participant.get('summonerName', 'Unknown')),
+                'teamId': participant.get('teamId', 100),
+                'gameLength': game_data.get('gameLength', 0),  # Em segundos
+                'gameStartTime': game_data.get('gameStartTime', 0),
+                'team_100': team_100,
+                'team_200': team_200,
+                'bannedChampions': [self.get_champion_name(b.get('championId', 0)) for b in game_data.get('bannedChampions', [])],
+            }
+            
+            return live_info
+        except Exception as e:
+            print(f"Erro ao extrair informações de live game: {e}")
+            return None
+    
+    def get_champion_name(self, champion_id: int) -> str:
+        """Retorna nome do campeão pelo ID (mapeamento básico)"""
+        # Mapeamento de alguns campeões mais comuns - pode ser expandido
+        champions = {
+            1: 'Annie', 2: 'Olaf', 3: 'Galio', 4: 'TwistedFate', 5: 'XinZhao',
+            6: 'Urgot', 7: 'LeBlanc', 8: 'Vladimir', 9: 'Fiddlesticks', 10: 'Kayle',
+            11: 'MasterYi', 12: 'Alistar', 13: 'Ryze', 14: 'Sion', 15: 'Sivir',
+            16: 'Soraka', 17: 'Teemo', 18: 'Tristana', 19: 'Warwick', 20: 'Nunu',
+            21: 'MissFortune', 22: 'Ashe', 23: 'Tryndamere', 24: 'Jax', 25: 'Morgana',
+            26: 'Zilean', 27: 'Singed', 28: 'Evelynn', 29: 'Twitch', 30: 'Karthus',
+            31: 'Chogath', 32: 'Amumu', 33: 'Rammus', 34: 'Anivia', 35: 'Shaco',
+            36: 'DrMundo', 37: 'Sona', 38: 'Kassadin', 39: 'Irelia', 40: 'Janna',
+            41: 'Gangplank', 42: 'Corki', 43: 'Karma', 44: 'Taric', 45: 'Veigar',
+            48: 'Trundle', 50: 'Swain', 51: 'Caitlyn', 53: 'Blitzcrank', 54: 'Malphite',
+            55: 'Katarina', 56: 'Nocturne', 57: 'Maokai', 58: 'Renekton', 59: 'JarvanIV',
+            60: 'Elise', 61: 'Orianna', 62: 'Wukong', 63: 'Brand', 64: 'LeeSin',
+            67: 'Vayne', 68: 'Rumble', 69: 'Cassiopeia', 72: 'Skarner', 74: 'Heimerdinger',
+            75: 'Nasus', 76: 'Nidalee', 77: 'Udyr', 78: 'Poppy', 79: 'Gragas',
+            80: 'Pantheon', 81: 'Ezreal', 82: 'Mordekaiser', 83: 'Yorick', 84: 'Akali',
+            85: 'Kennen', 86: 'Garen', 89: 'Leona', 90: 'Malzahar', 91: 'Talon',
+            92: 'Riven', 96: 'KogMaw', 98: 'Shen', 99: 'Lux', 101: 'Xerath',
+            102: 'Shyvana', 103: 'Ahri', 104: 'Graves', 105: 'Fizz', 106: 'Volibear',
+            107: 'Rengar', 110: 'Varus', 111: 'Nautilus', 112: 'Viktor', 113: 'Sejuani',
+            114: 'Fiora', 115: 'Ziggs', 117: 'Lulu', 119: 'Draven', 120: 'Hecarim',
+            121: 'Khazix', 122: 'Darius', 126: 'Jayce', 127: 'Lissandra', 131: 'Diana',
+            133: 'Quinn', 134: 'Syndra', 136: 'AurelionSol', 141: 'Kayn', 142: 'Zoe',
+            143: 'Zyra', 145: 'Kaisa', 147: 'Seraphine', 150: 'Gnar', 154: 'Zac',
+            157: 'Yasuo', 161: 'Velkoz', 163: 'Taliyah', 164: 'Camille', 166: 'Akshan',
+            200: 'Belveth', 201: 'Braum', 202: 'Jhin', 203: 'Kindred', 221: 'Zeri',
+            222: 'Jinx', 223: 'TahmKench', 234: 'Viego', 235: 'Senna', 236: 'Lucian',
+            238: 'Zed', 240: 'Kled', 245: 'Ekko', 246: 'Qiyana', 254: 'Vi',
+            266: 'Aatrox', 267: 'Nami', 268: 'Azir', 350: 'Yuumi', 360: 'Samira',
+            412: 'Thresh', 420: 'Illaoi', 421: 'RekSai', 427: 'Ivern', 429: 'Kalista',
+            432: 'Bard', 497: 'Rakan', 498: 'Xayah', 516: 'Ornn', 517: 'Sylas',
+            518: 'Neeko', 523: 'Aphelios', 526: 'Rell', 555: 'Pyke', 875: 'Sett',
+            876: 'Lillia', 887: 'Gwen', 888: 'Renata', 895: 'Nilah', 897: 'KSante',
+            902: 'Milio', 910: 'Hwei', 950: 'Naafiri',
+        }
+        return champions.get(champion_id, f'Champion{champion_id}')
+    
     def normalize(self, value: float, min_val: float, max_val: float) -> float:
         """Normaliza um valor entre 0 e 1"""
         if max_val == min_val:
@@ -145,15 +277,17 @@ class RiotAPI:
             role = stats.get('individualPosition', 'MIDDLE')
         
         # Dados do jogador
-        kills = stats['kills']
-        deaths = max(stats['deaths'], 1)  # Evita divisão por zero
-        assists = stats['assists']
-        damage_dealt = stats['totalDamageDealtToChampions']
-        gold_earned = max(stats['goldEarned'], 1)
-        cs = stats['totalMinionsKilled'] + stats.get('neutralMinionsKilled', 0)
-        vision_score = stats['visionScore']
-        game_duration = max(stats['gameDuration'] / 60, 1)  # em minutos
-        win = stats['win']
+        kills = stats.get('kills', 0)
+        deaths = max(stats.get('deaths', 1), 1)  # Evita divisão por zero
+        assists = stats.get('assists', 0)
+        damage_dealt = stats.get('totalDamageDealtToChampions', 0)
+        gold_earned = max(stats.get('goldEarned', 1), 1)
+        cs = stats.get('totalMinionsKilled', 0) + stats.get('neutralMinionsKilled', 0)
+        vision_score = stats.get('visionScore', 0)
+        # Trata gameDuration que pode estar ausente ou em formatos diferentes
+        game_duration_raw = stats.get('gameDuration', stats.get('game_duration', 1800))
+        game_duration = max(game_duration_raw / 60, 1) if game_duration_raw else 30  # em minutos
+        win = stats.get('win', False)
         
         # Objetivos
         turret_kills = stats.get('turretKills', 0)
@@ -297,26 +431,31 @@ class RiotAPI:
             }
             role_display = role_names.get(role, role)
             
+            # Extrai game duration com fallback para diferentes formatos
+            game_duration = match_data['info'].get('gameDuration')
+            if game_duration is None:
+                game_duration = match_data['info'].get('game_duration', 1800)
+            
             # Extrai informações relevantes
             stats = {
                 'match_id': match_data['metadata']['matchId'],
-                'game_mode': match_data['info']['gameMode'],
-                'champion_name': participant['championName'],
+                'game_mode': match_data['info'].get('gameMode', 'CLASSIC'),
+                'champion_name': participant.get('championName', 'Unknown'),
                 'role': role_display,
-                'kills': participant['kills'],
-                'deaths': participant['deaths'],
-                'assists': participant['assists'],
-                'damage_dealt': participant['totalDamageDealtToChampions'],
-                'damage_taken': participant['totalDamageTaken'],
-                'gold_earned': participant['goldEarned'],
-                'cs': participant['totalMinionsKilled'] + participant.get('neutralMinionsKilled', 0),
-                'vision_score': participant['visionScore'],
-                'game_duration': match_data['info']['gameDuration'],
-                'win': participant['win'],
+                'kills': participant.get('kills', 0),
+                'deaths': participant.get('deaths', 0),
+                'assists': participant.get('assists', 0),
+                'damage_dealt': participant.get('totalDamageDealtToChampions', 0),
+                'damage_taken': participant.get('totalDamageTaken', 0),
+                'gold_earned': participant.get('goldEarned', 0),
+                'cs': participant.get('totalMinionsKilled', 0) + participant.get('neutralMinionsKilled', 0),
+                'vision_score': participant.get('visionScore', 0),
+                'game_duration': game_duration,
+                'win': participant.get('win', False),
                 'carry_score': carry_score,
-                'kda': round((participant['kills'] + participant['assists']) / max(participant['deaths'], 1), 2),
-                'kill_participation': round((participant['kills'] + participant['assists']) / max(team_kills, 1) * 100, 1),
-                'played_at': datetime.fromtimestamp(match_data['info']['gameStartTimestamp'] / 1000).isoformat()
+                'kda': round((participant.get('kills', 0) + participant.get('assists', 0)) / max(participant.get('deaths', 1), 1), 2),
+                'kill_participation': round((participant.get('kills', 0) + participant.get('assists', 0)) / max(team_kills, 1) * 100, 1),
+                'played_at': datetime.fromtimestamp(match_data['info'].get('gameStartTimestamp', 0) / 1000).isoformat() if match_data['info'].get('gameStartTimestamp') else datetime.now().isoformat()
             }
             
             return stats

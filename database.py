@@ -87,8 +87,21 @@ class Database:
                 notification_channel_id TEXT,
                 match_channel_id TEXT,
                 command_channel_id TEXT,
+                live_game_channel_id TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Tabela para rastrear partidas ao vivo já notificadas
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS live_games_notified (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                lol_account_id INTEGER NOT NULL,
+                game_id TEXT NOT NULL,
+                notified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (lol_account_id) REFERENCES lol_accounts(id),
+                UNIQUE(lol_account_id, game_id)
             )
         ''')
         
@@ -377,12 +390,102 @@ class Database:
         conn.close()
         return result[0] if result else None
     
+    def set_live_game_channel(self, guild_id: str, channel_id: str) -> bool:
+        """Define o canal de live games para um servidor"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Verifica se já existe configuração
+            cursor.execute('SELECT guild_id FROM server_configs WHERE guild_id = ?', (guild_id,))
+            exists = cursor.fetchone()
+            
+            if exists:
+                cursor.execute('''
+                    UPDATE server_configs 
+                    SET live_game_channel_id = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE guild_id = ?
+                ''', (channel_id, guild_id))
+            else:
+                cursor.execute('''
+                    INSERT INTO server_configs (guild_id, live_game_channel_id, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                ''', (guild_id, channel_id))
+            
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Erro ao configurar canal de live games: {e}")
+            return False
+    
+    def get_live_game_channel(self, guild_id: str) -> Optional[str]:
+        """Retorna o canal de live games configurado para um servidor"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT live_game_channel_id FROM server_configs
+            WHERE guild_id = ?
+        ''', (guild_id,))
+        
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else None
+    
+    def is_live_game_notified(self, lol_account_id: int, game_id: str) -> bool:
+        """Verifica se uma live game já foi notificada"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id FROM live_games_notified
+            WHERE lol_account_id = ? AND game_id = ?
+        ''', (lol_account_id, game_id))
+        
+        result = cursor.fetchone()
+        conn.close()
+        return result is not None
+    
+    def mark_live_game_notified(self, lol_account_id: int, game_id: str) -> bool:
+        """Marca uma live game como notificada"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR IGNORE INTO live_games_notified (lol_account_id, game_id)
+                VALUES (?, ?)
+            ''', (lol_account_id, game_id))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Erro ao marcar live game como notificada: {e}")
+            return False
+    
+    def cleanup_old_live_game_notifications(self, hours: int = 24) -> bool:
+        """Remove notificações de live games antigas (padrão: 24h)"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                DELETE FROM live_games_notified
+                WHERE notified_at < datetime('now', '-' || ? || ' hours')
+            ''', (hours,))
+            conn.commit()
+            deleted = cursor.rowcount
+            conn.close()
+            if deleted > 0:
+                print(f"🧹 Limpeza: {deleted} notificações antigas removidas")
+            return True
+        except Exception as e:
+            print(f"Erro ao limpar notificações antigas: {e}")
+            return False
+    
     def get_server_config(self, guild_id: str) -> Optional[Dict]:
         """Retorna todas as configurações de um servidor"""
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT notification_channel_id, match_channel_id, command_channel_id FROM server_configs
+            SELECT notification_channel_id, match_channel_id, command_channel_id, live_game_channel_id FROM server_configs
             WHERE guild_id = ?
         ''', (guild_id,))
         
@@ -393,7 +496,8 @@ class Database:
             return {
                 'notification_channel_id': result[0],
                 'match_channel_id': result[1],
-                'command_channel_id': result[2]
+                'command_channel_id': result[2],
+                'live_game_channel_id': result[3]
             }
         return None
     
