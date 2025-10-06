@@ -40,11 +40,37 @@ async def on_ready():
     # Inicia verificação de partidas
     check_new_matches.start()
 
-@bot.tree.command(name="logar", description="Vincule sua conta do League of Legends (use formato: Nome#TAG)")
+# Auto-complete para regiões
+async def region_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> list[app_commands.Choice[str]]:
+    """Auto-complete para seleção de região"""
+    regions = [
+        ('🇧🇷 Brasil (br1)', 'br1'),
+        ('🇺🇸 América do Norte (na1)', 'na1'),
+        ('🇪🇺 Europa Ocidental (euw1)', 'euw1'),
+        ('🇪🇺 Europa Nórdica (eun1)', 'eun1'),
+        ('🇰🇷 Coreia (kr)', 'kr'),
+        ('🇯🇵 Japão (jp1)', 'jp1'),
+        ('🇲🇽 América Latina Norte (la1)', 'la1'),
+        ('🇦🇷 América Latina Sul (la2)', 'la2'),
+        ('🇦🇺 Oceania (oc1)', 'oc1'),
+        ('🇹🇷 Turquia (tr1)', 'tr1'),
+        ('🇷🇺 Rússia (ru)', 'ru'),
+    ]
+    return [
+        app_commands.Choice(name=name, value=value)
+        for name, value in regions
+        if current.lower() in name.lower() or current.lower() in value.lower()
+    ][:25]  # Discord limita a 25 opções
+
+@bot.tree.command(name="logar", description="🎮 Vincule sua conta do League of Legends ao bot")
 @app_commands.describe(
-    riot_id="Seu Riot ID no formato Nome#TAG (ex: Faker#KR1)",
-    regiao="Região do servidor (ex: br1, na1, euw1)"
+    riot_id="Seu Riot ID no formato Nome#TAG (ex: Faker#KR1 ou SeuNick#BR1)",
+    regiao="Selecione a região do seu servidor"
 )
+@app_commands.autocomplete(regiao=region_autocomplete)
 async def logar(interaction: discord.Interaction, riot_id: str, regiao: str = DEFAULT_REGION):
     """Comando para vincular conta do LOL usando Riot ID (nome#tag)"""
     await interaction.response.defer(ephemeral=True)
@@ -91,6 +117,16 @@ async def logar(interaction: discord.Interaction, riot_id: str, regiao: str = DE
         )
         return
     
+    # Verifica se os dados necessários existem
+    if 'id' not in summoner or 'accountId' not in summoner:
+        await interaction.followup.send(
+            f"❌ Erro ao buscar dados completos do invocador.\n"
+            f"Resposta da API incompleta. Tente novamente em alguns instantes.",
+            ephemeral=True
+        )
+        print(f"Erro: Summoner data incompleto: {summoner}")
+        return
+    
     # Adiciona conta ao banco de dados
     discord_id = str(interaction.user.id)
     success, message = db.add_lol_account(
@@ -125,7 +161,7 @@ async def logar(interaction: discord.Interaction, riot_id: str, regiao: str = DE
     else:
         await interaction.followup.send(f"❌ {message}", ephemeral=True)
 
-@bot.tree.command(name="contas", description="Veja suas contas vinculadas do League of Legends")
+@bot.tree.command(name="contas", description="📋 Veja todas as suas contas vinculadas")
 async def contas(interaction: discord.Interaction):
     """Lista todas as contas vinculadas do usuário"""
     await interaction.response.defer(ephemeral=True)
@@ -156,7 +192,7 @@ async def contas(interaction: discord.Interaction):
     
     await interaction.followup.send(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="media", description="Veja a média do seu carry score no mês")
+@bot.tree.command(name="media", description="📊 Veja suas estatísticas e média de carry score do mês")
 @app_commands.describe(
     conta="Número da conta (1, 2 ou 3). Deixe vazio para ver todas"
 )
@@ -269,7 +305,7 @@ async def media(interaction: discord.Interaction, conta: int = None):
     embed.set_footer(text="Apenas partidas de Ranked Flex são contabilizadas")
     await interaction.followup.send(embed=embed)
 
-@bot.tree.command(name="historico", description="Veja o histórico detalhado de partidas")
+@bot.tree.command(name="historico", description="📜 Veja seu histórico detalhado de partidas recentes")
 @app_commands.describe(
     conta="Número da conta (1, 2 ou 3)",
     quantidade="Quantidade de partidas para mostrar (padrão: 5)"
@@ -352,11 +388,28 @@ async def historico(interaction: discord.Interaction, conta: int = 1, quantidade
     
     await interaction.followup.send(embed=embed)
 
-@bot.tree.command(name="configurar", description="[ADMIN] Configure os canais do bot")
+# Auto-complete para tipo de configuração
+async def config_type_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> list[app_commands.Choice[str]]:
+    """Auto-complete para tipos de configuração"""
+    types = [
+        ('🔔 Alertas - Notificações de performance', 'alertas'),
+        ('🎮 Partidas - Notificações de jogos', 'partidas'),
+    ]
+    return [
+        app_commands.Choice(name=name, value=value)
+        for name, value in types
+        if current.lower() in name.lower() or current.lower() in value.lower()
+    ]
+
+@bot.tree.command(name="configurar", description="⚙️ [ADMIN] Configure os canais de notificação do bot")
 @app_commands.describe(
     tipo="Tipo de configuração: alertas (performance ruim) ou partidas (quando termina partida)",
     canal="Canal onde serão enviadas as mensagens"
 )
+@app_commands.autocomplete(tipo=config_type_autocomplete)
 @app_commands.checks.has_permissions(administrator=True)
 async def configurar(interaction: discord.Interaction, tipo: str, canal: discord.TextChannel):
     """Configura os canais do bot (apenas administradores)"""
@@ -436,7 +489,7 @@ async def configurar(interaction: discord.Interaction, tipo: str, canal: discord
     embed.set_footer(text="Use /configurar alertas #canal ou /configurar partidas #canal")
     await interaction.followup.send(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="tops_flex", description="Veja o ranking dos melhores jogadores do mês")
+@bot.tree.command(name="tops_flex", description="🏆 Veja o ranking dos melhores jogadores de Flex do mês")
 @app_commands.describe(
     quantidade="Quantidade de jogadores no ranking (padrão: 10)"
 )
@@ -510,6 +563,218 @@ async def tops_flex(interaction: discord.Interaction, quantidade: int = 10):
     
     embed.set_footer(text="Apenas Ranked Flex • Atualizado em tempo real")
     await interaction.followup.send(embed=embed)
+
+# View com botões persistentes para o comando /flex
+class FlexGuideView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)  # Timeout None = persistente
+    
+    @discord.ui.button(label="🎮 Como Vincular Conta", style=discord.ButtonStyle.primary, custom_id="flex_guide:vincular")
+    async def vincular_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title="🎮 Como Vincular Sua Conta",
+            description="Para começar a usar o bot, você precisa vincular sua conta do LoL:",
+            color=discord.Color.blue()
+        )
+        embed.add_field(
+            name="1️⃣ Use o comando /logar",
+            value=(
+                "```/logar riot_id:SeuNick#TAG regiao:br1```\n"
+                "**Importante:** Use o formato Nome#TAG!\n"
+                "Exemplo: `Faker#KR1` ou `SeuNick#BR1`"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="2️⃣ Selecione sua região",
+            value=(
+                "• 🇧🇷 Brasil: `br1`\n"
+                "• 🇺🇸 NA: `na1`\n"
+                "• 🇪🇺 EUW: `euw1`\n"
+                "• E outras disponíveis no auto-complete!"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="3️⃣ Pronto!",
+            value="O bot começará a monitorar suas partidas de **Ranked Flex** automaticamente! 🎉",
+            inline=False
+        )
+        embed.set_footer(text="Você pode vincular até 3 contas!")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    
+    @discord.ui.button(label="📊 Comandos Disponíveis", style=discord.ButtonStyle.success, custom_id="flex_guide:comandos")
+    async def comandos_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title="📊 Comandos Disponíveis",
+            description="Veja todos os comandos que você pode usar:",
+            color=discord.Color.green()
+        )
+        embed.add_field(
+            name="🎮 Comandos Básicos",
+            value=(
+                "`/logar` - Vincular sua conta do LoL\n"
+                "`/contas` - Ver suas contas vinculadas\n"
+                "`/media` - Ver suas estatísticas do mês\n"
+                "`/historico` - Ver histórico de partidas\n"
+                "`/tops_flex` - Ver ranking dos melhores"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="⚙️ Comandos Admin",
+            value=(
+                "`/configurar` - Configurar canais de notificação\n"
+                "• Tipo: `alertas` ou `partidas`\n"
+                "• Defina onde o bot enviará mensagens"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="💡 Dicas",
+            value=(
+                "• Todos os comandos tem **auto-complete**\n"
+                "• Use a barra `/` para ver todos comandos\n"
+                "• Estatísticas são apenas de **Ranked Flex**"
+            ),
+            inline=False
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    
+    @discord.ui.button(label="🏆 Sistema de Carry Score", style=discord.ButtonStyle.secondary, custom_id="flex_guide:score")
+    async def score_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title="🏆 Sistema de Carry Score",
+            description="Entenda como funciona o sistema de pontuação:",
+            color=discord.Color.gold()
+        )
+        embed.add_field(
+            name="📈 O que é Carry Score?",
+            value=(
+                "É uma pontuação de **0 a 100** que mede o quanto você carregou seu time.\n"
+                "Não é apenas KDA! Considera múltiplos fatores."
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="📊 Fatores Analisados",
+            value=(
+                "• **KDA** e **Kill Participation**\n"
+                "• **Dano** causado aos campeões\n"
+                "• **Farm** (CS/min e Gold/min)\n"
+                "• **Objetivos** (Torres, Drag, Baron)\n"
+                "• **Visão** (Vision Score, Wards)\n"
+                "• **Utility** (CC, Heals, Shields)\n"
+                "• **Bônus** de +5% por vitória"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="🎯 Rankings",
+            value=(
+                "🏆 **70-100**: S+ Carry (GOD)\n"
+                "⭐ **60-69**: S Carry (Muito bom)\n"
+                "💎 **50-59**: A (Bom)\n"
+                "🥈 **40-49**: B (Normal)\n"
+                "📉 **0-39**: C (Precisa melhorar)"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="💡 Pesos por Role",
+            value=(
+                "**Carry Roles** (Top/Jungle/Mid/ADC):\n"
+                "Foco em dano, farm e objetivos\n\n"
+                "**Support**:\n"
+                "Foco em KP, visão e utility"
+            ),
+            inline=False
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    
+    @discord.ui.button(label="🔔 Sistema de Alertas", style=discord.ButtonStyle.danger, custom_id="flex_guide:alertas")
+    async def alertas_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title="🔔 Sistema de Alertas",
+            description="O bot monitora seu desempenho e envia notificações:",
+            color=discord.Color.red()
+        )
+        embed.add_field(
+            name="⚠️ Alerta de Performance Baixa",
+            value=(
+                "Se você jogar **3x seguidas** com o mesmo campeão\n"
+                "E tiver **Carry Score < 60** nas 3 partidas,\n"
+                "O bot enviará um alerta com sugestões!"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="🎮 Notificação de Partidas",
+            value=(
+                "Toda vez que você terminar uma partida de Flex,\n"
+                "O bot enviará automaticamente:\n"
+                "• Resultado (Vitória/Derrota)\n"
+                "• Seu Carry Score\n"
+                "• KDA, Role, Champion\n"
+                "• Estatísticas detalhadas"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="⚙️ Configuração (Admin)",
+            value=(
+                "Admins podem configurar os canais:\n"
+                "`/configurar alertas #canal-alertas`\n"
+                "`/configurar partidas #canal-partidas`"
+            ),
+            inline=False
+        )
+        embed.set_footer(text="O bot verifica novas partidas a cada 5 minutos")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="flex", description="🎯 Guia completo do bot com botões interativos")
+async def flex_guide(interaction: discord.Interaction):
+    """Comando com guia interativo do bot"""
+    embed = discord.Embed(
+        title="🎯 Flex dos Crias - Guia do Bot",
+        description=(
+            "**Bem-vindo ao melhor bot de tracking de Ranked Flex!**\n\n"
+            "Este bot monitora suas partidas automaticamente e calcula\n"
+            "um **Carry Score** baseado em múltiplos fatores.\n\n"
+            "Use os botões abaixo para aprender mais! 👇"
+        ),
+        color=discord.Color.purple()
+    )
+    
+    embed.add_field(
+        name="🚀 Início Rápido",
+        value=(
+            "1️⃣ Use `/logar` para vincular sua conta\n"
+            "2️⃣ Jogue Ranked Flex normalmente\n"
+            "3️⃣ Veja suas stats com `/media`\n"
+            "4️⃣ Compete no ranking com `/tops_flex`"
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="✨ Funcionalidades",
+        value=(
+            "📊 Tracking automático de partidas\n"
+            "🏆 Sistema de Carry Score (0-100)\n"
+            "📈 Estatísticas mensais detalhadas\n"
+            "🎯 Ranking de melhores jogadores\n"
+            "⚠️ Alertas de performance\n"
+            "🔔 Notificações de partidas"
+        ),
+        inline=False
+    )
+    
+    embed.set_footer(text="Clique nos botões abaixo para mais informações!")
+    embed.set_thumbnail(url="https://cdn.discordapp.com/embed/avatars/0.png")
+    
+    view = FlexGuideView()
+    await interaction.response.send_message(embed=embed, view=view)
 
 async def send_match_notification(lol_account_id: int, stats: Dict):
     """Envia notificação quando uma partida termina"""
@@ -807,17 +1072,27 @@ async def before_check_matches():
 # Tratamento de erros
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    if isinstance(error, app_commands.CommandOnCooldown):
-        await interaction.response.send_message(
-            f"⏰ Aguarde {error.retry_after:.1f} segundos antes de usar este comando novamente.",
-            ephemeral=True
-        )
-    else:
-        await interaction.response.send_message(
-            f"❌ Ocorreu um erro: {str(error)}",
-            ephemeral=True
-        )
-        print(f"Erro no comando: {error}")
+    try:
+        error_message = ""
+        
+        if isinstance(error, app_commands.CommandOnCooldown):
+            error_message = f"⏰ Aguarde {error.retry_after:.1f} segundos antes de usar este comando novamente."
+        elif isinstance(error, app_commands.MissingPermissions):
+            error_message = "❌ Você não tem permissão para usar este comando."
+        elif isinstance(error, app_commands.CommandInvokeError):
+            error_message = "❌ Ocorreu um erro ao executar o comando. Tente novamente."
+            print(f"Erro no comando: {error.original}")
+        else:
+            error_message = f"❌ Ocorreu um erro: {str(error)}"
+            print(f"Erro no comando: {error}")
+        
+        # Verifica se a interação já foi respondida
+        if interaction.response.is_done():
+            await interaction.followup.send(error_message, ephemeral=True)
+        else:
+            await interaction.response.send_message(error_message, ephemeral=True)
+    except Exception as e:
+        print(f"Erro no error handler: {e}")
 
 if __name__ == "__main__":
     if not TOKEN or not RIOT_API_KEY:
