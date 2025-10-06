@@ -854,50 +854,73 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
             }
             role_emoji = role_emojis.get(stats['role'], '❓')
             
-            # Cria embed
-            embed = discord.Embed(
-                title=f"{result_emoji} {result_text} - {stats['champion_name']}",
-                description=f"{member.mention} terminou uma partida de Ranked Flex!",
-                color=color
-            )
-            
-            # Informações principais
-            embed.add_field(
-                name="🎮 Partida",
-                value=(
-                    f"{role_emoji} **{stats['role']}** - {stats['champion_name']}\n"
-                    f"⚔️ KDA: **{stats['kills']}/{stats['deaths']}/{stats['assists']}** ({stats['kda']:.2f})\n"
-                    f"🎯 Kill Part: **{stats['kill_participation']:.0f}%**"
-                ),
-                inline=True
-            )
-            
-            # Carry Score (destaque)
-            embed.add_field(
-                name="🏆 Performance",
-                value=(
-                    f"{rank_emoji} **{rank_text}**\n"
-                    f"📊 Carry Score\n"
-                    f"# **{carry_score}**/100"
-                ),
-                inline=True
-            )
-            
-            # Estatísticas adicionais
+            # Duração da partida
             game_duration_min = stats['game_duration'] // 60
+            game_duration_sec = stats['game_duration'] % 60
+            
+            # URL da imagem do campeão (Data Dragon Riot)
+            champion_image_url = f"https://ddragon.leagueoflegends.com/cdn/14.1.1/img/champion/{stats['champion_name']}.png"
+            
+            # Cria embed com informações detalhadas
+            embed = discord.Embed(
+                title=f"{result_emoji} {result_text}",
+                description=(
+                    f"# {stats['champion_name']} {role_emoji}\n"
+                    f"{member.mention} terminou uma partida de **Ranked Flex**!"
+                ),
+                color=color,
+                timestamp=datetime.fromisoformat(stats['played_at'])
+            )
+            
+            # Campo principal - Estatísticas da partida
             embed.add_field(
-                name="📊 Estatísticas",
+                name="📊 Estatísticas da Partida",
                 value=(
-                    f"🗡️ Dano: **{stats['damage_dealt']:,}**\n"
-                    f"🌾 CS: **{stats['cs']}**\n"
-                    f"👁️ Vision: **{stats['vision_score']}**\n"
-                    f"⏱️ Duração: **{game_duration_min}min**"
+                    f"⚔️ **KDA:** {stats['kills']}/{stats['deaths']}/{stats['assists']} ({stats['kda']:.2f})\n"
+                    f"🎯 **Kill Participation:** {stats['kill_participation']:.0f}%\n"
+                    f"🗡️ **Dano:** {stats['damage_dealt']:,}\n"
+                    f"🌾 **CS:** {stats['cs']}\n"
+                    f"👁️ **Vision Score:** {stats['vision_score']}\n"
+                    f"⏱️ **Duração:** {game_duration_min}min {game_duration_sec}s"
                 ),
                 inline=True
             )
             
-            embed.set_footer(text=f"{summoner_name} • {stats['played_at'][:10]}")
+            # Carry Score em destaque
+            embed.add_field(
+                name="🏆 Carry Score",
+                value=(
+                    f"# {rank_emoji} {carry_score}/100\n"
+                    f"**Rank:** {rank_text}\n"
+                    f"\n"
+                    f"```\n"
+                    f"{'█' * int(carry_score/5)}{'░' * (20 - int(carry_score/5))}\n"
+                    f"```"
+                ),
+                inline=True
+            )
+            
+            # Informações adicionais
+            embed.add_field(
+                name="ℹ️ Detalhes",
+                value=(
+                    f"**Invocador:** {summoner_name}\n"
+                    f"**Role:** {role_emoji} {stats['role']}\n"
+                    f"**Campeão:** {stats['champion_name']}"
+                ),
+                inline=False
+            )
+            
+            # Imagem do campeão (grande no lado direito)
+            embed.set_image(url=champion_image_url)
+            
+            # Avatar do jogador como thumbnail
             embed.set_thumbnail(url=member.display_avatar.url)
+            
+            embed.set_footer(
+                text=f"Ranked Flex • {summoner_name}",
+                icon_url="https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-shared-components/global/default/ranked-emblem-flex.png"
+            )
             
             # Envia notificação
             try:
