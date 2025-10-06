@@ -105,6 +105,18 @@ class Database:
             )
         ''')
         
+        # Migração: Adiciona coluna live_game_channel_id se não existir
+        try:
+            cursor.execute("SELECT live_game_channel_id FROM server_configs LIMIT 1")
+        except sqlite3.OperationalError:
+            # Coluna não existe, precisa adicionar
+            print("🔄 Migrando banco: adicionando coluna live_game_channel_id...")
+            cursor.execute('''
+                ALTER TABLE server_configs 
+                ADD COLUMN live_game_channel_id TEXT
+            ''')
+            print("✅ Migração concluída!")
+        
         conn.commit()
         conn.close()
     

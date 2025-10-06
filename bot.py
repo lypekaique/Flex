@@ -29,7 +29,8 @@ async def check_command_channel(interaction: discord.Interaction) -> bool:
     """
     Verifica se o comando pode ser executado no canal atual.
     Admins podem usar em qualquer lugar.
-    Usuários comuns só podem usar no canal configurado.
+    Se não houver canal configurado, qualquer um pode usar em qualquer lugar.
+    Se houver canal configurado, usuários comuns só podem usar lá.
     Retorna True se pode executar, False caso contrário.
     """
     # Admins podem usar comandos em qualquer lugar
@@ -40,15 +41,9 @@ async def check_command_channel(interaction: discord.Interaction) -> bool:
     guild_id = str(interaction.guild_id)
     command_channel_id = db.get_command_channel(guild_id)
     
-    # Se não tem canal configurado, usuários comuns não podem usar
+    # Se não tem canal configurado, permite usar em qualquer lugar
     if not command_channel_id:
-        await interaction.response.send_message(
-            "❌ **Comandos não disponíveis!**\n"
-            "Os administradores ainda não configuraram um canal para comandos.\n"
-            "Peça para um admin usar `/configurar comandos #canal`",
-            ephemeral=True
-        )
-        return False
+        return True
     
     # Verifica se está no canal correto
     if str(interaction.channel_id) != command_channel_id:
@@ -155,7 +150,8 @@ class FlexGuideView(discord.ui.View):
             name="📈 O que é Carry Score?",
             value=(
                 "É uma pontuação de **0 a 100** que mede o quanto você carregou seu time.\n"
-                "Não é apenas KDA! Considera múltiplos fatores."
+                "Sistema inspirado no **U.GG** - não é apenas KDA! Considera múltiplos fatores.\n"
+                "✨ **Menos punitivo**: performances medianas recebem scores justos!"
             ),
             inline=False
         )
@@ -175,11 +171,11 @@ class FlexGuideView(discord.ui.View):
         embed.add_field(
             name="🎯 Rankings",
             value=(
-                "🏆 **70-100**: S+ Carry (GOD)\n"
-                "⭐ **60-69**: S Carry (Muito bom)\n"
-                "💎 **50-59**: A (Bom)\n"
-                "🥈 **40-49**: B (Normal)\n"
-                "📉 **0-39**: C (Precisa melhorar)"
+                "🏆 **75-100**: S+ Carry (GOD)\n"
+                "⭐ **65-74**: S Carry (Muito bom)\n"
+                "💎 **50-64**: A (Bom)\n"
+                "🥈 **35-49**: B (Normal)\n"
+                "📉 **0-34**: C (Precisa melhorar)"
             ),
             inline=False
         )
@@ -206,7 +202,7 @@ class FlexGuideView(discord.ui.View):
             name="⚠️ Alerta de Performance Baixa",
             value=(
                 "Se você jogar **3x seguidas** com o mesmo campeão\n"
-                "E tiver **Carry Score < 60** nas 3 partidas,\n"
+                "E tiver **Carry Score < 50** nas 3 partidas,\n"
                 "O bot enviará um alerta com sugestões!"
             ),
             inline=False
@@ -491,16 +487,16 @@ async def media(interaction: discord.Interaction, conta: int = None):
         most_played_role = max(role_count, key=role_count.get) if role_count else "Unknown"
         
         # Determina emoji baseado no carry score
-        if avg_carry >= 70:
+        if avg_carry >= 75:
             emoji = "🏆"
             rank = "S+ Carry"
-        elif avg_carry >= 60:
+        elif avg_carry >= 65:
             emoji = "⭐"
             rank = "S Carry"
         elif avg_carry >= 50:
             emoji = "💎"
             rank = "A Carry"
-        elif avg_carry >= 40:
+        elif avg_carry >= 35:
             emoji = "🥈"
             rank = "B Normal"
         else:
@@ -588,12 +584,14 @@ async def historico(interaction: discord.Interaction, conta: int = 1, quantidade
         kda_ratio = f"{match['kills']}/{match['deaths']}/{match['assists']}"
         
         # Emoji do carry score
-        if match['carry_score'] >= 70:
+        if match['carry_score'] >= 75:
             carry_emoji = "🏆"
-        elif match['carry_score'] >= 50:
+        elif match['carry_score'] >= 65:
             carry_emoji = "⭐"
-        elif match['carry_score'] >= 40:
+        elif match['carry_score'] >= 50:
             carry_emoji = "💎"
+        elif match['carry_score'] >= 35:
+            carry_emoji = "🥈"
         else:
             carry_emoji = "📊"
         
@@ -905,13 +903,13 @@ async def tops_flex(interaction: discord.Interaction, quantidade: int = 10):
         
         # Determina rank baseado no carry score
         avg_carry = player['avg_carry']
-        if avg_carry >= 70:
+        if avg_carry >= 75:
             rank_emoji = "🏆 S+"
-        elif avg_carry >= 60:
+        elif avg_carry >= 65:
             rank_emoji = "⭐ S"
         elif avg_carry >= 50:
             rank_emoji = "💎 A"
-        elif avg_carry >= 40:
+        elif avg_carry >= 35:
             rank_emoji = "🥈 B"
         else:
             rank_emoji = "📊 C"
@@ -1034,16 +1032,16 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
             
             # Determina emoji e rank do carry score
             carry_score = stats['carry_score']
-            if carry_score >= 70:
+            if carry_score >= 75:
                 rank_emoji = "🏆"
                 rank_text = "S+ CARRY"
-            elif carry_score >= 60:
+            elif carry_score >= 65:
                 rank_emoji = "⭐"
                 rank_text = "S CARRY"
             elif carry_score >= 50:
                 rank_emoji = "💎"
                 rank_text = "A"
-            elif carry_score >= 40:
+            elif carry_score >= 35:
                 rank_emoji = "🥈"
                 rank_text = "B"
             else:
@@ -1148,8 +1146,8 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
         if len(matches) < 3:
             return
         
-        # Verifica se todas as 3 têm score abaixo de 60
-        all_bad_scores = all(match['carry_score'] < 60 for match in matches)
+        # Verifica se todas as 3 têm score abaixo de 50
+        all_bad_scores = all(match['carry_score'] < 50 for match in matches)
         
         if not all_bad_scores:
             return
@@ -1201,7 +1199,7 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
                 value=(
                     f"🎮 **3 últimas partidas** com {champion_name}\n"
                     f"📉 Carry Score médio: **{int(avg_score)}/100**\n"
-                    f"⚠️ Todas abaixo de 60!"
+                    f"⚠️ Todas abaixo de 50!"
                 ),
                 inline=False
             )

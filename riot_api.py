@@ -255,21 +255,33 @@ class RiotAPI:
         return champions.get(champion_id, f'Champion{champion_id}')
     
     def normalize(self, value: float, min_val: float, max_val: float) -> float:
-        """Normaliza um valor entre 0 e 1"""
+        """
+        Normaliza um valor entre 0 e 1 de forma menos punitiva.
+        Usa curva mais suave: valores medianos ganham mais pontos.
+        """
         if max_val == min_val:
             return 0.5
+        
+        # Normalização básica
         normalized = (value - min_val) / (max_val - min_val)
-        return max(0, min(1, normalized))  # Garante entre 0 e 1
+        
+        # Aplica curva de suavização (raiz quadrada para ser menos punitivo)
+        # Valores baixos ganham mais pontos, valores altos não perdem tanto
+        normalized = max(0, min(1, normalized))  # Garante entre 0 e 1
+        normalized = normalized ** 0.7  # Curva mais suave
+        
+        return normalized
     
     def calculate_carry_score(self, stats: Dict, team_stats: Dict) -> float:
         """
-        Calcula o nível de carry do jogador baseado em métricas avançadas
+        Calcula o nível de carry do jogador baseado em métricas avançadas.
+        Sistema inspirado no U.GG - menos punitivo e mais focado em performance relativa.
         
         Sistema de pesos por role:
         - Top/Jungle/Mid/ADC: foco em KDA, KP, dano, farm e objetivos
         - Support: foco em KP, vision, objetivos, CC/utility
         
-        Retorna um score de 0 a 10
+        Retorna um score de 0 a 100
         """
         # Extrai role
         role = stats.get('teamPosition', 'MIDDLE')
@@ -278,7 +290,7 @@ class RiotAPI:
         
         # Dados do jogador
         kills = stats.get('kills', 0)
-        deaths = max(stats.get('deaths', 1), 1)  # Evita divisão por zero
+        deaths = stats.get('deaths', 0)
         assists = stats.get('assists', 0)
         damage_dealt = stats.get('totalDamageDealtToChampions', 0)
         gold_earned = max(stats.get('goldEarned', 1), 1)
@@ -307,21 +319,28 @@ class RiotAPI:
         # Dados do time
         team_kills = max(team_stats.get('team_kills', kills + assists + 1), 1)
         
-        # 🥊 COMBATE
-        kda = (kills + assists) / deaths
-        dpm = damage_dealt / game_duration
-        damage_per_gold = damage_dealt / gold_earned
+        # 🥊 COMBATE - KDA menos punitivo (como no U.GG)
+        # U.GG usa fórmula: (kills + assists) / max(deaths, 1) mas com limites mais generosos
+        if deaths == 0:
+            kda = (kills + assists) + 3  # Bônus por não morrer
+        else:
+            kda = (kills + assists) / deaths
+        
+        # Kill Participation
         kill_participation = (kills + assists) / team_kills
+        
+        # Dano por minuto
+        dpm = damage_dealt / game_duration
         
         # 💰 RECURSOS
         gpm = gold_earned / game_duration
         cspm = cs / game_duration
         
-        # 🎯 OBJETIVOS
+        # 🎯 OBJETIVOS - valoriza mais
         objectives_score = (
-            turret_kills * 100 + 
-            damage_to_objectives / 1000 + 
-            damage_to_buildings / 1000
+            turret_kills * 150 +  # Aumentado de 100
+            damage_to_objectives / 800 +  # Mais generoso
+            damage_to_buildings / 800  # Mais generoso
         )
         
         # 👀 VISÃO
@@ -330,47 +349,47 @@ class RiotAPI:
         
         # 🛡️ SUSTENTAÇÃO/TEAMPLAY
         utility_score = (
-            time_ccing / 10 + 
-            (total_heal + total_shields) / 1000
+            time_ccing / 8 +  # Mais generoso
+            (total_heal + total_shields) / 800  # Mais generoso
         )
-        damage_taken_per_min = damage_taken / game_duration
         
-        # NORMALIZAÇÃO (benchmarks baseados em dados reais de partidas)
-        norm_kda = self.normalize(kda, 0, 8)
-        norm_kp = self.normalize(kill_participation, 0.3, 0.8)
-        norm_dpm = self.normalize(dpm, 200, 1200)
-        norm_gpm = self.normalize(gpm, 250, 500)
-        norm_cspm = self.normalize(cspm, 2, 10)
-        norm_objectives = self.normalize(objectives_score, 0, 500)
-        norm_vision = self.normalize(vision_per_min, 0.5, 2.5)
-        norm_utility = self.normalize(utility_score, 0, 50)
+        # NORMALIZAÇÃO com ranges mais generosos (estilo U.GG)
+        # Ranges ajustados para que mais jogadores atinjam scores decentes
+        norm_kda = self.normalize(kda, 0, 6)  # Reduzido de 8 para 6
+        norm_kp = self.normalize(kill_participation, 0.2, 0.7)  # Range mais generoso
+        norm_dpm = self.normalize(dpm, 100, 900)  # Range mais amplo
+        norm_gpm = self.normalize(gpm, 200, 450)  # Mais generoso
+        norm_cspm = self.normalize(cspm, 1, 8)  # Mais generoso
+        norm_objectives = self.normalize(objectives_score, 0, 400)  # Ajustado
+        norm_vision = self.normalize(vision_per_min, 0.3, 2.0)  # Mais generoso
+        norm_utility = self.normalize(utility_score, 0, 40)  # Mais generoso
         
-        # PESOS POR ROLE
+        # PESOS POR ROLE - balanceados para o U.GG style
         if role == 'UTILITY':  # Support
             weights = {
-                'kda': 0.15,
+                'kda': 0.18,      # Um pouco mais peso
                 'kp': 0.25,
                 'dpm': 0.05,
                 'gpm': 0.0,
                 'cspm': 0.0,
                 'objectives': 0.15,
-                'vision': 0.25,
+                'vision': 0.22,   # Reduzido um pouco
                 'utility': 0.15
             }
         else:  # Top/Jungle/Mid/ADC
             weights = {
-                'kda': 0.20,
-                'kp': 0.20,
+                'kda': 0.22,      # Mais peso no KDA
+                'kp': 0.22,       # Mais peso no KP
                 'dpm': 0.15,
-                'gpm': 0.075,
-                'cspm': 0.075,
-                'objectives': 0.20,
-                'vision': 0.05,
-                'utility': 0.05
+                'gpm': 0.08,
+                'cspm': 0.08,
+                'objectives': 0.18,  # Reduzido um pouco
+                'vision': 0.04,
+                'utility': 0.03
             }
         
         # CÁLCULO FINAL
-        score = (
+        base_score = (
             norm_kda * weights['kda'] +
             norm_kp * weights['kp'] +
             norm_dpm * weights['dpm'] +
@@ -379,11 +398,21 @@ class RiotAPI:
             norm_objectives * weights['objectives'] +
             norm_vision * weights['vision'] +
             norm_utility * weights['utility']
-        ) * 100  # Escala para 0-100
+        )
         
-        # Bônus de 5% por vitória
+        # Escala para 0-100 com baseline mais alto (estilo U.GG)
+        # Garante que performances "ok" fiquem em 40-50, não em 20-30
+        score = (base_score * 85) + 15  # Offset de 15 pontos base
+        
+        # Bônus de vitória mais generoso
         if win:
-            score *= 1.05
+            score *= 1.08  # 8% ao invés de 5%
+        
+        # Bônus adicional por performance excepcional
+        if kda >= 5:
+            score += 3
+        if kill_participation >= 0.7:
+            score += 2
         
         return int(min(score, 100))  # Garante máximo de 100 e converte para inteiro
     
