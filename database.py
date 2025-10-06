@@ -99,6 +99,9 @@ class Database:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 lol_account_id INTEGER NOT NULL,
                 game_id TEXT NOT NULL,
+                message_id TEXT,
+                channel_id TEXT,
+                guild_id TEXT,
                 notified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (lol_account_id) REFERENCES lol_accounts(id),
                 UNIQUE(lol_account_id, game_id)
@@ -116,6 +119,16 @@ class Database:
                 ADD COLUMN live_game_channel_id TEXT
             ''')
             print("✅ Migração concluída!")
+        
+        # Migração: Adiciona colunas message_id, channel_id e guild_id em live_games_notified
+        try:
+            cursor.execute("SELECT message_id FROM live_games_notified LIMIT 1")
+        except sqlite3.OperationalError:
+            print("🔄 Migrando banco: adicionando colunas para tracking de mensagens...")
+            cursor.execute('ALTER TABLE live_games_notified ADD COLUMN message_id TEXT')
+            cursor.execute('ALTER TABLE live_games_notified ADD COLUMN channel_id TEXT')
+            cursor.execute('ALTER TABLE live_games_notified ADD COLUMN guild_id TEXT')
+            print("✅ Migração de tracking concluída!")
         
         conn.commit()
         conn.close()
@@ -457,15 +470,18 @@ class Database:
         conn.close()
         return result is not None
     
-    def mark_live_game_notified(self, lol_account_id: int, game_id: str) -> bool:
-        """Marca uma live game como notificada"""
+    def mark_live_game_notified(self, lol_account_id: int, game_id: str, 
+                                message_id: str = None, channel_id: str = None, 
+                                guild_id: str = None) -> bool:
+        """Marca uma live game como notificada e salva IDs da mensagem"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT OR IGNORE INTO live_games_notified (lol_account_id, game_id)
-                VALUES (?, ?)
-            ''', (lol_account_id, game_id))
+                INSERT OR IGNORE INTO live_games_notified 
+                (lol_account_id, game_id, message_id, channel_id, guild_id)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (lol_account_id, game_id, message_id, channel_id, guild_id))
             conn.commit()
             conn.close()
             return True
@@ -491,6 +507,34 @@ class Database:
         except Exception as e:
             print(f"Erro ao limpar notificações antigas: {e}")
             return False
+    
+    def get_live_game_message(self, lol_account_id: int, match_id: str) -> Optional[Dict]:
+        """Busca informações da mensagem de uma live game pelo match_id"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # O game_id da spectator API é diferente do match_id final
+        # Precisamos buscar por lol_account_id e pelo game_id que contém parte do match_id
+        # Ou simplesmente pegar a mais recente do jogador
+        cursor.execute('''
+            SELECT message_id, channel_id, guild_id, game_id 
+            FROM live_games_notified
+            WHERE lol_account_id = ?
+            ORDER BY notified_at DESC
+            LIMIT 1
+        ''', (lol_account_id,))
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result:
+            return {
+                'message_id': result[0],
+                'channel_id': result[1],
+                'guild_id': result[2],
+                'game_id': result[3]
+            }
+        return None
     
     def get_server_config(self, guild_id: str) -> Optional[Dict]:
         """Retorna todas as configurações de um servidor"""

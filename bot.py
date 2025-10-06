@@ -208,14 +208,14 @@ class FlexGuideView(discord.ui.View):
             inline=False
         )
         embed.add_field(
-            name="🎮 Notificação de Partidas",
+            name="🎮 Notificação de Partidas (Live Tracking Unificado)",
             value=(
-                "Toda vez que você terminar uma partida de Flex,\n"
-                "O bot enviará automaticamente:\n"
-                "• Resultado (Vitória/Derrota)\n"
-                "• Seu Carry Score\n"
-                "• KDA, Role, Champion\n"
-                "• Estatísticas detalhadas"
+                "**Sistema em tempo real:**\n"
+                "🔵 Quando você **entra em partida** → Notificação AZUL\n"
+                "🟢 Quando você **ganha** → Atualiza para VERDE\n"
+                "🔴 Quando você **perde** → Atualiza para VERMELHO\n\n"
+                "A mesma mensagem é atualizada do início ao fim!\n"
+                "Mostra Carry Score, KDA e links para trackers."
             ),
             inline=False
         )
@@ -691,8 +691,8 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
             
             if config['match_channel_id']:
                 embed.add_field(
-                    name="🎮 Canal de Partidas",
-                    value=f"<#{config['match_channel_id']}>\nNotificações de partidas terminadas serão enviadas aqui.",
+                    name="🎮 Canal de Partidas (Live Tracking Unificado)",
+                    value=f"<#{config['match_channel_id']}>\n🔵 Ao vivo quando começa → 🟢🔴 Atualiza quando termina",
                     inline=False
                 )
             else:
@@ -704,14 +704,14 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
             
             if config['live_game_channel_id']:
                 embed.add_field(
-                    name="🔴 Canal de Partidas Ao Vivo",
-                    value=f"<#{config['live_game_channel_id']}>\nNotificações quando jogadores entrarem em partida serão enviadas aqui.",
+                    name="🔴 Canal de Live (Opcional/Backup)",
+                    value=f"<#{config['live_game_channel_id']}>\n⚠️ Use o canal de partidas para tracking completo!",
                     inline=False
                 )
             else:
                 embed.add_field(
-                    name="🔴 Canal de Partidas Ao Vivo",
-                    value="❌ Não configurado",
+                    name="🔴 Canal de Live (Opcional/Backup)",
+                    value="❌ Não configurado (não é necessário se usar canal de partidas)",
                     inline=False
                 )
         else:
@@ -772,11 +772,12 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
             embed.add_field(
                 name="🎮 O que será enviado?",
                 value=(
-                    "• **Cada partida** de Flex que terminar\n"
-                    "• **Carry Score** da partida\n"
-                    "• **KDA, Role, Champion** e estatísticas\n"
-                    "• **Resultado** (Vitória/Derrota)\n"
-                    "• Enviado automaticamente quando detectada"
+                    "• 🔵 **Partida começa**: Notificação AZUL ao vivo\n"
+                    "• 🟢 **Partida termina**: Atualiza para VERDE (vitória)\n"
+                    "• 🔴 **Partida termina**: Atualiza para VERMELHO (derrota)\n"
+                    "• Mostra **Carry Score**, KDA, Role, Champion\n"
+                    "• Links para **OP.GG**, **U.GG** e **Porofessor**\n"
+                    "• Sistema unificado: uma mensagem do início ao fim!"
                 ),
                 inline=False
             )
@@ -809,19 +810,20 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
         success = db.set_live_game_channel(guild_id, channel_id)
         if success:
             embed = discord.Embed(
-                title="✅ Canal de Partidas Ao Vivo Configurado!",
-                description=f"Notificações de live games serão enviadas em {canal.mention}",
+                title="✅ Canal de Live Tracking Configurado!",
+                description=f"Tracking de partidas ao vivo será enviado em {canal.mention}",
                 color=discord.Color.red()
             )
             embed.add_field(
-                name="🔴 O que será notificado?",
+                name="🔴 Como funciona?",
                 value=(
-                    "• Quando um jogador **entrar em partida**\n"
-                    "• **Champion e Role** do jogador\n"
-                    "• **Modo de jogo** (Ranked Flex, Solo/Duo, etc)\n"
-                    "• **Composição dos times**\n"
-                    "• Link para **op.gg** e trackers\n"
-                    "• Verificado a cada 2 minutos"
+                    "**💡 Dica:** Use o mesmo canal de `partidas` para sistema unificado!\n\n"
+                    "Este canal é **opcional** e funciona como backup.\n"
+                    "Se configurado sem o canal de partidas:\n"
+                    "• Envia notificação ao vivo quando entrar em jogo\n"
+                    "• Mas não consegue atualizar quando terminar\n\n"
+                    "**Recomendado:** Configure apenas o canal de `partidas`\n"
+                    "para ter o sistema completo de tracking!"
                 ),
                 inline=False
             )
@@ -986,7 +988,7 @@ async def flex_guide(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, view=view)
 
 async def send_match_notification(lol_account_id: int, stats: Dict):
-    """Envia notificação quando uma partida termina"""
+    """Atualiza notificação de live game ou envia nova quando uma partida termina"""
     try:
         # Busca informações da conta
         conn = db.get_connection()
@@ -1003,6 +1005,9 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
         
         discord_id, summoner_name = account_info
         
+        # Busca se existe uma mensagem de live game para editar
+        live_game_msg = db.get_live_game_message(lol_account_id, stats['match_id'])
+        
         # Busca todos os servidores onde está o bot
         for guild in bot.guilds:
             # Verifica se o usuário está nesse servidor
@@ -1010,15 +1015,33 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
             if not member:
                 continue
             
-            # Busca canal de partidas configurado
-            channel_id = db.get_match_channel(str(guild.id))
-            if not channel_id:
-                continue
-            
-            # Busca o canal
-            channel = guild.get_channel(int(channel_id))
-            if not channel:
-                continue
+            # Se temos mensagem de live game, tenta editar
+            if live_game_msg and live_game_msg.get('message_id'):
+                # Verifica se é o servidor correto
+                if str(guild.id) != live_game_msg.get('guild_id'):
+                    continue
+                
+                channel = guild.get_channel(int(live_game_msg['channel_id']))
+                if not channel:
+                    continue
+                
+                try:
+                    message = await channel.fetch_message(int(live_game_msg['message_id']))
+                except:
+                    # Mensagem não encontrada, envia nova
+                    message = None
+            else:
+                # Não tem live game, busca canal de partidas configurado
+                channel_id = db.get_match_channel(str(guild.id))
+                if not channel_id:
+                    continue
+                
+                # Busca o canal
+                channel = guild.get_channel(int(channel_id))
+                if not channel:
+                    continue
+                
+                message = None
             
             # Determina cor baseada no resultado
             if stats['win']:
@@ -1126,12 +1149,18 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
                 icon_url="https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-shared-components/global/default/ranked-emblem-flex.png"
             )
             
-            # Envia notificação
+            # Envia ou edita notificação
             try:
-                await channel.send(embed=embed)
-                print(f"🎮 Partida enviada: {summoner_name} - {stats['champion_name']} (Score: {carry_score})")
+                if message:
+                    # Edita a mensagem existente
+                    await message.edit(embed=embed)
+                    print(f"🎮 Partida atualizada: {summoner_name} - {stats['champion_name']} (Score: {carry_score})")
+                else:
+                    # Envia nova mensagem
+                    await channel.send(embed=embed)
+                    print(f"🎮 Partida enviada: {summoner_name} - {stats['champion_name']} (Score: {carry_score})")
             except Exception as e:
-                print(f"Erro ao enviar partida: {e}")
+                print(f"Erro ao enviar/atualizar partida: {e}")
     
     except Exception as e:
         print(f"Erro ao processar notificação de partida: {e}")
@@ -1269,8 +1298,10 @@ async def send_live_game_notification(lol_account_id: int, live_info: Dict):
             if not member:
                 continue
             
-            # Busca canal de live games configurado
-            channel_id = db.get_live_game_channel(str(guild.id))
+            # Busca canal configurado (prioriza canal de partidas, depois live)
+            channel_id = db.get_match_channel(str(guild.id))
+            if not channel_id:
+                channel_id = db.get_live_game_channel(str(guild.id))
             if not channel_id:
                 continue
             
@@ -1369,12 +1400,20 @@ async def send_live_game_notification(lol_account_id: int, live_info: Dict):
                 icon_url="https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-shared-components/global/default/ranked-emblem-flex.png"
             )
             
-            # Envia notificação
+            # Envia notificação e salva message_id
             try:
-                await channel.send(embed=embed)
+                message = await channel.send(embed=embed)
                 print(f"🔴 Live game: {summoner_name} - {live_info['champion']} ({live_info['gameMode']})")
+                
+                # Retorna informações da mensagem para salvar no banco
+                return {
+                    'message_id': str(message.id),
+                    'channel_id': str(channel.id),
+                    'guild_id': str(guild.id)
+                }
             except Exception as e:
                 print(f"Erro ao enviar notificação de live game: {e}")
+                return None
     
     except Exception as e:
         print(f"Erro ao processar notificação de live game: {e}")
@@ -1407,11 +1446,18 @@ async def check_live_games():
                         live_info = riot_api.extract_live_game_info(game_data, puuid)
                         
                         if live_info:
-                            # Envia notificação
-                            await send_live_game_notification(account_id, live_info)
+                            # Envia notificação e pega o message_id
+                            message_info = await send_live_game_notification(account_id, live_info)
                             
-                            # Marca como notificado
-                            db.mark_live_game_notified(account_id, game_id)
+                            # Marca como notificado com os IDs da mensagem
+                            if message_info:
+                                db.mark_live_game_notified(
+                                    account_id, 
+                                    game_id,
+                                    message_info.get('message_id'),
+                                    message_info.get('channel_id'),
+                                    message_info.get('guild_id')
+                                )
                 
                 # Delay para não sobrecarregar a API
                 await asyncio.sleep(0.5)
