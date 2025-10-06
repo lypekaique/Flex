@@ -1,0 +1,10 @@
+# Discord Bot Token
+DISCORD_TOKEN=seu_token_discord_aqui
+
+# Riot Games API Key (obtenha em: https://developer.riotgames.com/)
+RIOT_API_KEY=sua_chave_riot_api_aqui
+
+# Região padrão do servidor (ex: br1, na1, euw1, etc)
+DEFAULT_REGION=br1
+
+

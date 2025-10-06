@@ -1,0 +1,14 @@
+# Arquivos a serem ignorados no deploy do Railway
+.env
+.env.local
+*.db
+*.sqlite
+*.sqlite3
+__pycache__/
+*.pyc
+.git/
+.vscode/
+.idea/
+*.log
+logs/
+

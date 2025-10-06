@@ -1,0 +1,19 @@
+# Docker ignore
+.env
+.env.local
+*.db
+*.sqlite
+*.sqlite3
+__pycache__/
+*.pyc
+.git/
+.gitignore
+.vscode/
+.idea/
+*.md
+!README.md
+*.log
+logs/
+.DS_Store
+Thumbs.db
+
