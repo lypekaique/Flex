@@ -86,6 +86,7 @@ class Database:
                 guild_id TEXT PRIMARY KEY,
                 notification_channel_id TEXT,
                 match_channel_id TEXT,
+                command_channel_id TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -334,12 +335,54 @@ class Database:
         conn.close()
         return result[0] if result else None
     
+    def set_command_channel(self, guild_id: str, channel_id: str) -> bool:
+        """Define o canal de comandos para um servidor"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Verifica se já existe configuração
+            cursor.execute('SELECT guild_id FROM server_configs WHERE guild_id = ?', (guild_id,))
+            exists = cursor.fetchone()
+            
+            if exists:
+                cursor.execute('''
+                    UPDATE server_configs 
+                    SET command_channel_id = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE guild_id = ?
+                ''', (channel_id, guild_id))
+            else:
+                cursor.execute('''
+                    INSERT INTO server_configs (guild_id, command_channel_id, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                ''', (guild_id, channel_id))
+            
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Erro ao configurar canal de comandos: {e}")
+            return False
+    
+    def get_command_channel(self, guild_id: str) -> Optional[str]:
+        """Retorna o canal de comandos configurado para um servidor"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT command_channel_id FROM server_configs
+            WHERE guild_id = ?
+        ''', (guild_id,))
+        
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else None
+    
     def get_server_config(self, guild_id: str) -> Optional[Dict]:
         """Retorna todas as configurações de um servidor"""
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT notification_channel_id, match_channel_id FROM server_configs
+            SELECT notification_channel_id, match_channel_id, command_channel_id FROM server_configs
             WHERE guild_id = ?
         ''', (guild_id,))
         
@@ -349,7 +392,8 @@ class Database:
         if result:
             return {
                 'notification_channel_id': result[0],
-                'match_channel_id': result[1]
+                'match_channel_id': result[1],
+                'command_channel_id': result[2]
             }
         return None
     

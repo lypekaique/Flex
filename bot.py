@@ -24,6 +24,43 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 db = Database()
 riot_api = RiotAPI(RIOT_API_KEY)
 
+# Função auxiliar para verificar permissões de canal
+async def check_command_channel(interaction: discord.Interaction) -> bool:
+    """
+    Verifica se o comando pode ser executado no canal atual.
+    Admins podem usar em qualquer lugar.
+    Usuários comuns só podem usar no canal configurado.
+    Retorna True se pode executar, False caso contrário.
+    """
+    # Admins podem usar comandos em qualquer lugar
+    if interaction.user.guild_permissions.administrator:
+        return True
+    
+    # Busca o canal configurado
+    guild_id = str(interaction.guild_id)
+    command_channel_id = db.get_command_channel(guild_id)
+    
+    # Se não tem canal configurado, usuários comuns não podem usar
+    if not command_channel_id:
+        await interaction.response.send_message(
+            "❌ **Comandos não disponíveis!**\n"
+            "Os administradores ainda não configuraram um canal para comandos.\n"
+            "Peça para um admin usar `/configurar comandos #canal`",
+            ephemeral=True
+        )
+        return False
+    
+    # Verifica se está no canal correto
+    if str(interaction.channel_id) != command_channel_id:
+        await interaction.response.send_message(
+            f"❌ **Canal incorreto!**\n"
+            f"Use comandos apenas em <#{command_channel_id}>",
+            ephemeral=True
+        )
+        return False
+    
+    return True
+
 # View com botões persistentes para o comando /flex
 class FlexGuideView(discord.ui.View):
     def __init__(self):
@@ -77,16 +114,20 @@ class FlexGuideView(discord.ui.View):
                 "`/contas` - Ver suas contas vinculadas\n"
                 "`/media` - Ver suas estatísticas do mês\n"
                 "`/historico` - Ver histórico de partidas\n"
-                "`/tops_flex` - Ver ranking dos melhores"
+                "`/tops_flex` - Ver ranking dos melhores\n"
+                "`/flex` - Ver este guia novamente"
             ),
             inline=False
         )
         embed.add_field(
-            name="⚙️ Comandos Admin",
+            name="⚙️ Comandos Admin (Apenas Administradores)",
             value=(
-                "`/configurar` - Configurar canais de notificação\n"
-                "• Tipo: `alertas` ou `partidas`\n"
-                "• Defina onde o bot enviará mensagens"
+                "`/configurar` - Ver configuração atual\n"
+                "`/configurar comandos #canal` - Definir canal de comandos\n"
+                "`/configurar alertas #canal` - Canal de alertas\n"
+                "`/configurar partidas #canal` - Canal de partidas\n"
+                "• Admins podem usar comandos em **qualquer lugar**\n"
+                "• Usuários comuns só no **canal configurado**"
             ),
             inline=False
         )
@@ -95,7 +136,8 @@ class FlexGuideView(discord.ui.View):
             value=(
                 "• Todos os comandos tem **auto-complete**\n"
                 "• Use a barra `/` para ver todos comandos\n"
-                "• Estatísticas são apenas de **Ranked Flex**"
+                "• Estatísticas são apenas de **Ranked Flex**\n"
+                "• Configure o canal de comandos primeiro!"
             ),
             inline=False
         )
@@ -245,6 +287,10 @@ async def region_autocomplete(
 @app_commands.autocomplete(regiao=region_autocomplete)
 async def logar(interaction: discord.Interaction, riot_id: str, regiao: str = DEFAULT_REGION):
     """Comando para vincular conta do LOL usando Riot ID (nome#tag)"""
+    # Verifica permissão de canal
+    if not await check_command_channel(interaction):
+        return
+    
     await interaction.response.defer(ephemeral=True)
     
     # Valida formato do Riot ID
@@ -337,6 +383,10 @@ async def logar(interaction: discord.Interaction, riot_id: str, regiao: str = DE
 @bot.tree.command(name="contas", description="📋 Veja todas as suas contas vinculadas")
 async def contas(interaction: discord.Interaction):
     """Lista todas as contas vinculadas do usuário"""
+    # Verifica permissão de canal
+    if not await check_command_channel(interaction):
+        return
+    
     await interaction.response.defer(ephemeral=True)
     
     discord_id = str(interaction.user.id)
@@ -371,6 +421,10 @@ async def contas(interaction: discord.Interaction):
 )
 async def media(interaction: discord.Interaction, conta: int = None):
     """Calcula a média de carry score do mês atual"""
+    # Verifica permissão de canal
+    if not await check_command_channel(interaction):
+        return
+    
     await interaction.response.defer()
     
     discord_id = str(interaction.user.id)
@@ -485,6 +539,10 @@ async def media(interaction: discord.Interaction, conta: int = None):
 )
 async def historico(interaction: discord.Interaction, conta: int = 1, quantidade: int = 5):
     """Mostra histórico detalhado de partidas"""
+    # Verifica permissão de canal
+    if not await check_command_channel(interaction):
+        return
+    
     await interaction.response.defer()
     
     discord_id = str(interaction.user.id)
@@ -570,6 +628,7 @@ async def config_type_autocomplete(
     types = [
         ('🔔 Alertas - Notificações de performance', 'alertas'),
         ('🎮 Partidas - Notificações de jogos', 'partidas'),
+        ('💬 Comandos - Canal onde usuários podem usar comandos', 'comandos'),
     ]
     return [
         app_commands.Choice(name=name, value=value)
@@ -577,24 +636,90 @@ async def config_type_autocomplete(
         if current.lower() in name.lower() or current.lower() in value.lower()
     ]
 
-@bot.tree.command(name="configurar", description="⚙️ [ADMIN] Configure os canais de notificação do bot")
+@bot.tree.command(name="configurar", description="⚙️ [ADMIN] Configure os canais do bot ou veja a configuração atual")
 @app_commands.describe(
-    tipo="Tipo de configuração: alertas (performance ruim) ou partidas (quando termina partida)",
-    canal="Canal onde serão enviadas as mensagens"
+    tipo="Tipo de configuração: alertas, partidas ou comandos (deixe vazio para ver config atual)",
+    canal="Canal onde serão enviadas as mensagens (obrigatório se tipo for especificado)"
 )
 @app_commands.autocomplete(tipo=config_type_autocomplete)
 @app_commands.checks.has_permissions(administrator=True)
-async def configurar(interaction: discord.Interaction, tipo: str, canal: discord.TextChannel):
+async def configurar(interaction: discord.Interaction, tipo: str = None, canal: discord.TextChannel = None):
     """Configura os canais do bot (apenas administradores)"""
     await interaction.response.defer(ephemeral=True)
     
     guild_id = str(interaction.guild_id)
+    
+    # Se não especificou tipo, apenas mostra configuração atual
+    if tipo is None:
+        config = db.get_server_config(guild_id)
+        
+        embed = discord.Embed(
+            title="⚙️ Configuração Atual do Servidor",
+            description="Veja como o bot está configurado neste servidor:",
+            color=discord.Color.blue()
+        )
+        
+        if config:
+            if config['command_channel_id']:
+                embed.add_field(
+                    name="💬 Canal de Comandos",
+                    value=f"<#{config['command_channel_id']}>\nUsuários podem usar comandos apenas neste canal.",
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="💬 Canal de Comandos",
+                    value="❌ Não configurado\nUsuários não podem usar comandos.",
+                    inline=False
+                )
+            
+            if config['notification_channel_id']:
+                embed.add_field(
+                    name="🔔 Canal de Alertas",
+                    value=f"<#{config['notification_channel_id']}>\nAlertas de performance baixa serão enviados aqui.",
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="🔔 Canal de Alertas",
+                    value="❌ Não configurado",
+                    inline=False
+                )
+            
+            if config['match_channel_id']:
+                embed.add_field(
+                    name="🎮 Canal de Partidas",
+                    value=f"<#{config['match_channel_id']}>\nNotificações de partidas terminadas serão enviadas aqui.",
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="🎮 Canal de Partidas",
+                    value="❌ Não configurado",
+                    inline=False
+                )
+        else:
+            embed.description = "❌ Nenhuma configuração encontrada para este servidor."
+        
+        embed.set_footer(text="Use /configurar <tipo> #canal para configurar")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        return
+    
+    # Se especificou tipo mas não especificou canal
+    if canal is None:
+        await interaction.followup.send(
+            "❌ Você precisa especificar um canal quando escolhe um tipo de configuração!\n"
+            "Use: `/configurar tipo:alertas canal:#seu-canal`",
+            ephemeral=True
+        )
+        return
+    
     channel_id = str(canal.id)
     tipo = tipo.lower()
     
-    if tipo not in ['alertas', 'partidas']:
+    if tipo not in ['alertas', 'partidas', 'comandos']:
         await interaction.followup.send(
-            "❌ Tipo inválido! Use: `alertas` ou `partidas`",
+            "❌ Tipo inválido! Use: `alertas`, `partidas` ou `comandos`",
             ephemeral=True
         )
         return
@@ -620,7 +745,7 @@ async def configurar(interaction: discord.Interaction, tipo: str, canal: discord
             await interaction.followup.send("❌ Erro ao configurar canal.", ephemeral=True)
             return
     
-    else:  # partidas
+    elif tipo == 'partidas':
         success = db.set_match_channel(guild_id, channel_id)
         if success:
             embed = discord.Embed(
@@ -643,11 +768,37 @@ async def configurar(interaction: discord.Interaction, tipo: str, canal: discord
             await interaction.followup.send("❌ Erro ao configurar canal.", ephemeral=True)
             return
     
+    else:  # comandos
+        success = db.set_command_channel(guild_id, channel_id)
+        if success:
+            embed = discord.Embed(
+                title="✅ Canal de Comandos Configurado!",
+                description=f"Comandos do bot poderão ser usados em {canal.mention}",
+                color=discord.Color.purple()
+            )
+            embed.add_field(
+                name="💬 Quem pode usar?",
+                value=(
+                    "• **Usuários comuns** podem usar comandos apenas neste canal\n"
+                    "• **Administradores** podem usar comandos em qualquer lugar\n"
+                    "• Isso organiza melhor o uso do bot no servidor!"
+                ),
+                inline=False
+            )
+        else:
+            await interaction.followup.send("❌ Erro ao configurar canal.", ephemeral=True)
+            return
+    
     # Mostra configuração atual
     config = db.get_server_config(guild_id)
     config_text = "**Configuração Atual:**\n"
     
     if config:
+        if config['command_channel_id']:
+            config_text += f"💬 Comandos: <#{config['command_channel_id']}>\n"
+        else:
+            config_text += "💬 Comandos: Não configurado\n"
+        
         if config['notification_channel_id']:
             config_text += f"🔔 Alertas: <#{config['notification_channel_id']}>\n"
         else:
@@ -658,8 +809,8 @@ async def configurar(interaction: discord.Interaction, tipo: str, canal: discord
         else:
             config_text += "🎮 Partidas: Não configurado\n"
     
-    embed.add_field(name="⚙️ Status", value=config_text, inline=False)
-    embed.set_footer(text="Use /configurar alertas #canal ou /configurar partidas #canal")
+    embed.add_field(name="⚙️ Status do Servidor", value=config_text, inline=False)
+    embed.set_footer(text="Use /configurar para ver todas as configurações")
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="tops_flex", description="🏆 Veja o ranking dos melhores jogadores de Flex do mês")
@@ -668,6 +819,10 @@ async def configurar(interaction: discord.Interaction, tipo: str, canal: discord
 )
 async def tops_flex(interaction: discord.Interaction, quantidade: int = 10):
     """Mostra o ranking dos melhores jogadores por carry score"""
+    # Verifica permissão de canal
+    if not await check_command_channel(interaction):
+        return
+    
     await interaction.response.defer()
     
     # Limita quantidade
@@ -740,6 +895,10 @@ async def tops_flex(interaction: discord.Interaction, quantidade: int = 10):
 @bot.tree.command(name="flex", description="🎯 Guia completo do bot com botões interativos")
 async def flex_guide(interaction: discord.Interaction):
     """Comando com guia interativo do bot"""
+    # Verifica permissão de canal
+    if not await check_command_channel(interaction):
+        return
+    
     embed = discord.Embed(
         title="🎯 Flex dos Crias - Guia do Bot",
         description=(
