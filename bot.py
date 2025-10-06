@@ -117,24 +117,25 @@ async def logar(interaction: discord.Interaction, riot_id: str, regiao: str = DE
         )
         return
     
-    # Verifica se os dados necessários existem
+    # A API da Riot às vezes não retorna 'id' e 'accountId' mais
+    # Nesses casos, usamos o PUUID que é o identificador universal moderno
+    summoner_id = summoner.get('id', account['puuid'])
+    account_id = summoner.get('accountId', account['puuid'])
+    summoner_level = summoner.get('summonerLevel', 0)
+    
+    # Log para debug se os campos estiverem faltando
     if 'id' not in summoner or 'accountId' not in summoner:
-        await interaction.followup.send(
-            f"❌ Erro ao buscar dados completos do invocador.\n"
-            f"Resposta da API incompleta. Tente novamente em alguns instantes.",
-            ephemeral=True
-        )
-        print(f"Erro: Summoner data incompleto: {summoner}")
-        return
+        print(f"⚠️ API retornou summoner sem id/accountId. Usando PUUID como fallback.")
+        print(f"Summoner data: {summoner}")
     
     # Adiciona conta ao banco de dados
     discord_id = str(interaction.user.id)
     success, message = db.add_lol_account(
         discord_id=discord_id,
         summoner_name=f"{game_name}#{tag_line}",
-        summoner_id=summoner['id'],
+        summoner_id=summoner_id,
         puuid=account['puuid'],
-        account_id=summoner['accountId'],
+        account_id=account_id,
         region=regiao
     )
     
@@ -146,7 +147,7 @@ async def logar(interaction: discord.Interaction, riot_id: str, regiao: str = DE
             color=discord.Color.green()
         )
         embed.add_field(name="🌍 Região", value=regiao.upper(), inline=True)
-        embed.add_field(name="⭐ Nível", value=summoner['summonerLevel'], inline=True)
+        embed.add_field(name="⭐ Nível", value=summoner_level, inline=True)
         
         # Mostra quantas contas o usuário tem
         accounts = db.get_user_accounts(discord_id)
