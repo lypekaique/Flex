@@ -797,7 +797,7 @@ async def historico(interaction: discord.Interaction, conta: int = 1, quantidade
     
     embed = discord.Embed(
         title=f"📜 Histórico - {account['summoner_name']}",
-        description=f"Últimas {len(matches)} partidas de Ranked Flex",
+        description=f"**{len(matches)} partidas mais recentes de Ranked Flex**\n_ _",
         color=discord.Color.purple()
     )
     
@@ -808,14 +808,19 @@ async def historico(interaction: discord.Interaction, conta: int = 1, quantidade
         # Emoji do carry score
         if match['carry_score'] >= 75:
             carry_emoji = "🏆"
+            rank_text = "S+"
         elif match['carry_score'] >= 65:
             carry_emoji = "⭐"
+            rank_text = "S"
         elif match['carry_score'] >= 50:
             carry_emoji = "💎"
+            rank_text = "A"
         elif match['carry_score'] >= 35:
             carry_emoji = "🥈"
+            rank_text = "B"
         else:
             carry_emoji = "📊"
+            rank_text = "C"
         
         # Emoji por role
         role_emojis = {
@@ -828,19 +833,23 @@ async def historico(interaction: discord.Interaction, conta: int = 1, quantidade
         role_emoji = role_emojis.get(match['role'], '❓')
         
         match_info = f"""
-{result} • **{match['champion_name']}** {role_emoji} {match['role']}
-📊 KDA: {kda_ratio} ({match['kda']:.2f}) • KP: {match['kill_participation']:.0f}%
-{carry_emoji} Carry Score: **{match['carry_score']}/100**
-🗡️ Dano: {match['damage_dealt']:,} • 🌾 CS: {match['cs']}
-📅 {match['played_at'][:10]}
+**{match['champion_name']}** {role_emoji} {match['role']} • {result}
+━━━━━━━━━━━━━━━━━━━━━
+{carry_emoji} **Carry Score: {match['carry_score']}/100** ({rank_text})
+⚔️ KDA: **{kda_ratio}** ({match['kda']:.2f})
+🎯 Kill Participation: **{match['kill_participation']:.0f}%**
+🗡️ Dano: **{match['damage_dealt']:,}**
+🌾 CS: **{match['cs']}** • 👁️ Vision: **{match['vision_score']}**
+📅 {match['played_at'][:10]} às {match['played_at'][11:16]}
         """
         
         embed.add_field(
-            name=f"#{i}",
+            name=f"━━━━━━━━━━━━━ Partida #{i} ━━━━━━━━━━━━━",
             value=match_info.strip(),
             inline=False
         )
     
+    embed.set_footer(text=f"📊 Apenas Ranked Flex • Região: {account['region'].upper()}")
     await interaction.followup.send(embed=embed)
 
 # Auto-complete para tipo de configuração
@@ -1169,42 +1178,94 @@ async def flex_guide(interaction: discord.Interaction):
         return
     
     embed = discord.Embed(
-        title="🎯 Flex dos Crias - Guia do Bot",
+        title="🎮 Flex dos Crias",
         description=(
-            "**Bem-vindo ao melhor bot de tracking de Ranked Flex!**\n\n"
-            "Este bot monitora suas partidas automaticamente e calcula\n"
-            "um **Carry Score** baseado em múltiplos fatores.\n\n"
-            "Use os botões abaixo para aprender mais! 👇"
+            "**O bot definitivo de tracking para Ranked Flex!**\n\n"
+            "Monitore suas partidas, acompanhe seu desempenho em tempo real,\n"
+            "e descubra seu verdadeiro nível de carry com nosso sistema avançado.\n"
         ),
-        color=discord.Color.purple()
+        color=discord.Color.from_rgb(200, 155, 255)
     )
     
     embed.add_field(
-        name="🚀 Início Rápido",
+        name="━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        value="",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="🎯 **TRACKING EM TEMPO REAL**",
         value=(
-            "1️⃣ Use `/logar` para vincular sua conta\n"
-            "2️⃣ Jogue Ranked Flex normalmente\n"
-            "3️⃣ Veja suas stats com `/media`\n"
-            "4️⃣ Compete no ranking com `/tops_flex`"
+            "🔴 **Live Tracking**\n"
+            "• Notificação instantânea quando você entra em partida\n"
+            "• Acompanhe composições de times ao vivo\n"
+            "• Links para OP.GG, U.GG e Porofessor\n\n"
+            "🎮 **Auto-Update ao Finalizar**\n"
+            "• Mensagem atualiza automaticamente quando terminar\n"
+            "• Resultado aparece em até 10 segundos após o fim\n"
+            "• Histórico completo salvo automaticamente"
         ),
         inline=False
     )
     
     embed.add_field(
-        name="✨ Funcionalidades",
+        name="━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        value="",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="🏆 **SISTEMA DE CARRY SCORE**",
         value=(
-            "📊 Tracking automático de partidas\n"
-            "🏆 Sistema de Carry Score (0-100)\n"
-            "📈 Estatísticas mensais detalhadas\n"
-            "🎯 Ranking de melhores jogadores\n"
-            "⚠️ Alertas de performance\n"
-            "🔔 Notificações de partidas"
+            "**Pontuação de 0 a 100 baseada em:**\n"
+            "⚔️ Combate: KDA, Dano, Kill Participation\n"
+            "💰 Economia: CS/min, Gold/min\n"
+            "🎯 Objetivos: Torres, Dragões, Barões\n"
+            "👁️ Visão: Vision Score, Wards\n"
+            "🛡️ Utility: CC, Heals, Shields\n\n"
+            "**Cada role tem pesos personalizados!**"
         ),
         inline=False
     )
     
-    embed.set_footer(text="Clique nos botões abaixo para mais informações!")
-    embed.set_thumbnail(url="https://cdn.discordapp.com/embed/avatars/0.png")
+    embed.add_field(
+        name="━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        value="",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="📊 **COMANDOS PRINCIPAIS**",
+        value=(
+            "`/logar` • Vincule sua conta do LOL (até 3 contas)\n"
+            "`/media` • Estatísticas detalhadas por campeão/métrica\n"
+            "`/historico` • Veja suas últimas partidas\n"
+            "`/tops_flex` • Ranking dos melhores jogadores\n"
+            "`/contas` • Gerencie suas contas vinculadas"
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        value="",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="⚡ **DESTAQUES**",
+        value=(
+            "🔄 Verificação automática a cada **5 minutos**\n"
+            "🚀 Detecção de partidas finalizadas em **10 segundos**\n"
+            "📈 Análise por campeão, role e métrica específica\n"
+            "⚠️ Alertas inteligentes de performance\n"
+            "🌍 Suporte a **todas as regiões** da Riot"
+        ),
+        inline=False
+    )
+    
+    embed.set_footer(text="💡 Clique nos botões abaixo para mais informações!")
+    embed.set_thumbnail(url="https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-shared-components/global/default/ranked-emblem-flex.png")
     
     view = FlexGuideView()
     await interaction.response.send_message(embed=embed, view=view)
