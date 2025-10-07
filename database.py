@@ -644,4 +644,211 @@ class Database:
         
         conn.close()
         return ranking
+    
+    def get_monthly_matches_by_champion(self, lol_account_id: int, year: int, month: int, champion_name: str) -> List[Dict]:
+        """Retorna todas as partidas de um mês específico filtradas por campeão"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT match_id, game_mode, champion_name, role, kills, deaths, assists,
+                   damage_dealt, damage_taken, gold_earned, cs, vision_score,
+                   game_duration, win, carry_score, kda, kill_participation, played_at
+            FROM matches
+            WHERE lol_account_id = ?
+              AND champion_name = ?
+              AND strftime('%Y', played_at) = ?
+              AND strftime('%m', played_at) = ?
+            ORDER BY played_at DESC
+        ''', (lol_account_id, champion_name, str(year), f"{month:02d}"))
+        
+        matches = []
+        for row in cursor.fetchall():
+            matches.append({
+                'match_id': row[0],
+                'game_mode': row[1],
+                'champion_name': row[2],
+                'role': row[3],
+                'kills': row[4],
+                'deaths': row[5],
+                'assists': row[6],
+                'damage_dealt': row[7],
+                'damage_taken': row[8],
+                'gold_earned': row[9],
+                'cs': row[10],
+                'vision_score': row[11],
+                'game_duration': row[12],
+                'win': row[13],
+                'carry_score': row[14],
+                'kda': row[15],
+                'kill_participation': row[16],
+                'played_at': row[17]
+            })
+        
+        conn.close()
+        return matches
+    
+    def get_all_champions_played(self, lol_account_id: int, year: int, month: int) -> List[str]:
+        """Retorna lista de todos os campeões jogados por uma conta em um mês"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT DISTINCT champion_name
+            FROM matches
+            WHERE lol_account_id = ?
+              AND strftime('%Y', played_at) = ?
+              AND strftime('%m', played_at) = ?
+            ORDER BY champion_name
+        ''', (lol_account_id, str(year), f"{month:02d}"))
+        
+        champions = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        return champions
+    
+    def get_user_by_summoner_name(self, summoner_name: str) -> Optional[str]:
+        """Busca discord_id pelo summoner name (ignora case e #TAG)"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Remove #TAG se presente e busca com LIKE case insensitive
+        search_name = summoner_name.split('#')[0]
+        cursor.execute('''
+            SELECT discord_id FROM lol_accounts
+            WHERE LOWER(summoner_name) LIKE LOWER(?)
+            LIMIT 1
+        ''', (f"{search_name}%",))
+        
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else None
+    
+    def delete_all_matches(self) -> tuple[bool, int]:
+        """Deleta TODAS as partidas do banco de dados. Retorna (sucesso, quantidade deletada)"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Conta quantas partidas tem antes de deletar
+            cursor.execute('SELECT COUNT(*) FROM matches')
+            count = cursor.fetchone()[0]
+            
+            # Deleta todas as partidas
+            cursor.execute('DELETE FROM matches')
+            
+            # Também limpa as notificações de live games antigas
+            cursor.execute('DELETE FROM live_games_notified')
+            
+            conn.commit()
+            conn.close()
+            
+            print(f"🗑️ [DATABASE] {count} partidas deletadas do banco")
+            return True, count
+        except Exception as e:
+            print(f"❌ [DATABASE] Erro ao deletar todas as partidas: {e}")
+            return False, 0
+    
+    def delete_matches_by_account(self, lol_account_id: int) -> tuple[bool, int]:
+        """Deleta todas as partidas de uma conta específica. Retorna (sucesso, quantidade deletada)"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Conta quantas partidas tem antes de deletar
+            cursor.execute('SELECT COUNT(*) FROM matches WHERE lol_account_id = ?', (lol_account_id,))
+            count = cursor.fetchone()[0]
+            
+            # Deleta as partidas
+            cursor.execute('DELETE FROM matches WHERE lol_account_id = ?', (lol_account_id,))
+            
+            # Limpa notificações de live games dessa conta
+            cursor.execute('DELETE FROM live_games_notified WHERE lol_account_id = ?', (lol_account_id,))
+            
+            conn.commit()
+            conn.close()
+            
+            print(f"🗑️ [DATABASE] {count} partidas deletadas da conta ID {lol_account_id}")
+            return True, count
+        except Exception as e:
+            print(f"❌ [DATABASE] Erro ao deletar partidas da conta {lol_account_id}: {e}")
+            return False, 0
+    
+    def delete_matches_by_discord_user(self, discord_id: str) -> tuple[bool, int]:
+        """Deleta todas as partidas de todas as contas de um usuário Discord. Retorna (sucesso, quantidade deletada)"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Busca IDs de todas as contas do usuário
+            cursor.execute('SELECT id FROM lol_accounts WHERE discord_id = ?', (discord_id,))
+            account_ids = [row[0] for row in cursor.fetchall()]
+            
+            if not account_ids:
+                conn.close()
+                return True, 0
+            
+            # Conta quantas partidas tem antes de deletar
+            placeholders = ','.join('?' * len(account_ids))
+            cursor.execute(f'SELECT COUNT(*) FROM matches WHERE lol_account_id IN ({placeholders})', account_ids)
+            count = cursor.fetchone()[0]
+            
+            # Deleta as partidas
+            cursor.execute(f'DELETE FROM matches WHERE lol_account_id IN ({placeholders})', account_ids)
+            
+            # Limpa notificações de live games dessas contas
+            cursor.execute(f'DELETE FROM live_games_notified WHERE lol_account_id IN ({placeholders})', account_ids)
+            
+            conn.commit()
+            conn.close()
+            
+            print(f"🗑️ [DATABASE] {count} partidas deletadas do usuário Discord {discord_id}")
+            return True, count
+        except Exception as e:
+            print(f"❌ [DATABASE] Erro ao deletar partidas do usuário {discord_id}: {e}")
+            return False, 0
+    
+    def get_active_live_games(self, hours: int = 2) -> List[Dict]:
+        """Retorna lista de live games notificadas recentemente (últimas X horas) que ainda não foram processadas"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT lol_account_id, game_id, message_id, channel_id, guild_id, notified_at
+            FROM live_games_notified
+            WHERE notified_at > datetime('now', '-' || ? || ' hours')
+            ORDER BY notified_at DESC
+        ''', (hours,))
+        
+        live_games = []
+        for row in cursor.fetchall():
+            live_games.append({
+                'lol_account_id': row[0],
+                'game_id': row[1],
+                'message_id': row[2],
+                'channel_id': row[3],
+                'guild_id': row[4],
+                'notified_at': row[5]
+            })
+        
+        conn.close()
+        return live_games
+    
+    def remove_live_game_notification(self, lol_account_id: int, game_id: str) -> bool:
+        """Remove uma notificação de live game específica"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                DELETE FROM live_games_notified
+                WHERE lol_account_id = ? AND game_id = ?
+            ''', (lol_account_id, game_id))
+            conn.commit()
+            deleted = cursor.rowcount
+            conn.close()
+            
+            if deleted > 0:
+                print(f"✅ [DATABASE] Live game {game_id} removida da lista de notificações")
+            return True
+        except Exception as e:
+            print(f"❌ [DATABASE] Erro ao remover live game notification: {e}")
+            return False
 

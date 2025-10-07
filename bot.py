@@ -107,7 +107,7 @@ class FlexGuideView(discord.ui.View):
             value=(
                 "`/logar` - Vincular sua conta do LoL\n"
                 "`/contas` - Ver suas contas vinculadas\n"
-                "`/media` - Ver suas estatísticas do mês\n"
+                "`/media` - Ver estatísticas (por campeão, métrica, outro jogador)\n"
                 "`/historico` - Ver histórico de partidas\n"
                 "`/tops_flex` - Ver ranking dos melhores\n"
                 "`/flex` - Ver este guia novamente"
@@ -248,11 +248,26 @@ async def on_ready():
     except Exception as e:
         print(f'Erro ao sincronizar comandos: {e}')
     
-    # Inicia verificação de partidas
-    check_new_matches.start()
+    # Inicia verificação de partidas (verifica se já não está rodando)
+    if not check_new_matches.is_running():
+        check_new_matches.start()
+        print('✅ Task de verificação de partidas iniciada')
+    else:
+        print('⚠️ Task de verificação de partidas já está rodando')
     
-    # Inicia verificação de live games
-    check_live_games.start()
+    # Inicia verificação de live games (verifica se já não está rodando)
+    if not check_live_games.is_running():
+        check_live_games.start()
+        print('✅ Task de verificação de live games iniciada')
+    else:
+        print('⚠️ Task de verificação de live games já está rodando')
+    
+    # Inicia verificação rápida de partidas finalizadas (a cada 10s)
+    if not check_live_games_finished.is_running():
+        check_live_games_finished.start()
+        print('✅ Task de verificação rápida de partidas finalizadas iniciada (10s)')
+    else:
+        print('⚠️ Task de verificação rápida já está rodando')
 
 # Auto-complete para regiões
 async def region_autocomplete(
@@ -358,6 +373,33 @@ async def logar(interaction: discord.Interaction, riot_id: str, regiao: str = DE
     )
     
     if success:
+        # Busca o ID da conta recém-criada
+        accounts = db.get_user_accounts(discord_id)
+        new_account = None
+        for acc in accounts:
+            if acc['puuid'] == account['puuid']:
+                new_account = acc
+                break
+        
+        # Marca partidas antigas como já vistas para não enviar notificações
+        if new_account:
+            try:
+                # Busca última partida sem processar (só para marcar como vista)
+                match_ids = await riot_api.get_match_history(account['puuid'], regiao, count=1)
+                if match_ids and len(match_ids) > 0:
+                    # Busca detalhes da última partida
+                    match_data = await riot_api.get_match_details(match_ids[0], regiao)
+                    if match_data:
+                        # Extrai stats mas NÃO envia notificações
+                        stats = riot_api.extract_player_stats(match_data, account['puuid'])
+                        if stats:
+                            # Salva silenciosamente para marcar como última partida vista
+                            db.add_match(new_account['id'], stats)
+                            print(f"✅ Última partida marcada para {game_name}#{tag_line} (sem notificar histórico)")
+            except Exception as e:
+                print(f"⚠️ Erro ao marcar última partida: {e}")
+                # Não interrompe o fluxo se houver erro
+        
         # Cria embed bonito
         embed = discord.Embed(
             title="✅ Conta Vinculada!",
@@ -368,14 +410,13 @@ async def logar(interaction: discord.Interaction, riot_id: str, regiao: str = DE
         embed.add_field(name="⭐ Nível", value=summoner_level, inline=True)
         
         # Mostra quantas contas o usuário tem
-        accounts = db.get_user_accounts(discord_id)
         embed.add_field(
             name="📊 Contas Vinculadas", 
             value=f"{len(accounts)}/3", 
             inline=True
         )
         
-        embed.set_footer(text="O bot começará a monitorar suas partidas de Flex automaticamente!")
+        embed.set_footer(text="O bot começará a monitorar apenas suas PRÓXIMAS partidas de Flex!")
         await interaction.followup.send(embed=embed, ephemeral=True)
     else:
         await interaction.followup.send(f"❌ {message}", ephemeral=True)
@@ -415,32 +456,94 @@ async def contas(interaction: discord.Interaction):
     
     await interaction.followup.send(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="media", description="📊 Veja suas estatísticas e média de carry score do mês")
+# Auto-complete para campeões
+async def champion_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> list[app_commands.Choice[str]]:
+    """Auto-complete para campeões jogados pelo usuário"""
+    discord_id = str(interaction.user.id)
+    accounts = db.get_user_accounts(discord_id)
+    
+    if not accounts:
+        return []
+    
+    # Busca todos os campeões jogados este mês
+    now = datetime.now()
+    all_champions = set()
+    for account in accounts:
+        champions = db.get_all_champions_played(account['id'], now.year, now.month)
+        all_champions.update(champions)
+    
+    # Filtra por texto digitado
+    filtered = [champ for champ in sorted(all_champions) if current.lower() in champ.lower()]
+    
+    return [
+        app_commands.Choice(name=champ, value=champ)
+        for champ in filtered[:25]  # Discord limita a 25
+    ]
+
+# Auto-complete para métricas
+async def metric_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> list[app_commands.Choice[str]]:
+    """Auto-complete para métricas disponíveis"""
+    metrics = [
+        ('🏆 Carry Score', 'carry'),
+        ('⚔️ KDA', 'kda'),
+        ('🗡️ Dano aos Campeões', 'dano'),
+        ('🌾 CS (Farm)', 'cs'),
+        ('👁️ Vision Score', 'visao'),
+        ('🎯 Kill Participation', 'kp'),
+        ('💰 Gold por Minuto', 'gold'),
+        ('📊 Todas as Métricas', 'todas'),
+    ]
+    
+    return [
+        app_commands.Choice(name=name, value=value)
+        for name, value in metrics
+        if current.lower() in name.lower() or current.lower() in value.lower()
+    ]
+
+@bot.tree.command(name="media", description="📊 Veja estatísticas detalhadas de desempenho no Flex")
 @app_commands.describe(
+    campeao="Filtrar por campeão específico (deixe vazio para ver todos)",
+    metrica="Métrica específica para analisar (carry, kda, dano, cs, visao, kp, gold)",
+    usuario="Ver estatísticas de outro jogador (mencione ou digite o nome)",
     conta="Número da conta (1, 2 ou 3). Deixe vazio para ver todas"
 )
-async def media(interaction: discord.Interaction, conta: int = None):
-    """Calcula a média de carry score do mês atual"""
+@app_commands.autocomplete(campeao=champion_autocomplete, metrica=metric_autocomplete)
+async def media(interaction: discord.Interaction, campeao: str = None, metrica: str = None, 
+                usuario: discord.User = None, conta: int = None):
+    """Calcula estatísticas e média de desempenho do mês atual"""
     # Verifica permissão de canal
     if not await check_command_channel(interaction):
         return
     
     await interaction.response.defer()
     
-    discord_id = str(interaction.user.id)
+    # Define qual usuário buscar
+    target_user = usuario if usuario else interaction.user
+    discord_id = str(target_user.id)
     accounts = db.get_user_accounts(discord_id)
     
     if not accounts:
-        await interaction.followup.send(
-            "❌ Você não tem nenhuma conta vinculada. Use `/logar` para vincular uma conta!"
-        )
+        if usuario:
+            await interaction.followup.send(
+                f"❌ {target_user.mention} não tem nenhuma conta vinculada ao bot."
+            )
+        else:
+            await interaction.followup.send(
+                "❌ Você não tem nenhuma conta vinculada. Use `/logar` para vincular uma conta!"
+            )
         return
     
     # Se especificou uma conta, valida
     if conta is not None:
         if conta < 1 or conta > len(accounts):
             await interaction.followup.send(
-                f"❌ Conta inválida! Você tem {len(accounts)} conta(s) vinculada(s)."
+                f"❌ Conta inválida! {'Esse usuário tem' if usuario else 'Você tem'} {len(accounts)} conta(s) vinculada(s)."
             )
             return
         accounts = [accounts[conta - 1]]
@@ -450,19 +553,47 @@ async def media(interaction: discord.Interaction, conta: int = None):
     month = now.month
     year = now.year
     
+    # Define título do embed baseado nos filtros
+    title_parts = ["📊 Estatísticas"]
+    if campeao:
+        title_parts.append(f"- {campeao}")
+    if metrica and metrica != 'todas':
+        metric_names = {
+            'carry': 'Carry Score',
+            'kda': 'KDA',
+            'dano': 'Dano',
+            'cs': 'CS',
+            'visao': 'Visão',
+            'kp': 'Kill Participation',
+            'gold': 'Gold'
+        }
+        title_parts.append(f"- {metric_names.get(metrica, metrica.upper())}")
+    title_parts.append(f"- {now.strftime('%B/%Y')}")
+    
     # Cria embed para resultados
     embed = discord.Embed(
-        title=f"📊 Estatísticas de {now.strftime('%B/%Y')}",
+        title=" ".join(title_parts),
         color=discord.Color.gold()
     )
     
+    if usuario:
+        embed.set_author(name=f"Estatísticas de {target_user.display_name}", icon_url=target_user.display_avatar.url)
+    
     for account in accounts:
-        matches = db.get_monthly_matches(account['id'], year, month)
+        # Busca partidas (filtradas por campeão se especificado)
+        if campeao:
+            matches = db.get_monthly_matches_by_champion(account['id'], year, month, campeao)
+        else:
+            matches = db.get_monthly_matches(account['id'], year, month)
         
         if not matches:
+            msg = f"Nenhuma partida de Flex"
+            if campeao:
+                msg += f" com **{campeao}**"
+            msg += " registrada este mês."
             embed.add_field(
                 name=f"⚠️ {account['summoner_name']}",
-                value="Nenhuma partida de Flex registrada este mês.",
+                value=msg,
                 inline=False
             )
             continue
@@ -478,6 +609,14 @@ async def media(interaction: discord.Interaction, conta: int = None):
         avg_assists = sum(m['assists'] for m in matches) / total_matches
         avg_kda_calc = (avg_kills + avg_assists) / max(avg_deaths, 1)
         avg_kp = sum(m['kill_participation'] for m in matches) / total_matches
+        avg_dano = sum(m['damage_dealt'] for m in matches) / total_matches
+        avg_cs = sum(m['cs'] for m in matches) / total_matches
+        avg_visao = sum(m['vision_score'] for m in matches) / total_matches
+        avg_gold = sum(m['gold_earned'] for m in matches) / total_matches
+        
+        # Calcula gold per minute médio
+        avg_game_duration_min = sum(m['game_duration'] for m in matches) / total_matches / 60
+        avg_gpm = avg_gold / avg_game_duration_min if avg_game_duration_min > 0 else 0
         
         # Estatísticas por role
         role_count = {}
@@ -513,23 +652,106 @@ async def media(interaction: discord.Interaction, conta: int = None):
         }
         role_emoji = role_emojis.get(most_played_role, '❓')
         
-        # Adiciona campo ao embed
-        stats_text = f"""
+        # Constrói texto baseado na métrica selecionada
+        if metrica == 'carry' or not metrica:
+            stats_text = f"""
 {emoji} **{rank}**
 📈 Carry Score Médio: **{int(avg_carry)}/100**
 🎮 Partidas: **{total_matches}** • ✅ WR: **{win_rate:.1f}%**
 ⚔️ KDA: **{avg_kda_calc:.2f}** ({avg_kills:.1f}/{avg_deaths:.1f}/{avg_assists:.1f})
 🎯 Kill Participation: **{avg_kp:.1f}%**
 {role_emoji} Role Mais Jogada: **{most_played_role}** ({role_count[most_played_role]}x)
-        """
+            """
+        elif metrica == 'kda':
+            stats_text = f"""
+⚔️ **Análise de KDA**
+📈 KDA Médio: **{avg_kda_calc:.2f}**
+💀 K/D/A: **{avg_kills:.1f}** / **{avg_deaths:.1f}** / **{avg_assists:.1f}**
+🎯 Kill Participation: **{avg_kp:.1f}%**
+🎮 Partidas: **{total_matches}** • ✅ WR: **{win_rate:.1f}%**
+{emoji} Carry Score: **{int(avg_carry)}/100**
+            """
+        elif metrica == 'dano':
+            stats_text = f"""
+🗡️ **Análise de Dano**
+💥 Dano Médio aos Campeões: **{int(avg_dano):,}**
+📊 Dano por Partida: **{int(avg_dano):,}**
+🎮 Partidas: **{total_matches}** • ✅ WR: **{win_rate:.1f}%**
+⚔️ KDA: **{avg_kda_calc:.2f}**
+{emoji} Carry Score: **{int(avg_carry)}/100**
+            """
+        elif metrica == 'cs':
+            avg_cspm = avg_cs / avg_game_duration_min if avg_game_duration_min > 0 else 0
+            stats_text = f"""
+🌾 **Análise de Farm (CS)**
+📊 CS Médio por Partida: **{int(avg_cs)}**
+⏱️ CS por Minuto: **{avg_cspm:.1f}**
+💰 Gold Médio: **{int(avg_gold):,}**
+🎮 Partidas: **{total_matches}** • ✅ WR: **{win_rate:.1f}%**
+{emoji} Carry Score: **{int(avg_carry)}/100**
+            """
+        elif metrica == 'visao':
+            avg_vision_pm = avg_visao / avg_game_duration_min if avg_game_duration_min > 0 else 0
+            stats_text = f"""
+👁️ **Análise de Visão**
+📊 Vision Score Médio: **{int(avg_visao)}**
+⏱️ Vision Score por Minuto: **{avg_vision_pm:.2f}**
+🎮 Partidas: **{total_matches}** • ✅ WR: **{win_rate:.1f}%**
+⚔️ KDA: **{avg_kda_calc:.2f}**
+{emoji} Carry Score: **{int(avg_carry)}/100**
+            """
+        elif metrica == 'kp':
+            stats_text = f"""
+🎯 **Análise de Kill Participation**
+📊 KP Médio: **{avg_kp:.1f}%**
+💀 Kills: **{avg_kills:.1f}** • Assists: **{avg_assists:.1f}**
+🎮 Partidas: **{total_matches}** • ✅ WR: **{win_rate:.1f}%**
+⚔️ KDA: **{avg_kda_calc:.2f}**
+{emoji} Carry Score: **{int(avg_carry)}/100**
+            """
+        elif metrica == 'gold':
+            stats_text = f"""
+💰 **Análise de Gold**
+📊 Gold Médio por Partida: **{int(avg_gold):,}**
+⏱️ Gold por Minuto (GPM): **{int(avg_gpm)}**
+🌾 CS Médio: **{int(avg_cs)}**
+🎮 Partidas: **{total_matches}** • ✅ WR: **{win_rate:.1f}%**
+{emoji} Carry Score: **{int(avg_carry)}/100**
+            """
+        else:  # metrica == 'todas'
+            avg_cspm = avg_cs / avg_game_duration_min if avg_game_duration_min > 0 else 0
+            stats_text = f"""
+{emoji} **{rank}** - Carry Score: **{int(avg_carry)}/100**
+🎮 **{total_matches}** partidas • ✅ **{win_rate:.1f}%** WR
+
+**⚔️ Combate:**
+• KDA: **{avg_kda_calc:.2f}** ({avg_kills:.1f}/{avg_deaths:.1f}/{avg_assists:.1f})
+• KP: **{avg_kp:.1f}%** • Dano: **{int(avg_dano):,}**
+
+**💰 Economia:**
+• CS: **{int(avg_cs)}** ({avg_cspm:.1f}/min)
+• Gold: **{int(avg_gold):,}** ({int(avg_gpm)} GPM)
+
+**🎯 Utility:**
+• Vision Score: **{int(avg_visao)}**
+• {role_emoji} Role: **{most_played_role}** ({role_count[most_played_role]}x)
+            """
+        
+        # Nome do campo
+        field_name = f"🎯 {account['summoner_name']} ({account['region'].upper()})"
+        if campeao:
+            field_name += f" - {campeao}"
         
         embed.add_field(
-            name=f"🎯 {account['summoner_name']} ({account['region'].upper()})",
+            name=field_name,
             value=stats_text.strip(),
             inline=False
         )
     
-    embed.set_footer(text="Apenas partidas de Ranked Flex são contabilizadas")
+    footer_text = "Apenas partidas de Ranked Flex são contabilizadas"
+    if campeao:
+        footer_text += f" • Filtrado por {campeao}"
+    embed.set_footer(text=footer_text)
     await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="historico", description="📜 Veja seu histórico detalhado de partidas recentes")
@@ -987,6 +1209,146 @@ async def flex_guide(interaction: discord.Interaction):
     view = FlexGuideView()
     await interaction.response.send_message(embed=embed, view=view)
 
+@bot.tree.command(name="reset_media", description="🗑️ [ADMIN] Reseta estatísticas de partidas do banco de dados")
+@app_commands.describe(
+    modo="Escolha 'all' para resetar tudo ou 'usuario' para resetar de alguém específico",
+    usuario="[Opcional] Usuário para resetar (apenas se modo='usuario')",
+    conta_numero="[Opcional] Número da conta (1, 2 ou 3) para resetar apenas uma conta específica"
+)
+@app_commands.choices(modo=[
+    app_commands.Choice(name="🗑️ Resetar TODAS as partidas do servidor", value="all"),
+    app_commands.Choice(name="👤 Resetar partidas de um usuário específico", value="usuario")
+])
+@app_commands.checks.has_permissions(administrator=True)
+async def reset_media(
+    interaction: discord.Interaction, 
+    modo: app_commands.Choice[str],
+    usuario: discord.User = None,
+    conta_numero: int = None
+):
+    """[ADMIN] Reseta estatísticas de partidas"""
+    await interaction.response.defer(ephemeral=True)
+    
+    # Modo ALL - reseta tudo
+    if modo.value == "all":
+        # Confirmação extra para resetar tudo
+        embed = discord.Embed(
+            title="⚠️ CONFIRMAÇÃO NECESSÁRIA",
+            description=(
+                "Você está prestes a **DELETAR TODAS AS PARTIDAS** do banco de dados!\n\n"
+                "**Isso inclui:**\n"
+                "• Todas as partidas de todos os usuários\n"
+                "• Todo o histórico de estatísticas\n"
+                "• Todos os carry scores registrados\n\n"
+                "**As contas vinculadas NÃO serão removidas.**\n\n"
+                "⚠️ **ESTA AÇÃO NÃO PODE SER DESFEITA!**"
+            ),
+            color=discord.Color.red()
+        )
+        embed.set_footer(text="Use /reset_media_confirmar para confirmar a ação")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        return
+    
+    # Modo USUARIO - reseta de um usuário específico
+    elif modo.value == "usuario":
+        if not usuario:
+            await interaction.followup.send(
+                "❌ Você precisa mencionar um usuário quando usar o modo 'usuario'!\n"
+                "Exemplo: `/reset_media modo:usuario usuario:@Jogador`",
+                ephemeral=True
+            )
+            return
+        
+        discord_id = str(usuario.id)
+        accounts = db.get_user_accounts(discord_id)
+        
+        if not accounts:
+            await interaction.followup.send(
+                f"❌ {usuario.mention} não tem nenhuma conta vinculada ao bot.",
+                ephemeral=True
+            )
+            return
+        
+        # Se especificou número da conta
+        if conta_numero:
+            if conta_numero < 1 or conta_numero > len(accounts):
+                await interaction.followup.send(
+                    f"❌ Conta inválida! {usuario.mention} tem {len(accounts)} conta(s) vinculada(s).",
+                    ephemeral=True
+                )
+                return
+            
+            # Reseta apenas uma conta específica
+            account = accounts[conta_numero - 1]
+            success, deleted_count = db.delete_matches_by_account(account['id'])
+            
+            if success:
+                embed = discord.Embed(
+                    title="✅ Partidas Resetadas!",
+                    description=f"Partidas da conta **{account['summoner_name']}** foram deletadas.",
+                    color=discord.Color.green()
+                )
+                embed.add_field(name="👤 Usuário", value=usuario.mention, inline=True)
+                embed.add_field(name="🎮 Conta", value=account['summoner_name'], inline=True)
+                embed.add_field(name="🗑️ Partidas Deletadas", value=str(deleted_count), inline=True)
+                await interaction.followup.send(embed=embed, ephemeral=True)
+            else:
+                await interaction.followup.send("❌ Erro ao deletar partidas.", ephemeral=True)
+        
+        else:
+            # Reseta todas as contas do usuário
+            total_deleted = 0
+            accounts_info = []
+            
+            for account in accounts:
+                success, deleted_count = db.delete_matches_by_account(account['id'])
+                if success:
+                    total_deleted += deleted_count
+                    accounts_info.append(f"• **{account['summoner_name']}**: {deleted_count} partidas")
+            
+            embed = discord.Embed(
+                title="✅ Partidas Resetadas!",
+                description=f"Todas as partidas de {usuario.mention} foram deletadas.",
+                color=discord.Color.green()
+            )
+            embed.add_field(name="👤 Usuário", value=usuario.mention, inline=False)
+            embed.add_field(
+                name="🎮 Contas Afetadas",
+                value="\n".join(accounts_info) if accounts_info else "Nenhuma",
+                inline=False
+            )
+            embed.add_field(name="🗑️ Total Deletado", value=f"{total_deleted} partidas", inline=False)
+            await interaction.followup.send(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="reset_media_confirmar", description="🗑️ [ADMIN] Confirma o reset de TODAS as partidas")
+@app_commands.checks.has_permissions(administrator=True)
+async def reset_media_confirmar(interaction: discord.Interaction):
+    """[ADMIN] Confirma o reset completo do banco de partidas"""
+    await interaction.response.defer(ephemeral=True)
+    
+    # Deleta todas as partidas
+    success, deleted_count = db.delete_all_matches()
+    
+    if success:
+        embed = discord.Embed(
+            title="✅ Banco de Dados Resetado!",
+            description=(
+                "**Todas as partidas foram deletadas com sucesso.**\n\n"
+                "O bot continuará monitorando e registrando novas partidas normalmente."
+            ),
+            color=discord.Color.green()
+        )
+        embed.add_field(name="🗑️ Partidas Deletadas", value=str(deleted_count), inline=True)
+        embed.add_field(name="📊 Status", value="Banco limpo", inline=True)
+        embed.set_footer(text="As contas vinculadas não foram afetadas")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        print(f"⚠️ [ADMIN] {interaction.user.name} resetou TODAS as partidas ({deleted_count} deletadas)")
+    else:
+        await interaction.followup.send(
+            "❌ Erro ao resetar banco de dados. Verifique os logs.",
+            ephemeral=True
+        )
+
 async def send_match_notification(lol_account_id: int, stats: Dict):
     """Atualiza notificação de live game ou envia nova quando uma partida termina"""
     try:
@@ -1345,9 +1707,15 @@ async def send_live_game_notification(lol_account_id: int, live_info: Dict):
             game_time_min = game_length // 60
             game_time_sec = game_length % 60
             
+            # Formata tempo de jogo (se negativo ou 0, mostra 00:00)
+            if game_length <= 0:
+                game_time_display = "00:00"
+            else:
+                game_time_display = f"{game_time_min}:{game_time_sec:02d}"
+            
             embed.add_field(
                 name="⏱️ Tempo de Jogo",
-                value=f"**{game_time_min}:{game_time_sec:02d}**",
+                value=f"**{game_time_display}**",
                 inline=True
             )
             
@@ -1422,6 +1790,8 @@ async def send_live_game_notification(lol_account_id: int, live_info: Dict):
 async def check_live_games():
     """Task que verifica se jogadores estão em partidas ao vivo a cada 2 minutos"""
     try:
+        print("🔄 [Live Games] Verificando partidas ao vivo...")
+        
         # Limpa notificações antigas (mais de 6 horas)
         db.cleanup_old_live_game_notifications(hours=6)
         
@@ -1431,6 +1801,12 @@ async def check_live_games():
         cursor.execute('SELECT id, puuid, region FROM lol_accounts')
         accounts = cursor.fetchall()
         conn.close()
+        
+        if not accounts:
+            print("⚠️ [Live Games] Nenhuma conta vinculada para verificar")
+            return
+        
+        print(f"📊 [Live Games] Verificando {len(accounts)} conta(s)...")
         
         for account_id, puuid, region in accounts:
             try:
@@ -1463,21 +1839,37 @@ async def check_live_games():
                 await asyncio.sleep(0.5)
                 
             except Exception as e:
-                print(f"Erro ao verificar live game para conta {account_id}: {e}")
+                print(f"❌ [Live Games] Erro ao verificar conta {account_id}: {e}")
                 continue
+        
+        print("✅ [Live Games] Verificação concluída")
     
     except Exception as e:
-        print(f"Erro ao verificar live games: {e}")
+        print(f"❌ [Live Games] Erro geral ao verificar live games: {e}")
+        import traceback
+        traceback.print_exc()
 
 @check_live_games.before_loop
 async def before_check_live_games():
     """Espera o bot estar pronto antes de iniciar o loop de live games"""
+    print("⏳ [Live Games] Aguardando bot estar pronto...")
     await bot.wait_until_ready()
+    print("✅ [Live Games] Bot pronto! Iniciando verificação de live games...")
+
+@check_live_games.error
+async def check_live_games_error(error):
+    """Trata erros no loop de live games"""
+    print(f"❌ [Live Games] Erro crítico no loop: {error}")
+    import traceback
+    traceback.print_exc()
+    # Task loop automaticamente reinicia após erro
 
 @tasks.loop(minutes=5)
 async def check_new_matches():
     """Task que verifica novas partidas a cada 5 minutos"""
     try:
+        print("🔄 [Partidas] Verificando novas partidas...")
+        
         # Busca todas as contas vinculadas
         conn = db.get_connection()
         cursor = conn.cursor()
@@ -1485,51 +1877,178 @@ async def check_new_matches():
         accounts = cursor.fetchall()
         conn.close()
         
+        if not accounts:
+            print("⚠️ [Partidas] Nenhuma conta vinculada para verificar")
+            return
+        
+        print(f"📊 [Partidas] Verificando {len(accounts)} conta(s)...")
+        new_matches_count = 0
+        
         for account_id, puuid, region in accounts:
-            # Busca últimas partidas
-            match_ids = await riot_api.get_match_history(puuid, region, count=5)
+            try:
+                # Busca últimas partidas
+                match_ids = await riot_api.get_match_history(puuid, region, count=5)
+                
+                if not match_ids:
+                    continue
+                
+                # Verifica se são partidas novas
+                last_match = db.get_last_match_id(account_id)
+                
+                for match_id in match_ids:
+                    # Se já foi registrada, para
+                    if match_id == last_match:
+                        break
+                    
+                    # Busca detalhes da partida
+                    match_data = await riot_api.get_match_details(match_id, region)
+                    
+                    if match_data:
+                        # Extrai estatísticas do jogador
+                        stats = riot_api.extract_player_stats(match_data, puuid)
+                        
+                        if stats:
+                            # Salva no banco de dados
+                            db.add_match(account_id, stats)
+                            new_matches_count += 1
+                            print(f"✅ [Partidas] Nova partida registrada: {match_id} (Score: {stats['carry_score']})")
+                            
+                            # Envia notificação de partida terminada
+                            await send_match_notification(account_id, stats)
+                            
+                            # Verifica se jogou 3x o mesmo campeão com score baixo
+                            await check_champion_performance(account_id, stats['champion_name'])
+                    
+                    # Delay para não sobrecarregar a API
+                    await asyncio.sleep(1)
+                
+                await asyncio.sleep(2)
             
-            if not match_ids:
+            except Exception as e:
+                print(f"❌ [Partidas] Erro ao verificar conta {account_id}: {e}")
                 continue
+        
+        if new_matches_count > 0:
+            print(f"🎮 [Partidas] {new_matches_count} nova(s) partida(s) encontrada(s)")
+        else:
+            print("✅ [Partidas] Verificação concluída - Nenhuma partida nova")
+    
+    except Exception as e:
+        print(f"❌ [Partidas] Erro geral ao verificar partidas: {e}")
+        import traceback
+        traceback.print_exc()
+
+@check_new_matches.before_loop
+async def before_check_matches():
+    """Espera o bot estar pronto antes de iniciar o loop"""
+    print("⏳ [Partidas] Aguardando bot estar pronto...")
+    await bot.wait_until_ready()
+    print("✅ [Partidas] Bot pronto! Iniciando verificação de partidas...")
+
+@check_new_matches.error
+async def check_new_matches_error(error):
+    """Trata erros no loop de verificação de partidas"""
+    print(f"❌ [Partidas] Erro crítico no loop: {error}")
+    import traceback
+    traceback.print_exc()
+    # Task loop automaticamente reinicia após erro
+
+@tasks.loop(seconds=10)
+async def check_live_games_finished():
+    """Task rápida que verifica a cada 10s se jogos ao vivo já terminaram"""
+    try:
+        # Busca todas as live games notificadas recentemente (últimas 2 horas)
+        live_games = db.get_active_live_games(hours=2)
+        
+        if not live_games:
+            return
+        
+        print(f"🔄 [Live Check] Verificando {len(live_games)} partida(s) ao vivo...")
+        
+        for live_game in live_games:
+            account_id = live_game['lol_account_id']
+            game_id = live_game['game_id']
             
-            # Verifica se são partidas novas
-            last_match = db.get_last_match_id(account_id)
-            
-            for match_id in match_ids:
-                # Se já foi registrada, para
-                if match_id == last_match:
-                    break
+            try:
+                # Busca informações da conta
+                conn = db.get_connection()
+                cursor = conn.cursor()
+                cursor.execute('SELECT puuid, region FROM lol_accounts WHERE id = ?', (account_id,))
+                account_data = cursor.fetchone()
+                conn.close()
+                
+                if not account_data:
+                    continue
+                
+                puuid, region = account_data
+                
+                # Busca últimas partidas (apenas 1, a mais recente)
+                match_ids = await riot_api.get_match_history(puuid, region, count=1)
+                
+                if not match_ids:
+                    continue
+                
+                match_id = match_ids[0]
+                
+                # Verifica se já está registrada no banco
+                if db.get_last_match_id(account_id) == match_id:
+                    # Já foi processada, pode remover da lista de live games
+                    continue
                 
                 # Busca detalhes da partida
                 match_data = await riot_api.get_match_details(match_id, region)
                 
                 if match_data:
-                    # Extrai estatísticas do jogador
-                    stats = riot_api.extract_player_stats(match_data, puuid)
-                    
-                    if stats:
-                        # Salva no banco de dados
-                        db.add_match(account_id, stats)
-                        print(f"Nova partida registrada: {match_id} (Score: {stats['carry_score']})")
+                    # Verifica se é a partida do live game (o game_id da spectator API é diferente do match_id)
+                    # Então verificamos se a partida terminou recentemente (menos de 10 minutos)
+                    game_end_timestamp = match_data.get('info', {}).get('gameEndTimestamp')
+                    if game_end_timestamp:
+                        from datetime import datetime, timedelta
+                        game_end = datetime.fromtimestamp(game_end_timestamp / 1000)
+                        now = datetime.now()
                         
-                        # Envia notificação de partida terminada
-                        await send_match_notification(account_id, stats)
-                        
-                        # Verifica se jogou 3x o mesmo campeão com score baixo
-                        await check_champion_performance(account_id, stats['champion_name'])
+                        # Se terminou há menos de 10 minutos, processamos
+                        if (now - game_end) < timedelta(minutes=10):
+                            # Extrai estatísticas do jogador
+                            stats = riot_api.extract_player_stats(match_data, puuid)
+                            
+                            if stats:
+                                # Salva no banco de dados
+                                db.add_match(account_id, stats)
+                                print(f"✅ [Live Check] Partida terminada detectada: {match_id} (Score: {stats['carry_score']})")
+                                
+                                # Atualiza a mensagem de live game
+                                await send_match_notification(account_id, stats)
+                                
+                                # Verifica performance
+                                await check_champion_performance(account_id, stats['champion_name'])
+                                
+                                # Remove da lista de live games
+                                db.remove_live_game_notification(account_id, game_id)
                 
-                # Delay para não sobrecarregar a API
-                await asyncio.sleep(1)
-            
-            await asyncio.sleep(2)
+                # Pequeno delay entre contas
+                await asyncio.sleep(0.3)
+                
+            except Exception as e:
+                print(f"❌ [Live Check] Erro ao verificar partida {game_id}: {e}")
+                continue
     
     except Exception as e:
-        print(f"Erro ao verificar partidas: {e}")
+        print(f"❌ [Live Check] Erro geral: {e}")
 
-@check_new_matches.before_loop
-async def before_check_matches():
-    """Espera o bot estar pronto antes de iniciar o loop"""
+@check_live_games_finished.before_loop
+async def before_check_live_games_finished():
+    """Espera o bot estar pronto"""
+    print("⏳ [Live Check] Aguardando bot estar pronto...")
     await bot.wait_until_ready()
+    print("✅ [Live Check] Iniciando verificação rápida de partidas finalizadas (10s)...")
+
+@check_live_games_finished.error
+async def check_live_games_finished_error(error):
+    """Trata erros no loop"""
+    print(f"❌ [Live Check] Erro crítico: {error}")
+    import traceback
+    traceback.print_exc()
 
 # Tratamento de erros
 @bot.tree.error

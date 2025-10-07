@@ -13,6 +13,11 @@ Bot do Discord que rastreia automaticamente suas partidas de **Ranked Flex** no 
   - **👀 Visão:** Vision Score, Wards colocadas/destruídas
   - **🛡️ Utility:** CC aplicado, Cura/Escudos (para Supports)
 - ⚖️ **Pesos por Role:** Sistema inteligente que avalia diferente cada role
+- 🆕 **Sistema Avançado de Estatísticas** (`/media`):
+  - Filtro por campeão específico com auto-complete
+  - Análise de métricas específicas (KDA, dano, CS, visão, gold, etc)
+  - Visualizar estatísticas de outros jogadores
+  - Modo "todas" com visão completa de todas métricas
 - 📈 **Estatísticas mensais** com média de carry score e análise detalhada
 - 📜 **Histórico detalhado** de partidas com KDA, KP%, Role e mais
 - 🏅 **Ranking de Jogadores** (`/tops_flex`) - Veja quem são os melhores carries do servidor!
@@ -20,6 +25,8 @@ Bot do Discord que rastreia automaticamente suas partidas de **Ranked Flex** no 
 - 🌍 **Suporte a todas as regiões** da Riot Games
 
 ## 📋 Comandos
+
+### Comandos de Usuário
 
 ### `/logar <riot_id> [regiao]`
 
@@ -59,32 +66,72 @@ Vincula sua conta do League of Legends ao bot usando o **Riot ID** (Nome#TAG).
 
 Mostra todas as suas contas vinculadas (máximo 3).
 
-### `/media [conta]`
+### `/media [campeao] [metrica] [usuario] [conta]`
 
-Calcula a média do seu carry score no mês atual com estatísticas detalhadas.
+🆕 **NOVO!** Sistema completo de análise de estatísticas com múltiplas opções!
 
-**Exemplos:**
+**Parâmetros (todos opcionais):**
+
+- `campeao` - Filtrar por campeão específico (com auto-complete!)
+- `metrica` - Métrica específica: carry, kda, dano, cs, visao, kp, gold, todas
+- `usuario` - Ver estatísticas de outro jogador
+- `conta` - Número da conta (1, 2 ou 3)
+
+**Exemplos básicos:**
 
 ```
-/media           # Mostra média de todas as contas
-/media 1         # Mostra média apenas da conta 1
+/media                    # Suas estatísticas gerais
+/media conta:1            # Estatísticas da conta 1
+/media metrica:todas      # Todas as métricas detalhadas
 ```
 
-**Informações exibidas:**
+**Exemplos com filtro de campeão:**
 
-- 📈 Carry Score médio (0-10)
+```
+/media campeao:Ahri                      # Stats apenas com Ahri
+/media campeao:Yasuo metrica:kda         # KDA apenas com Yasuo
+/media campeao:Thresh metrica:visao      # Vision Score com Thresh
+```
+
+**Exemplos vendo outros jogadores:**
+
+```
+/media usuario:@Amigo                           # Stats do amigo
+/media usuario:@Amigo campeao:Zed               # Stats do amigo com Zed
+/media usuario:@Amigo metrica:dano              # Dano médio do amigo
+/media usuario:@TopLaner campeao:Garen metrica:todas  # Tudo sobre o top laner com Garen
+```
+
+**Métricas disponíveis:**
+
+- 🏆 `carry` - Carry Score e visão geral (padrão)
+- ⚔️ `kda` - KDA detalhado e Kill Participation
+- 🗡️ `dano` - Análise de dano aos campeões
+- 🌾 `cs` - Farm, CS/min e economia
+- 👁️ `visao` - Vision Score (ótimo para supports!)
+- 🎯 `kp` - Kill Participation detalhado
+- 💰 `gold` - Gold/min e análise econômica
+- 📊 `todas` - TODAS as métricas em uma visão completa!
+
+**Informações exibidas (varia por métrica):**
+
+- 📈 Carry Score médio (0-100)
 - 🎮 Total de partidas e Win Rate
 - ⚔️ KDA médio completo
 - 🎯 Kill Participation média
+- 🗡️ Dano médio aos campeões
+- 🌾 CS médio e CS/min
+- 💰 Gold médio e GPM
+- 👁️ Vision Score
 - 🎭 Role mais jogada no mês
 
 **Classificação do Carry Score:**
 
-- 🏆 **70+ pontos** - S+ Carry (Você carregou MUITO!)
-- ⭐ **60-69 pontos** - S Carry (Excelente desempenho!)
-- 💎 **50-59 pontos** - A Carry (Bom desempenho)
-- 🥈 **40-49 pontos** - B Normal (Desempenho OK)
-- 📉 **< 40 pontos** - C Weight (Precisa melhorar)
+- 🏆 **75+ pontos** - S+ Carry (GOD!)
+- ⭐ **65-74 pontos** - S Carry (Muito bom!)
+- 💎 **50-64 pontos** - A Carry (Bom desempenho)
+- 🥈 **35-49 pontos** - B Normal (Desempenho OK)
+- 📉 **< 35 pontos** - C Weight (Precisa melhorar)
 
 ### `/historico [conta] [quantidade]`
 
@@ -133,6 +180,10 @@ Mostra o **ranking dos melhores jogadores** do servidor no mês atual.
 - Ordenado por carry score médio
 - Atualizado em tempo real
 
+---
+
+### Comandos Administrativos
+
 ### `/configurar <tipo> <canal>` [ADMIN]
 
 **[Apenas Administradores]** Configura os canais do bot.
@@ -165,6 +216,45 @@ Mostra o **ranking dos melhores jogadores** do servidor no mês atual.
 - 📈 Estatísticas detalhadas
 
 **Objetivo:** Manter o time informado sobre performances e progresso!
+
+### `/reset_media <modo> [usuario] [conta_numero]` [ADMIN]
+
+**[Apenas Administradores]** Reseta estatísticas de partidas do banco de dados.
+
+**Modos disponíveis:**
+
+- `all` - Reseta **TODAS** as partidas do servidor (requer confirmação)
+- `usuario` - Reseta partidas de um usuário específico
+
+**Exemplos:**
+
+```
+/reset_media modo:all
+# Mostra aviso e requer confirmação com /reset_media_confirmar
+
+/reset_media modo:usuario usuario:@Jogador
+# Reseta TODAS as partidas de todas as contas do jogador
+
+/reset_media modo:usuario usuario:@Jogador conta_numero:1
+# Reseta apenas as partidas da conta 1 do jogador
+
+/reset_media modo:usuario usuario:@Jogador conta_numero:2
+# Reseta apenas as partidas da conta 2 do jogador
+```
+
+**⚠️ Importante:**
+
+- Esta ação **NÃO PODE SER DESFEITA**
+- As **contas vinculadas NÃO são removidas**, apenas as partidas
+- Para resetar tudo, você precisa confirmar com `/reset_media_confirmar`
+- O bot continuará monitorando novas partidas normalmente após o reset
+
+**Casos de uso:**
+
+- Limpar estatísticas de teste
+- Começar um novo "season" limpo
+- Remover dados incorretos de um jogador específico
+- Reset completo do servidor
 
 ## 🚀 Instalação e Configuração
 
@@ -393,12 +483,13 @@ Sinta-se à vontade para melhorar o bot! Algumas ideias:
 
 - [x] Sistema de rankings no servidor Discord ✅
 - [x] Notificações de performance ruins ✅
+- [x] Sistema avançado de estatísticas por campeão e métrica ✅
+- [x] Visualizar stats de outros jogadores ✅
 - [ ] Suporte a outros modos de jogo (Solo/Duo, Normal)
 - [ ] Gráficos de progressão ao longo do tempo
-- [ ] Análise de champions mais jogados
-- [ ] Notificações quando terminar uma partida (tempo real)
+- [ ] Análise de champions mais jogados com gráficos
 - [ ] Alertas positivos (sequências boas)
-- [ ] Comparação direta entre dois jogadores
+- [ ] Comparação direta head-to-head entre dois jogadores
 
 ## 📄 Licença
 
