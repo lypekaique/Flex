@@ -1494,8 +1494,15 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
                 
                 message = None
             
+            # Verifica se é remake
+            is_remake = stats.get('is_remake', False)
+            
             # Determina cor baseada no resultado
-            if stats['win']:
+            if is_remake:
+                color = discord.Color.greyple()  # Cinza para remake
+                result_emoji = "⚠️"
+                result_text = "REMAKE"
+            elif stats['win']:
                 color = discord.Color.green()
                 result_emoji = "✅"
                 result_text = "VITÓRIA"
@@ -1504,7 +1511,7 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
                 result_emoji = "❌"
                 result_text = "DERROTA"
             
-            # Determina emoji e rank do carry score
+            # Determina emoji e rank do carry score (não relevante para remakes)
             carry_score = stats['carry_score']
             if carry_score >= 75:
                 rank_emoji = "🏆"
@@ -1540,54 +1547,81 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
             champion_image_url = f"https://ddragon.leagueoflegends.com/cdn/14.1.1/img/champion/{stats['champion_name']}.png"
             
             # Cria embed com informações detalhadas
-            embed = discord.Embed(
-                title=f"{result_emoji} {result_text}",
-                description=(
-                    f"# {stats['champion_name']} {role_emoji}\n"
-                    f"{member.mention} terminou uma partida de **Ranked Flex**!"
-                ),
-                color=color,
-                timestamp=datetime.fromisoformat(stats['played_at'])
-            )
-            
-            # Campo principal - Estatísticas da partida
-            embed.add_field(
-                name="📊 Estatísticas da Partida",
-                value=(
-                    f"⚔️ **KDA:** {stats['kills']}/{stats['deaths']}/{stats['assists']} ({stats['kda']:.2f})\n"
-                    f"🎯 **Kill Participation:** {stats['kill_participation']:.0f}%\n"
-                    f"🗡️ **Dano:** {stats['damage_dealt']:,}\n"
-                    f"🌾 **CS:** {stats['cs']}\n"
-                    f"👁️ **Vision Score:** {stats['vision_score']}\n"
-                    f"⏱️ **Duração:** {game_duration_min}min {game_duration_sec}s"
-                ),
-                inline=True
-            )
-            
-            # Carry Score em destaque
-            embed.add_field(
-                name="🏆 Carry Score",
-                value=(
-                    f"# {rank_emoji} {carry_score}/100\n"
-                    f"**Rank:** {rank_text}\n"
-                    f"\n"
-                    f"```\n"
-                    f"{'█' * int(carry_score/5)}{'░' * (20 - int(carry_score/5))}\n"
-                    f"```"
-                ),
-                inline=True
-            )
-            
-            # Informações adicionais
-            embed.add_field(
-                name="ℹ️ Detalhes",
-                value=(
-                    f"**Invocador:** {summoner_name}\n"
-                    f"**Role:** {role_emoji} {stats['role']}\n"
-                    f"**Campeão:** {stats['champion_name']}"
-                ),
-                inline=False
-            )
+            if is_remake:
+                # Layout especial para remake
+                embed = discord.Embed(
+                    title=f"{result_emoji} {result_text}",
+                    description=(
+                        f"# {stats['champion_name']} {role_emoji}\n"
+                        f"{member.mention} teve uma partida **cancelada** (remake)."
+                    ),
+                    color=color,
+                    timestamp=datetime.fromisoformat(stats['played_at'])
+                )
+                
+                embed.add_field(
+                    name="⚠️ Partida Cancelada",
+                    value=(
+                        f"**Modo:** Ranked Flex\n"
+                        f"**Invocador:** {summoner_name}\n"
+                        f"**Campeão:** {stats['champion_name']}\n"
+                        f"**Role:** {role_emoji} {stats['role']}\n"
+                        f"⏱️ **Duração:** {game_duration_min}min {game_duration_sec}s\n"
+                        f"\n"
+                        f"_Esta partida não conta para estatísticas._"
+                    ),
+                    inline=False
+                )
+            else:
+                # Layout normal para partidas completas
+                embed = discord.Embed(
+                    title=f"{result_emoji} {result_text}",
+                    description=(
+                        f"# {stats['champion_name']} {role_emoji}\n"
+                        f"{member.mention} terminou uma partida de **Ranked Flex**!"
+                    ),
+                    color=color,
+                    timestamp=datetime.fromisoformat(stats['played_at'])
+                )
+                
+                # Campo principal - Estatísticas da partida
+                embed.add_field(
+                    name="📊 Estatísticas da Partida",
+                    value=(
+                        f"⚔️ **KDA:** {stats['kills']}/{stats['deaths']}/{stats['assists']} ({stats['kda']:.2f})\n"
+                        f"🎯 **Kill Participation:** {stats['kill_participation']:.0f}%\n"
+                        f"🗡️ **Dano:** {stats['damage_dealt']:,}\n"
+                        f"🌾 **CS:** {stats['cs']}\n"
+                        f"👁️ **Vision Score:** {stats['vision_score']}\n"
+                        f"⏱️ **Duração:** {game_duration_min}min {game_duration_sec}s"
+                    ),
+                    inline=True
+                )
+                
+                # Carry Score em destaque
+                embed.add_field(
+                    name="🏆 Carry Score",
+                    value=(
+                        f"# {rank_emoji} {carry_score}/100\n"
+                        f"**Rank:** {rank_text}\n"
+                        f"\n"
+                        f"```\n"
+                        f"{'█' * int(carry_score/5)}{'░' * (20 - int(carry_score/5))}\n"
+                        f"```"
+                    ),
+                    inline=True
+                )
+                
+                # Informações adicionais
+                embed.add_field(
+                    name="ℹ️ Detalhes",
+                    value=(
+                        f"**Invocador:** {summoner_name}\n"
+                        f"**Role:** {role_emoji} {stats['role']}\n"
+                        f"**Campeão:** {stats['champion_name']}"
+                    ),
+                    inline=False
+                )
             
             # Imagem do campeão (grande no lado direito)
             embed.set_image(url=champion_image_url)
@@ -1605,11 +1639,17 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
                 if message:
                     # Edita a mensagem existente
                     await message.edit(embed=embed)
-                    print(f"🎮 Partida atualizada: {summoner_name} - {stats['champion_name']} (Score: {carry_score})")
+                    if is_remake:
+                        print(f"⚠️ Partida atualizada (REMAKE): {summoner_name} - {stats['champion_name']}")
+                    else:
+                        print(f"🎮 Partida atualizada: {summoner_name} - {stats['champion_name']} (Score: {carry_score})")
                 else:
                     # Envia nova mensagem
                     await channel.send(embed=embed)
-                    print(f"🎮 Partida enviada: {summoner_name} - {stats['champion_name']} (Score: {carry_score})")
+                    if is_remake:
+                        print(f"⚠️ Partida enviada (REMAKE): {summoner_name} - {stats['champion_name']}")
+                    else:
+                        print(f"🎮 Partida enviada: {summoner_name} - {stats['champion_name']} (Score: {carry_score})")
             except Exception as e:
                 print(f"Erro ao enviar/atualizar partida: {e}")
     
@@ -2007,11 +2047,11 @@ async def check_new_matches():
                             else:
                                 print(f"✅ [Partidas] Nova partida registrada: {match_id} (Score: {stats['carry_score']})")
                             
-                            # Envia notificação de partida terminada (apenas se não for remake)
+                            # Envia notificação de partida terminada (inclusive para remakes agora)
+                            await send_match_notification(account_id, stats)
+                            
+                            # Verifica performance apenas se não for remake
                             if not stats.get('is_remake', False):
-                                await send_match_notification(account_id, stats)
-                                
-                                # Verifica se jogou 3x o mesmo campeão com score baixo
                                 await check_champion_performance(account_id, stats['champion_name'])
                     
                     # Delay para não sobrecarregar a API
@@ -2117,9 +2157,11 @@ async def check_live_games_finished():
                                 else:
                                     print(f"✅ [Live Check] Partida terminada detectada: {match_id} (Score: {stats['carry_score']})")
                                 
-                                # Atualiza a mensagem de live game e verifica performance (apenas se não for remake)
+                                # Atualiza a mensagem de live game (inclusive para remakes)
+                                await send_match_notification(account_id, stats)
+                                
+                                # Verifica performance apenas se não for remake
                                 if not stats.get('is_remake', False):
-                                    await send_match_notification(account_id, stats)
                                     await check_champion_performance(account_id, stats['champion_name'])
                                 
                                 # Remove da lista de live games
