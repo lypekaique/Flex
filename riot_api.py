@@ -465,6 +465,9 @@ class RiotAPI:
             if game_duration is None:
                 game_duration = match_data['info'].get('game_duration', 1800)
             
+            # Detecta se é remake (partida < 5 minutos = 300 segundos)
+            is_remake = game_duration < 300
+            
             # Extrai informações relevantes
             stats = {
                 'match_id': match_data['metadata']['matchId'],
@@ -484,7 +487,8 @@ class RiotAPI:
                 'carry_score': carry_score,
                 'kda': round((participant.get('kills', 0) + participant.get('assists', 0)) / max(participant.get('deaths', 1), 1), 2),
                 'kill_participation': round((participant.get('kills', 0) + participant.get('assists', 0)) / max(team_kills, 1) * 100, 1),
-                'played_at': datetime.fromtimestamp(match_data['info'].get('gameStartTimestamp', 0) / 1000).isoformat() if match_data['info'].get('gameStartTimestamp') else datetime.now().isoformat()
+                'played_at': datetime.fromtimestamp(match_data['info'].get('gameStartTimestamp', 0) / 1000).isoformat() if match_data['info'].get('gameStartTimestamp') else datetime.now().isoformat(),
+                'is_remake': is_remake
             }
             
             return stats

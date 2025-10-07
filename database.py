@@ -74,6 +74,7 @@ class Database:
                 kda REAL,
                 kill_participation REAL,
                 played_at TIMESTAMP,
+                is_remake BOOLEAN DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (lol_account_id) REFERENCES lol_accounts(id),
                 UNIQUE(lol_account_id, match_id)
@@ -141,6 +142,14 @@ class Database:
             cursor.execute('ALTER TABLE live_games_notified ADD COLUMN channel_id TEXT')
             cursor.execute('ALTER TABLE live_games_notified ADD COLUMN guild_id TEXT')
             print("✅ Migração de tracking concluída!")
+        
+        # Migração: Adiciona coluna is_remake em matches
+        try:
+            cursor.execute("SELECT is_remake FROM matches LIMIT 1")
+        except sqlite3.OperationalError:
+            print("🔄 Migrando banco: adicionando coluna is_remake...")
+            cursor.execute('ALTER TABLE matches ADD COLUMN is_remake BOOLEAN DEFAULT 0')
+            print("✅ Migração is_remake concluída!")
         
         conn.commit()
         conn.close()
@@ -226,8 +235,8 @@ class Database:
                     lol_account_id, match_id, game_mode, champion_name, role,
                     kills, deaths, assists, damage_dealt, damage_taken,
                     gold_earned, cs, vision_score, game_duration, win, 
-                    carry_score, kda, kill_participation, played_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    carry_score, kda, kill_participation, played_at, is_remake
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 lol_account_id,
                 match_data['match_id'],
@@ -247,7 +256,8 @@ class Database:
                 match_data['carry_score'],
                 match_data.get('kda', 0),
                 match_data.get('kill_participation', 0),
-                match_data['played_at']
+                match_data['played_at'],
+                match_data.get('is_remake', False)
             ))
             
             conn.commit()
@@ -257,21 +267,29 @@ class Database:
             print(f"Erro ao adicionar partida: {e}")
             return False
     
-    def get_monthly_matches(self, lol_account_id: int, year: int, month: int) -> List[Dict]:
-        """Retorna todas as partidas de um mês específico"""
+    def get_monthly_matches(self, lol_account_id: int, year: int, month: int, include_remakes: bool = True) -> List[Dict]:
+        """Retorna todas as partidas de um mês específico (por padrão inclui remakes apenas para histórico)"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        cursor.execute('''
+        # Query base
+        query = '''
             SELECT match_id, game_mode, champion_name, role, kills, deaths, assists,
                    damage_dealt, damage_taken, gold_earned, cs, vision_score,
-                   game_duration, win, carry_score, kda, kill_participation, played_at
+                   game_duration, win, carry_score, kda, kill_participation, played_at, is_remake
             FROM matches
             WHERE lol_account_id = ?
               AND strftime('%Y', played_at) = ?
               AND strftime('%m', played_at) = ?
-            ORDER BY played_at DESC
-        ''', (lol_account_id, str(year), f"{month:02d}"))
+        '''
+        
+        # Se não quer incluir remakes, adiciona filtro
+        if not include_remakes:
+            query += ' AND (is_remake = 0 OR is_remake IS NULL)'
+        
+        query += ' ORDER BY played_at DESC'
+        
+        cursor.execute(query, (lol_account_id, str(year), f"{month:02d}"))
         
         matches = []
         for row in cursor.fetchall():
@@ -293,7 +311,8 @@ class Database:
                 'carry_score': row[14],
                 'kda': row[15],
                 'kill_participation': row[16],
-                'played_at': row[17]
+                'played_at': row[17],
+                'is_remake': row[18] if len(row) > 18 else False
             })
         
         conn.close()
@@ -570,7 +589,7 @@ class Database:
         return None
     
     def get_last_n_matches_with_champion(self, lol_account_id: int, champion_name: str, n: int = 3) -> List[Dict]:
-        """Retorna as últimas N partidas de um usuário com um campeão específico"""
+        """Retorna as últimas N partidas de um usuário com um campeão específico (exclui remakes)"""
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute('''
@@ -578,6 +597,7 @@ class Database:
                    carry_score, win, played_at
             FROM matches
             WHERE lol_account_id = ? AND champion_name = ?
+              AND (is_remake = 0 OR is_remake IS NULL)
             ORDER BY played_at DESC
             LIMIT ?
         ''', (lol_account_id, champion_name, n))
@@ -600,11 +620,11 @@ class Database:
         return matches
     
     def get_top_players_by_carry(self, limit: int = 10, min_games: int = 5) -> List[Dict]:
-        """Retorna o ranking dos melhores jogadores por carry score médio (mínimo de jogos)"""
+        """Retorna o ranking dos melhores jogadores por carry score médio (mínimo de jogos, exclui remakes)"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        # Busca melhores médias (apenas jogadores com mínimo de partidas)
+        # Busca melhores médias (apenas jogadores com mínimo de partidas, excluindo remakes)
         cursor.execute('''
             SELECT 
                 la.discord_id,
@@ -618,6 +638,7 @@ class Database:
             FROM matches m
             JOIN lol_accounts la ON m.lol_account_id = la.id
             WHERE strftime('%Y-%m', m.played_at) = strftime('%Y-%m', 'now')
+              AND (m.is_remake = 0 OR m.is_remake IS NULL)
             GROUP BY la.id
             HAVING COUNT(m.id) >= ?
             ORDER BY avg_carry DESC
@@ -646,7 +667,7 @@ class Database:
         return ranking
     
     def get_monthly_matches_by_champion(self, lol_account_id: int, year: int, month: int, champion_name: str) -> List[Dict]:
-        """Retorna todas as partidas de um mês específico filtradas por campeão"""
+        """Retorna todas as partidas de um mês específico filtradas por campeão (exclui remakes)"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
@@ -659,6 +680,7 @@ class Database:
               AND champion_name = ?
               AND strftime('%Y', played_at) = ?
               AND strftime('%m', played_at) = ?
+              AND (is_remake = 0 OR is_remake IS NULL)
             ORDER BY played_at DESC
         ''', (lol_account_id, champion_name, str(year), f"{month:02d}"))
         

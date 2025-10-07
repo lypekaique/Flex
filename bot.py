@@ -580,11 +580,11 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
         embed.set_author(name=f"Estatísticas de {target_user.display_name}", icon_url=target_user.display_avatar.url)
     
     for account in accounts:
-        # Busca partidas (filtradas por campeão se especificado)
+        # Busca partidas (filtradas por campeão se especificado, excluindo remakes)
         if campeao:
             matches = db.get_monthly_matches_by_champion(account['id'], year, month, campeao)
         else:
-            matches = db.get_monthly_matches(account['id'], year, month)
+            matches = db.get_monthly_matches(account['id'], year, month, include_remakes=False)
         
         if not matches:
             msg = f"Nenhuma partida de Flex"
@@ -802,37 +802,65 @@ async def historico(interaction: discord.Interaction, conta: int = 1, quantidade
     )
     
     for i, match in enumerate(matches, 1):
-        result = "✅ Vitória" if match['win'] else "❌ Derrota"
-        kda_ratio = f"{match['kills']}/{match['deaths']}/{match['assists']}"
+        # Verifica se é remake
+        is_remake = match.get('is_remake', False)
         
-        # Emoji do carry score
-        if match['carry_score'] >= 75:
-            carry_emoji = "🏆"
-            rank_text = "S+"
-        elif match['carry_score'] >= 65:
-            carry_emoji = "⭐"
-            rank_text = "S"
-        elif match['carry_score'] >= 50:
-            carry_emoji = "💎"
-            rank_text = "A"
-        elif match['carry_score'] >= 35:
-            carry_emoji = "🥈"
-            rank_text = "B"
+        if is_remake:
+            # Layout especial para remakes
+            role_emojis = {
+                'Top': '⚔️',
+                'Jungle': '🌳',
+                'Mid': '✨',
+                'ADC': '🏹',
+                'Support': '🛡️'
+            }
+            role_emoji = role_emojis.get(match['role'], '❓')
+            
+            game_duration_min = match['game_duration'] // 60
+            game_duration_sec = match['game_duration'] % 60
+            
+            match_info = f"""
+**{match['champion_name']}** {role_emoji} {match['role']}
+━━━━━━━━━━━━━━━━━━━━━
+⚠️ **REMAKE** - Partida cancelada
+⏱️ Duração: **{game_duration_min}:{game_duration_sec:02d}**
+📅 {match['played_at'][:10]} às {match['played_at'][11:16]}
+
+_Esta partida não conta para estatísticas_
+            """
         else:
-            carry_emoji = "📊"
-            rank_text = "C"
-        
-        # Emoji por role
-        role_emojis = {
-            'Top': '⚔️',
-            'Jungle': '🌳',
-            'Mid': '✨',
-            'ADC': '🏹',
-            'Support': '🛡️'
-        }
-        role_emoji = role_emojis.get(match['role'], '❓')
-        
-        match_info = f"""
+            # Layout normal para partidas completas
+            result = "✅ Vitória" if match['win'] else "❌ Derrota"
+            kda_ratio = f"{match['kills']}/{match['deaths']}/{match['assists']}"
+            
+            # Emoji do carry score
+            if match['carry_score'] >= 75:
+                carry_emoji = "🏆"
+                rank_text = "S+"
+            elif match['carry_score'] >= 65:
+                carry_emoji = "⭐"
+                rank_text = "S"
+            elif match['carry_score'] >= 50:
+                carry_emoji = "💎"
+                rank_text = "A"
+            elif match['carry_score'] >= 35:
+                carry_emoji = "🥈"
+                rank_text = "B"
+            else:
+                carry_emoji = "📊"
+                rank_text = "C"
+            
+            # Emoji por role
+            role_emojis = {
+                'Top': '⚔️',
+                'Jungle': '🌳',
+                'Mid': '✨',
+                'ADC': '🏹',
+                'Support': '🛡️'
+            }
+            role_emoji = role_emojis.get(match['role'], '❓')
+            
+            match_info = f"""
 **{match['champion_name']}** {role_emoji} {match['role']} • {result}
 ━━━━━━━━━━━━━━━━━━━━━
 {carry_emoji} **Carry Score: {match['carry_score']}/100** ({rank_text})
@@ -841,7 +869,7 @@ async def historico(interaction: discord.Interaction, conta: int = 1, quantidade
 🗡️ Dano: **{match['damage_dealt']:,}**
 🌾 CS: **{match['cs']}** • 👁️ Vision: **{match['vision_score']}**
 📅 {match['played_at'][:10]} às {match['played_at'][11:16]}
-        """
+            """
         
         embed.add_field(
             name=f"━━━━━━━━━━━━━ Partida #{i} ━━━━━━━━━━━━━",
@@ -1972,13 +2000,19 @@ async def check_new_matches():
                             # Salva no banco de dados
                             db.add_match(account_id, stats)
                             new_matches_count += 1
-                            print(f"✅ [Partidas] Nova partida registrada: {match_id} (Score: {stats['carry_score']})")
                             
-                            # Envia notificação de partida terminada
-                            await send_match_notification(account_id, stats)
+                            # Log diferente para remakes
+                            if stats.get('is_remake', False):
+                                print(f"⚠️ [Partidas] Remake registrado: {match_id} ({stats['game_duration']}s)")
+                            else:
+                                print(f"✅ [Partidas] Nova partida registrada: {match_id} (Score: {stats['carry_score']})")
                             
-                            # Verifica se jogou 3x o mesmo campeão com score baixo
-                            await check_champion_performance(account_id, stats['champion_name'])
+                            # Envia notificação de partida terminada (apenas se não for remake)
+                            if not stats.get('is_remake', False):
+                                await send_match_notification(account_id, stats)
+                                
+                                # Verifica se jogou 3x o mesmo campeão com score baixo
+                                await check_champion_performance(account_id, stats['champion_name'])
                     
                     # Delay para não sobrecarregar a API
                     await asyncio.sleep(1)
@@ -2076,13 +2110,17 @@ async def check_live_games_finished():
                             if stats:
                                 # Salva no banco de dados
                                 db.add_match(account_id, stats)
-                                print(f"✅ [Live Check] Partida terminada detectada: {match_id} (Score: {stats['carry_score']})")
                                 
-                                # Atualiza a mensagem de live game
-                                await send_match_notification(account_id, stats)
+                                # Log diferente para remakes
+                                if stats.get('is_remake', False):
+                                    print(f"⚠️ [Live Check] Remake detectado: {match_id} ({stats['game_duration']}s)")
+                                else:
+                                    print(f"✅ [Live Check] Partida terminada detectada: {match_id} (Score: {stats['carry_score']})")
                                 
-                                # Verifica performance
-                                await check_champion_performance(account_id, stats['champion_name'])
+                                # Atualiza a mensagem de live game e verifica performance (apenas se não for remake)
+                                if not stats.get('is_remake', False):
+                                    await send_match_notification(account_id, stats)
+                                    await check_champion_performance(account_id, stats['champion_name'])
                                 
                                 # Remove da lista de live games
                                 db.remove_live_game_notification(account_id, game_id)
