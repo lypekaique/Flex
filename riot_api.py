@@ -275,13 +275,13 @@ class RiotAPI:
     def calculate_carry_score(self, stats: Dict, team_stats: Dict) -> float:
         """
         Calcula o nível de carry do jogador baseado em métricas avançadas.
-        Sistema EQUILIBRADO - performances medianas recebem scores medianos (40-60),
-        performances ruins são penalizadas severamente, performances excepcionais são recompensadas.
+        Sistema RIGOROSO - 100 é reservado APENAS para performances EXCEPCIONAIS.
+        Performances medianas recebem scores medianos (50-70),
+        performances boas ficam em 70-85, performances EXCEPCIONAIS alcançam 85-100.
         
-        Sistema de pesos por role:
-        - Top/Mid: FOCO em KDA - você precisa performar bem no combate
+        Sistema de pesos por role (PRIORIZANDO KDA E DANO/GOLD):
+        - Top/Mid/ADC: MÁXIMO FOCO em KDA e DANO/GOLD - você precisa performar EXCEPCIONALMENTE
         - Jungle: Kill Participation + Objetivos - você precisa estar presente e pegar objetivos
-        - ADC: Farm + Dano - você precisa farmar bem E causar dano alto
         - Support: Visão + Kill Participation - você precisa wardear E estar presente nas lutas
         
         Retorna um score de 0 a 100
@@ -359,12 +359,19 @@ class RiotAPI:
         gpm = gold_earned / game_duration
         cspm = cs / game_duration
         
-        # 🎯 OBJETIVOS - valoriza mais
-        objectives_score = (
-            turret_kills * 150 +  # Aumentado de 100
-            damage_to_objectives / 800 +  # Mais generoso
-            damage_to_buildings / 800  # Mais generoso
-        )
+        # 🎯 OBJETIVOS - Sistema diferenciado por role
+        # Jungle: APENAS objetivos épicos (Dragão/Barão/Arauto) - Torres e estruturas NÃO contam
+        # Outras roles: Torres + objetivos + estruturas
+        if role == 'JUNGLE':
+            objectives_score = (
+                damage_to_objectives / 500  # APENAS épicos (dragão/barão/arauto)
+            )
+        else:
+            objectives_score = (
+                turret_kills * 120 +  # Torres contam para laners
+                damage_to_objectives / 700 +  # Objetivos épicos também contam
+                damage_to_buildings / 1000  # Estruturas contam menos
+            )
         
         # 👀 VISÃO
         vision_per_min = vision_score / game_duration
@@ -376,18 +383,18 @@ class RiotAPI:
             (total_heal + total_shields) / 800  # Mais generoso
         )
         
-        # NORMALIZAÇÃO EQUILIBRADA - ranges ajustados para valores mais realistas
-        # Performance mediana = score mediano, ruim = baixo, excepcional = alto
-        norm_kda = self.normalize(kda, 0, 8)  # KDA 4 = 50%, KDA 8 = 100%
-        norm_kp = self.normalize(kill_participation, 0.20, 0.80)  # 50% KP = score mediano
-        norm_dpm = self.normalize(dpm, 100, 900)  # Ajustado para ser mais alcançável
-        norm_gpm = self.normalize(gpm, 200, 450)  # Range mais realista
-        norm_cspm = self.normalize(cspm, 1, 8)  # 4.5 CS/min = mediano
-        norm_objectives = self.normalize(objectives_score, 0, 400)  # Mais alcançável
-        norm_vision = self.normalize(vision_per_min, 0.2, 2.0)  # Range mais justo
-        norm_utility = self.normalize(utility_score, 0, 50)  # Ajustado
+        # NORMALIZAÇÃO RIGOROSA - ranges expandidos para tornar 100 MUITO DIFÍCIL
+        # Performance mediana = score mediano (50%), bom = 70%, EXCEPCIONAL = 100%
+        norm_kda = self.normalize(kda, 0, 12)  # KDA 6 = 50%, KDA 12 = 100% (MUITO DIFÍCIL)
+        norm_kp = self.normalize(kill_participation, 0.15, 0.90)  # 52.5% KP = score mediano
+        norm_dpm = self.normalize(dpm, 80, 1200)  # Range expandido - 640 DPM = 50%, 1200 = 100%
+        norm_gpm = self.normalize(gpm, 180, 550)  # Range expandido - 365 GPM = 50%, 550 = 100%
+        norm_cspm = self.normalize(cspm, 0.5, 10)  # 5.25 CS/min = mediano, 10 CS/min = 100%
+        norm_objectives = self.normalize(objectives_score, 0, 500)  # Mais difícil
+        norm_vision = self.normalize(vision_per_min, 0.1, 2.5)  # Range expandido
+        norm_utility = self.normalize(utility_score, 0, 70)  # Mais difícil
         
-        # PESOS POR ROLE - SISTEMA PUNITIVO E ESPECÍFICO
+        # PESOS POR ROLE - MÁXIMA PRIORIDADE EM KDA E DANO/GOLD PARA TOP/MID/ADC
         if role == 'UTILITY':  # Support: VISÃO + KILL PARTICIPATION
             weights = {
                 'kda': 0.15,      # Menos peso no KDA
@@ -410,25 +417,25 @@ class RiotAPI:
                 'vision': 0.0,
                 'utility': 0.0
             }
-        elif role == 'BOTTOM':  # ADC: FARM + DANO
+        elif role == 'BOTTOM':  # ADC: KDA + DANO/GOLD (MÁXIMA PRIORIDADE)
             weights = {
-                'kda': 0.15,      # Menos peso no KDA
-                'kp': 0.10,
-                'dpm': 0.35,      # MÁXIMO PESO em Dano
-                'gpm': 0.10,
-                'cspm': 0.30,     # MÁXIMO PESO em Farm
+                'kda': 0.35,      # MÁXIMO PESO em KDA
+                'kp': 0.08,
+                'dpm': 0.30,      # MÁXIMO PESO em Dano
+                'gpm': 0.15,      # MUITO PESO em Gold
+                'cspm': 0.12,     # Farm também importante
                 'objectives': 0.0,
                 'vision': 0.0,
                 'utility': 0.0
             }
-        else:  # Top/Mid: FOCO EM KDA
+        else:  # Top/Mid: KDA + DANO (MÁXIMA PRIORIDADE)
             weights = {
-                'kda': 0.35,      # MÁXIMO PESO em KDA
-                'kp': 0.20,
-                'dpm': 0.15,
-                'gpm': 0.05,
-                'cspm': 0.10,
-                'objectives': 0.05,
+                'kda': 0.45,      # MÁXIMO PESO em KDA (45%!)
+                'kp': 0.15,
+                'dpm': 0.25,      # MUITO PESO em Dano (25%)
+                'gpm': 0.08,      # Gold também importante
+                'cspm': 0.07,
+                'objectives': 0.0,
                 'vision': 0.0,
                 'utility': 0.0
             }
@@ -445,49 +452,57 @@ class RiotAPI:
             norm_utility * weights['utility']
         )
         
-        # Escala para 0-100 com base mediana
-        # Performances medianas ficam em torno de 40-60
-        score = (base_score * 85) + 10  # Base de 10 + até 85 pontos
+        # Escala para 0-100 com sistema RIGOROSO
+        # Performances medianas ficam em 50-65, boas em 65-80, EXCEPCIONAIS em 80-100
+        score = (base_score * 75) + 15  # Base de 15 + até 75 pontos = máx 90 base
         
-        # ⏱️ APLICA FATOR DE ESCALA TEMPORAL
-        # Compensa partidas curtas que naturalmente têm métricas mais baixas
+        # ⏱️ APLICA FATOR DE ESCALA TEMPORAL (REDUZIDO)
+        # Compensa partidas curtas mas com menos impacto
         score *= time_scale_factor
         
-        # Bônus de vitória moderado
+        # Bônus de vitória MENOR
         if win:
-            score *= 1.08  # 8% de bônus por vitória
+            score *= 1.04  # Apenas 4% de bônus por vitória (reduzido de 8%)
             
-            # 🚀 BÔNUS ADICIONAL para SNOWBALL/STOMP (vitória muito rápida)
-            if game_duration < 20:  # Vitória em menos de 20 minutos
-                score += 8  # +8 pontos por stomp
-                if kill_participation >= 0.6:  # E você participou bem
-                    score += 7  # +7 pontos extras
-            elif game_duration < 25 and kill_participation >= 0.7:  # Vitória rápida com alta participação
-                score += 5  # +5 pontos
+            # 🚀 BÔNUS ADICIONAL para SNOWBALL/STOMP (REDUZIDO)
+            if game_duration < 20 and kill_participation >= 0.6:  # Vitória rápida com alta participação
+                score += 4  # +4 pontos (reduzido de 15)
+            elif game_duration < 25 and kill_participation >= 0.75:  # Vitória rápida com MUITO alta participação
+                score += 3  # +3 pontos (reduzido de 5)
         
         # PENALIDADES SEVERAS por performance ruim
         if deaths > 10:  # Morreu MUITO
-            score *= 0.70  # -30% de penalidade
+            score *= 0.65  # -35% de penalidade
         elif deaths > 8:  # Morreu muito
-            score *= 0.80  # -20% de penalidade
-        elif deaths > 6:
-            score *= 0.90  # -10% de penalidade
-        
-        if kill_participation < 0.25:  # Participou muito pouco
             score *= 0.75  # -25% de penalidade
-        elif kill_participation < 0.35:  # Participou pouco
+        elif deaths > 6:
             score *= 0.85  # -15% de penalidade
         
-        # Bônus para performances EXCEPCIONAIS
-        if kda >= 10:  # KDA excepcional
-            score += 8
-        elif kda >= 7:
-            score += 5
+        if kill_participation < 0.25:  # Participou muito pouco
+            score *= 0.70  # -30% de penalidade
+        elif kill_participation < 0.35:  # Participou pouco
+            score *= 0.80  # -20% de penalidade
         
-        if kill_participation >= 0.8:  # Participou de quase tudo
+        # Bônus para performances REALMENTE EXCEPCIONAIS (REDUZIDOS)
+        if kda >= 12:  # KDA EXTREMAMENTE excepcional
+            score += 8
+        elif kda >= 10:  # KDA muito excepcional
             score += 5
-        elif kill_participation >= 0.7:
+        elif kda >= 8:  # KDA excepcional
             score += 3
+        
+        if kill_participation >= 0.85:  # Participou de quase tudo
+            score += 4
+        elif kill_participation >= 0.75:
+            score += 2
+        
+        # Bônus por DANO EXCEPCIONAL (novo - importante para Top/Mid/ADC)
+        if dpm >= 1000:  # Dano excepcional
+            score += 5
+        elif dpm >= 850:  # Dano muito alto
+            score += 3
+        elif dpm >= 700:  # Dano alto
+            score += 1
         
         return int(min(max(score, 0), 100))  # Garante entre 0 e 100
     

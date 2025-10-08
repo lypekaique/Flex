@@ -1455,6 +1455,79 @@ async def reset_media_confirmar(interaction: discord.Interaction):
             ephemeral=True
         )
 
+@bot.tree.command(name="purge_media", description="🗑️ [ADMIN] Reseta TODAS as estatísticas e médias salvas no bot")
+@app_commands.checks.has_permissions(administrator=True)
+async def purge_media(interaction: discord.Interaction):
+    """[ADMIN] Reseta todas as partidas e estatísticas do banco de dados (comando direto)"""
+    await interaction.response.defer(ephemeral=True)
+    
+    # Confirmação inline
+    embed = discord.Embed(
+        title="⚠️ RESET COMPLETO DE MÉDIAS",
+        description=(
+            "Você está prestes a **DELETAR TODAS AS ESTATÍSTICAS E MÉDIAS**!\n\n"
+            "**O que será resetado:**\n"
+            "✅ Todas as partidas de todos os usuários\n"
+            "✅ Todo o histórico de estatísticas e médias\n"
+            "✅ Todos os carry scores registrados\n"
+            "✅ Todo o ranking\n\n"
+            "**O que NÃO será afetado:**\n"
+            "❌ Contas vinculadas (permanecem)\n"
+            "❌ Configurações do servidor\n\n"
+            "⚠️ **ESTA AÇÃO NÃO PODE SER DESFEITA!**\n"
+            "Tem certeza? Use os botões abaixo:"
+        ),
+        color=discord.Color.red()
+    )
+    
+    # Cria view com botões de confirmação
+    class ConfirmPurgeView(discord.ui.View):
+        def __init__(self):
+            super().__init__(timeout=60)
+            self.value = None
+        
+        @discord.ui.button(label="✅ CONFIRMAR RESET", style=discord.ButtonStyle.danger)
+        async def confirm(self, button_interaction: discord.Interaction, button: discord.ui.Button):
+            await button_interaction.response.defer()
+            
+            # Deleta todas as partidas
+            success, deleted_count = db.delete_all_matches()
+            
+            if success:
+                result_embed = discord.Embed(
+                    title="✅ MÉDIAS RESETADAS COM SUCESSO!",
+                    description=(
+                        "**Todas as partidas e estatísticas foram deletadas.**\n\n"
+                        "O bot continuará monitorando normalmente a partir de agora.\n"
+                        "As próximas partidas começarão com médias zeradas."
+                    ),
+                    color=discord.Color.green()
+                )
+                result_embed.add_field(name="🗑️ Partidas Deletadas", value=f"**{deleted_count}** partidas", inline=True)
+                result_embed.add_field(name="📊 Status", value="✅ Banco limpo", inline=True)
+                result_embed.set_footer(text="Reset executado por " + button_interaction.user.name)
+                await button_interaction.edit_original_response(embed=result_embed, view=None)
+                print(f"⚠️ [ADMIN] {button_interaction.user.name} resetou TODAS as médias ({deleted_count} partidas deletadas)")
+            else:
+                error_embed = discord.Embed(
+                    title="❌ Erro no Reset",
+                    description="Ocorreu um erro ao resetar o banco. Verifique os logs.",
+                    color=discord.Color.red()
+                )
+                await button_interaction.edit_original_response(embed=error_embed, view=None)
+        
+        @discord.ui.button(label="❌ CANCELAR", style=discord.ButtonStyle.secondary)
+        async def cancel(self, button_interaction: discord.Interaction, button: discord.ui.Button):
+            cancel_embed = discord.Embed(
+                title="❌ Reset Cancelado",
+                description="Nenhuma alteração foi feita no banco de dados.",
+                color=discord.Color.blue()
+            )
+            await button_interaction.response.edit_message(embed=cancel_embed, view=None)
+    
+    view = ConfirmPurgeView()
+    await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
 async def send_match_notification(lol_account_id: int, stats: Dict):
     """Atualiza notificação de live game ou envia nova quando uma partida termina"""
     try:
