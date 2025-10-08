@@ -268,7 +268,7 @@ class RiotAPI:
         # Aplica curva PUNITIVA (exponencial para ser mais exigente)
         # Valores medianos recebem scores baixos, apenas os bons são recompensados
         normalized = max(0, min(1, normalized))  # Garante entre 0 e 1
-        normalized = normalized ** 1.2  # Curva PUNITIVA - quanto maior o expoente, mais punitivo2
+        normalized = normalized ** 1.4  # Curva PUNITIVA - quanto maior o expoente, mais punitivo
         
         return normalized
     
@@ -386,13 +386,13 @@ class RiotAPI:
         # PESOS POR ROLE - SISTEMA PUNITIVO E ESPECÍFICO
         if role == 'UTILITY':  # Support: VISÃO + KILL PARTICIPATION
             weights = {
-                'kda': 0.10,      # Menos peso no KDA
-                'kp': 0.35,       # MÁXIMO PESO em Kill Participation
+                'kda': 0.15,      # Menos peso no KDA
+                'kp': 0.55,       # MÁXIMO PESO em Kill Participation
                 'dpm': 0.05,
                 'gpm': 0.0,
                 'cspm': 0.0,
                 'objectives': 0.10,
-                'vision': 0.35,   # MÁXIMO PESO em Visão
+                'vision': 0.25,   # MÁXIMO PESO em Visão
                 'utility': 0.05
             }
         elif role == 'JUNGLE':  # Jungle: KILL PARTICIPATION + OBJETIVOS
@@ -419,7 +419,7 @@ class RiotAPI:
             }
         else:  # Top/Mid: FOCO EM KDA
             weights = {
-                'kda': 0.45,      # MÁXIMO PESO em KDA
+                'kda': 0.35,      # MÁXIMO PESO em KDA
                 'kp': 0.20,
                 'dpm': 0.15,
                 'gpm': 0.05,
