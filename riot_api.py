@@ -360,15 +360,22 @@ class RiotAPI:
         cspm = cs / game_duration
         
         # 🎯 OBJETIVOS - Sistema diferenciado por role
-        # Jungle: APENAS objetivos épicos (Dragão/Barão/Arauto) - Torres e estruturas NÃO contam
-        # Outras roles: Torres + objetivos + estruturas
+        # Jungle: APENAS objetivos épicos (Dragão/Barão/Arauto)
+        # Top: APENAS estruturas/torres (split push)
+        # Mid/ADC/Support: Torres + épicos + estruturas
         if role == 'JUNGLE':
             objectives_score = (
                 damage_to_objectives / 500  # APENAS épicos (dragão/barão/arauto)
             )
+        elif role == 'TOP':
+            objectives_score = (
+                turret_kills * 120 +  # Torres são importantes para top
+                damage_to_buildings / 600  # FOCO em estruturas (split push)
+                # damage_to_objectives épicos não conta muito para top
+            )
         else:
             objectives_score = (
-                turret_kills * 120 +  # Torres contam para laners
+                turret_kills * 120 +  # Torres contam
                 damage_to_objectives / 700 +  # Objetivos épicos também contam
                 damage_to_buildings / 1000  # Estruturas contam menos
             )
@@ -406,14 +413,14 @@ class RiotAPI:
                 'vision': 0.25,   
                 'utility': 0.05
             }
-        elif role == 'JUNGLE':  # Jungle: KILL PARTICIPATION + OBJETIVOS
+        elif role == 'JUNGLE':  # Jungle: KILL PARTICIPATION + KDA + OBJETIVOS
             weights = {
-                'kda': 0.25,      # Menos peso no KDA
-                'kp': 0.35,       # MÁXIMO PESO em Kill Participation
+                'kda': 0.30,      # KDA importante (30%)
+                'kp': 0.35,       # MÁXIMO PESO em Kill Participation (35%)
                 'dpm': 0.10,
                 'gpm': 0.05,
                 'cspm': 0.05,
-                'objectives': 0.30,  # MÁXIMO PESO em Objetivos
+                'objectives': 0.15,  # Objetivos balanceados (15%)
                 'vision': 0.0,
                 'utility': 0.0
             }
@@ -428,7 +435,18 @@ class RiotAPI:
                 'vision': 0.0,
                 'utility': 0.0
             }
-        else:  # Top/Mid: KDA + DANO (MÁXIMA PRIORIDADE)
+        elif role == 'TOP':  # Top: KDA + DANO + Split Push balanceado
+            weights = {
+                'kda': 0.45,      # MÁXIMO PESO em KDA (45%!)
+                'kp': 0.075,      # KP balanceado (7.5%)
+                'dpm': 0.25,      # MUITO PESO em Dano (25%)
+                'gpm': 0.08,      # Gold também importante
+                'cspm': 0.07,
+                'objectives': 0.075,  # Objetivos balanceado (7.5% - estruturas/torres)
+                'vision': 0.0,
+                'utility': 0.0
+            }
+        else:  # Mid: KDA + DANO (MÁXIMA PRIORIDADE)
             weights = {
                 'kda': 0.45,      # MÁXIMO PESO em KDA (45%!)
                 'kp': 0.15,
