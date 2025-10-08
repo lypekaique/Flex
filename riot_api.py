@@ -322,22 +322,25 @@ class RiotAPI:
         team_kills = max(team_stats.get('team_kills', kills + assists + 1), 1)
         
         # ⏱️ FATOR DE ESCALA BASEADO NO TEMPO
-        # Partidas padrão: 25-35 minutos
-        # Partidas curtas (<20min) e longas (>40min) têm ajustes
-        standard_duration = 30  # minutos (duração "ideal" de referência)
+        # Sistema de multiplicador progressivo:
+        # - 10 minutos: 2.5x o score
+        # - A cada 5 minutos: reduz 0.2x
+        # 
+        # Exemplos:
+        # 10 min: 2.5x | 15 min: 2.3x | 20 min: 2.1x | 25 min: 1.9x
+        # 30 min: 1.7x | 35 min: 1.5x | 40 min: 1.3x | 45 min: 1.1x
         
-        # Calcula fator de escala temporal
-        # Partidas curtas recebem boost, partidas longas não são penalizadas demais
-        if game_duration < 20:  # Jogo muito rápido (surrender ou stomp)
-            time_scale_factor = 1.20  # +20% para compensar métricas baixas
-        elif game_duration < 25:  # Jogo rápido
-            time_scale_factor = 1.10  # +10% de boost
-        elif game_duration > 40:  # Jogo muito longo
-            time_scale_factor = 0.95  # -5% pois métricas ficam infladas
-        elif game_duration > 35:  # Jogo longo
-            time_scale_factor = 0.98  # -2%
-        else:  # Jogo normal (25-35 min)
-            time_scale_factor = 1.0  # Sem ajuste
+        if game_duration <= 10:
+            # Jogos de até 10 minutos (stomps/remakes)
+            time_scale_factor = 2.5
+        else:
+            # Após 10 minutos, reduz 0.2x a cada 5 minutos
+            minutes_after_10 = game_duration - 10
+            intervals_of_5 = minutes_after_10 / 5.0
+            time_scale_factor = 2.5 - (intervals_of_5 * 0.2)
+            
+            # Garante que o multiplicador não fique negativo
+            time_scale_factor = max(time_scale_factor, 0.5)  # Mínimo de 0.5x
         
         # 🥊 COMBATE - KDA
         if deaths == 0:
@@ -392,7 +395,7 @@ class RiotAPI:
                 'gpm': 0.0,
                 'cspm': 0.0,
                 'objectives': 0.10,
-                'vision': 0.25,   # MÁXIMO PESO em Visão
+                'vision': 0.25,   
                 'utility': 0.05
             }
         elif role == 'JUNGLE':  # Jungle: KILL PARTICIPATION + OBJETIVOS
