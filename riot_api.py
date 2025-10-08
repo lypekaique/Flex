@@ -268,7 +268,7 @@ class RiotAPI:
         # Aplica curva PUNITIVA (exponencial para ser mais exigente)
         # Valores medianos recebem scores baixos, apenas os bons são recompensados
         normalized = max(0, min(1, normalized))  # Garante entre 0 e 1
-        normalized = normalized ** 1.5  # Curva PUNITIVA - quanto maior o expoente, mais punitivo2
+        normalized = normalized ** 1.2  # Curva PUNITIVA - quanto maior o expoente, mais punitivo2
         
         return normalized
     
