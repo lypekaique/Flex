@@ -153,7 +153,7 @@ class RiotAPI:
                 if p.get('puuid') == puuid:
                     participant = p
                     break
-            
+        
             if not participant:
                 return None
             
@@ -256,29 +256,30 @@ class RiotAPI:
     
     def normalize(self, value: float, min_val: float, max_val: float) -> float:
         """
-        Normaliza um valor entre 0 e 1 de forma PUNITIVA.
-        Valores baixos recebem scores muito baixos, valores altos são recompensados.
+        Normaliza um valor entre 0 e 1 de forma equilibrada.
+        Valores medianos recebem scores medianos, ruins são penalizados, bons são recompensados.
         """
         if max_val == min_val:
             return 0.5
         
         # Normalização básica
         normalized = (value - min_val) / (max_val - min_val)
-        
-        # Aplica curva PUNITIVA (exponencial para ser mais exigente)
-        # Valores medianos recebem scores baixos, apenas os bons são recompensados
         normalized = max(0, min(1, normalized))  # Garante entre 0 e 1
-        normalized = normalized ** 1.4  # Curva PUNITIVA - quanto maior o expoente, mais punitivo
+        
+        # Aplica curva leve para valorizar performance acima da média
+        # Curva mais suave (1.15) para não ser muito punitivo
+        normalized = normalized ** 1.15
         
         return normalized
     
     def calculate_carry_score(self, stats: Dict, team_stats: Dict) -> float:
         """
         Calcula o nível de carry do jogador baseado em métricas avançadas.
-        Sistema PUNITIVO - apenas performances excepcionais recebem scores altos.
+        Sistema EQUILIBRADO - performances medianas recebem scores medianos (40-60),
+        performances ruins são penalizadas severamente, performances excepcionais são recompensadas.
         
-        Sistema de pesos por role (ESPECÍFICO E PUNITIVO):
-        - Top/Mid: FOCO MÁXIMO em KDA - você precisa performar bem no combate
+        Sistema de pesos por role:
+        - Top/Mid: FOCO em KDA - você precisa performar bem no combate
         - Jungle: Kill Participation + Objetivos - você precisa estar presente e pegar objetivos
         - ADC: Farm + Dano - você precisa farmar bem E causar dano alto
         - Support: Visão + Kill Participation - você precisa wardear E estar presente nas lutas
@@ -322,25 +323,25 @@ class RiotAPI:
         team_kills = max(team_stats.get('team_kills', kills + assists + 1), 1)
         
         # ⏱️ FATOR DE ESCALA BASEADO NO TEMPO
-        # Sistema de multiplicador progressivo:
-        # - 10 minutos: 2.5x o score
-        # - A cada 5 minutos: reduz 0.2x
+        # Sistema de multiplicador progressivo moderado:
+        # - 15 minutos: 1.4x o score
+        # - A cada 5 minutos: reduz 0.08x
         # 
         # Exemplos:
-        # 10 min: 2.5x | 15 min: 2.3x | 20 min: 2.1x | 25 min: 1.9x
-        # 30 min: 1.7x | 35 min: 1.5x | 40 min: 1.3x | 45 min: 1.1x
+        # 15 min: 1.4x | 20 min: 1.32x | 25 min: 1.24x | 30 min: 1.16x
+        # 35 min: 1.08x | 40+ min: 1.0x
         
-        if game_duration <= 10:
-            # Jogos de até 10 minutos (stomps/remakes)
-            time_scale_factor = 2.5
+        if game_duration <= 15:
+            # Jogos de até 15 minutos (stomps/remakes)
+            time_scale_factor = 1.4
         else:
-            # Após 10 minutos, reduz 0.2x a cada 5 minutos
-            minutes_after_10 = game_duration - 10
-            intervals_of_5 = minutes_after_10 / 5.0
-            time_scale_factor = 2.5 - (intervals_of_5 * 0.2)
+            # Após 15 minutos, reduz 0.08x a cada 5 minutos
+            minutes_after_15 = game_duration - 15
+            intervals_of_5 = minutes_after_15 / 5.0
+            time_scale_factor = 1.4 - (intervals_of_5 * 0.08)
             
-            # Garante que o multiplicador não fique negativo
-            time_scale_factor = max(time_scale_factor, 0.5)  # Mínimo de 0.5x
+            # Garante que o multiplicador não fique abaixo de 1.0x
+            time_scale_factor = max(time_scale_factor, 1.0)  # Mínimo de 1.0x
         
         # 🥊 COMBATE - KDA
         if deaths == 0:
@@ -375,16 +376,16 @@ class RiotAPI:
             (total_heal + total_shields) / 800  # Mais generoso
         )
         
-        # NORMALIZAÇÃO PUNITIVA - ranges estreitos e exigentes
-        # Apenas performances realmente boas atingem scores altos
-        norm_kda = self.normalize(kda, 0, 10)  # Range maior = mais difícil atingir 100%
-        norm_kp = self.normalize(kill_participation, 0.15, 0.85)  # Range mais estreito e exigente
-        norm_dpm = self.normalize(dpm, 50, 1200)  # Range maior = mais punitivo
-        norm_gpm = self.normalize(gpm, 150, 550)  # Range maior = mais exigente
-        norm_cspm = self.normalize(cspm, 0.5, 10)  # Range maior = mais difícil
-        norm_objectives = self.normalize(objectives_score, 0, 600)  # Mais exigente
-        norm_vision = self.normalize(vision_per_min, 0.1, 2.5)  # Mais punitivo
-        norm_utility = self.normalize(utility_score, 0, 60)  # Mais exigente
+        # NORMALIZAÇÃO EQUILIBRADA - ranges ajustados para valores mais realistas
+        # Performance mediana = score mediano, ruim = baixo, excepcional = alto
+        norm_kda = self.normalize(kda, 0, 8)  # KDA 4 = 50%, KDA 8 = 100%
+        norm_kp = self.normalize(kill_participation, 0.20, 0.80)  # 50% KP = score mediano
+        norm_dpm = self.normalize(dpm, 100, 900)  # Ajustado para ser mais alcançável
+        norm_gpm = self.normalize(gpm, 200, 450)  # Range mais realista
+        norm_cspm = self.normalize(cspm, 1, 8)  # 4.5 CS/min = mediano
+        norm_objectives = self.normalize(objectives_score, 0, 400)  # Mais alcançável
+        norm_vision = self.normalize(vision_per_min, 0.2, 2.0)  # Range mais justo
+        norm_utility = self.normalize(utility_score, 0, 50)  # Ajustado
         
         # PESOS POR ROLE - SISTEMA PUNITIVO E ESPECÍFICO
         if role == 'UTILITY':  # Support: VISÃO + KILL PARTICIPATION
@@ -400,7 +401,7 @@ class RiotAPI:
             }
         elif role == 'JUNGLE':  # Jungle: KILL PARTICIPATION + OBJETIVOS
             weights = {
-                'kda': 0.15,      # Menos peso no KDA
+                'kda': 0.25,      # Menos peso no KDA
                 'kp': 0.35,       # MÁXIMO PESO em Kill Participation
                 'dpm': 0.10,
                 'gpm': 0.05,
@@ -444,41 +445,49 @@ class RiotAPI:
             norm_utility * weights['utility']
         )
         
-        # Escala para 0-100 de forma PUNITIVA
-        # SEM offset base - você precisa merecer cada ponto
-        score = base_score * 100  # Sem bônus base, puro mérito
+        # Escala para 0-100 com base mediana
+        # Performances medianas ficam em torno de 40-60
+        score = (base_score * 85) + 10  # Base de 10 + até 85 pontos
         
         # ⏱️ APLICA FATOR DE ESCALA TEMPORAL
         # Compensa partidas curtas que naturalmente têm métricas mais baixas
         score *= time_scale_factor
         
-        # Bônus de vitória moderado (não muito generoso)
+        # Bônus de vitória moderado
         if win:
-            score *= 1.05  # Apenas 5% de bônus
+            score *= 1.08  # 8% de bônus por vitória
             
             # 🚀 BÔNUS ADICIONAL para SNOWBALL/STOMP (vitória muito rápida)
-            # Indica domínio total do time
             if game_duration < 20:  # Vitória em menos de 20 minutos
-                score += 5  # +5 pontos por stomp
+                score += 8  # +8 pontos por stomp
                 if kill_participation >= 0.6:  # E você participou bem
-                    score += 5  # +5 pontos extras
+                    score += 7  # +7 pontos extras
             elif game_duration < 25 and kill_participation >= 0.7:  # Vitória rápida com alta participação
-                score += 3  # +3 pontos
+                score += 5  # +5 pontos
         
-        # PENALIDADES por performance ruim
-        if deaths > 8:  # Morreu muito
-            score *= 0.85  # -15% de penalidade
+        # PENALIDADES SEVERAS por performance ruim
+        if deaths > 10:  # Morreu MUITO
+            score *= 0.70  # -30% de penalidade
+        elif deaths > 8:  # Morreu muito
+            score *= 0.80  # -20% de penalidade
         elif deaths > 6:
             score *= 0.90  # -10% de penalidade
         
-        if kill_participation < 0.3:  # Participou pouco
+        if kill_participation < 0.25:  # Participou muito pouco
+            score *= 0.75  # -25% de penalidade
+        elif kill_participation < 0.35:  # Participou pouco
             score *= 0.85  # -15% de penalidade
         
-        # Pequeno bônus apenas para performances EXCEPCIONAIS
-        if kda >= 8:  # KDA realmente excepcional
-            score += 3
+        # Bônus para performances EXCEPCIONAIS
+        if kda >= 10:  # KDA excepcional
+            score += 8
+        elif kda >= 7:
+            score += 5
+        
         if kill_participation >= 0.8:  # Participou de quase tudo
-            score += 2
+            score += 5
+        elif kill_participation >= 0.7:
+            score += 3
         
         return int(min(max(score, 0), 100))  # Garante entre 0 e 100
     
