@@ -256,8 +256,8 @@ class RiotAPI:
     
     def normalize(self, value: float, min_val: float, max_val: float) -> float:
         """
-        Normaliza um valor entre 0 e 1 de forma menos punitiva.
-        Usa curva mais suave: valores medianos ganham mais pontos.
+        Normaliza um valor entre 0 e 1 de forma PUNITIVA.
+        Valores baixos recebem scores muito baixos, valores altos são recompensados.
         """
         if max_val == min_val:
             return 0.5
@@ -265,21 +265,23 @@ class RiotAPI:
         # Normalização básica
         normalized = (value - min_val) / (max_val - min_val)
         
-        # Aplica curva de suavização (raiz quadrada para ser menos punitivo)
-        # Valores baixos ganham mais pontos, valores altos não perdem tanto
+        # Aplica curva PUNITIVA (exponencial para ser mais exigente)
+        # Valores medianos recebem scores baixos, apenas os bons são recompensados
         normalized = max(0, min(1, normalized))  # Garante entre 0 e 1
-        normalized = normalized ** 0.7  # Curva mais suave
+        normalized = normalized ** 1.5  # Curva PUNITIVA - quanto maior o expoente, mais punitivo2
         
         return normalized
     
     def calculate_carry_score(self, stats: Dict, team_stats: Dict) -> float:
         """
         Calcula o nível de carry do jogador baseado em métricas avançadas.
-        Sistema inspirado no U.GG - menos punitivo e mais focado em performance relativa.
+        Sistema PUNITIVO - apenas performances excepcionais recebem scores altos.
         
-        Sistema de pesos por role:
-        - Top/Jungle/Mid/ADC: foco em KDA, KP, dano, farm e objetivos
-        - Support: foco em KP, vision, objetivos, CC/utility
+        Sistema de pesos por role (ESPECÍFICO E PUNITIVO):
+        - Top/Mid: FOCO MÁXIMO em KDA - você precisa performar bem no combate
+        - Jungle: Kill Participation + Objetivos - você precisa estar presente e pegar objetivos
+        - ADC: Farm + Dano - você precisa farmar bem E causar dano alto
+        - Support: Visão + Kill Participation - você precisa wardear E estar presente nas lutas
         
         Retorna um score de 0 a 100
         """
@@ -319,8 +321,25 @@ class RiotAPI:
         # Dados do time
         team_kills = max(team_stats.get('team_kills', kills + assists + 1), 1)
         
-        # 🥊 COMBATE - KDA menos punitivo (como no U.GG)
-        # U.GG usa fórmula: (kills + assists) / max(deaths, 1) mas com limites mais generosos
+        # ⏱️ FATOR DE ESCALA BASEADO NO TEMPO
+        # Partidas padrão: 25-35 minutos
+        # Partidas curtas (<20min) e longas (>40min) têm ajustes
+        standard_duration = 30  # minutos (duração "ideal" de referência)
+        
+        # Calcula fator de escala temporal
+        # Partidas curtas recebem boost, partidas longas não são penalizadas demais
+        if game_duration < 20:  # Jogo muito rápido (surrender ou stomp)
+            time_scale_factor = 1.20  # +20% para compensar métricas baixas
+        elif game_duration < 25:  # Jogo rápido
+            time_scale_factor = 1.10  # +10% de boost
+        elif game_duration > 40:  # Jogo muito longo
+            time_scale_factor = 0.95  # -5% pois métricas ficam infladas
+        elif game_duration > 35:  # Jogo longo
+            time_scale_factor = 0.98  # -2%
+        else:  # Jogo normal (25-35 min)
+            time_scale_factor = 1.0  # Sem ajuste
+        
+        # 🥊 COMBATE - KDA
         if deaths == 0:
             kda = (kills + assists) + 3  # Bônus por não morrer
         else:
@@ -329,10 +348,10 @@ class RiotAPI:
         # Kill Participation
         kill_participation = (kills + assists) / team_kills
         
-        # Dano por minuto
+        # Dano por minuto (já normalizado por tempo)
         dpm = damage_dealt / game_duration
         
-        # 💰 RECURSOS
+        # 💰 RECURSOS (já normalizados por tempo)
         gpm = gold_earned / game_duration
         cspm = cs / game_duration
         
@@ -353,39 +372,61 @@ class RiotAPI:
             (total_heal + total_shields) / 800  # Mais generoso
         )
         
-        # NORMALIZAÇÃO com ranges mais generosos (estilo U.GG)
-        # Ranges ajustados para que mais jogadores atinjam scores decentes
-        norm_kda = self.normalize(kda, 0, 6)  # Reduzido de 8 para 6
-        norm_kp = self.normalize(kill_participation, 0.2, 0.7)  # Range mais generoso
-        norm_dpm = self.normalize(dpm, 100, 900)  # Range mais amplo
-        norm_gpm = self.normalize(gpm, 200, 450)  # Mais generoso
-        norm_cspm = self.normalize(cspm, 1, 8)  # Mais generoso
-        norm_objectives = self.normalize(objectives_score, 0, 400)  # Ajustado
-        norm_vision = self.normalize(vision_per_min, 0.3, 2.0)  # Mais generoso
-        norm_utility = self.normalize(utility_score, 0, 40)  # Mais generoso
+        # NORMALIZAÇÃO PUNITIVA - ranges estreitos e exigentes
+        # Apenas performances realmente boas atingem scores altos
+        norm_kda = self.normalize(kda, 0, 10)  # Range maior = mais difícil atingir 100%
+        norm_kp = self.normalize(kill_participation, 0.15, 0.85)  # Range mais estreito e exigente
+        norm_dpm = self.normalize(dpm, 50, 1200)  # Range maior = mais punitivo
+        norm_gpm = self.normalize(gpm, 150, 550)  # Range maior = mais exigente
+        norm_cspm = self.normalize(cspm, 0.5, 10)  # Range maior = mais difícil
+        norm_objectives = self.normalize(objectives_score, 0, 600)  # Mais exigente
+        norm_vision = self.normalize(vision_per_min, 0.1, 2.5)  # Mais punitivo
+        norm_utility = self.normalize(utility_score, 0, 60)  # Mais exigente
         
-        # PESOS POR ROLE - balanceados para o U.GG style
-        if role == 'UTILITY':  # Support
+        # PESOS POR ROLE - SISTEMA PUNITIVO E ESPECÍFICO
+        if role == 'UTILITY':  # Support: VISÃO + KILL PARTICIPATION
             weights = {
-                'kda': 0.18,      # Um pouco mais peso
-                'kp': 0.25,
+                'kda': 0.10,      # Menos peso no KDA
+                'kp': 0.35,       # MÁXIMO PESO em Kill Participation
                 'dpm': 0.05,
                 'gpm': 0.0,
                 'cspm': 0.0,
-                'objectives': 0.15,
-                'vision': 0.22,   # Reduzido um pouco
-                'utility': 0.15
+                'objectives': 0.10,
+                'vision': 0.35,   # MÁXIMO PESO em Visão
+                'utility': 0.05
             }
-        else:  # Top/Jungle/Mid/ADC
+        elif role == 'JUNGLE':  # Jungle: KILL PARTICIPATION + OBJETIVOS
             weights = {
-                'kda': 0.22,      # Mais peso no KDA
-                'kp': 0.22,       # Mais peso no KP
+                'kda': 0.15,      # Menos peso no KDA
+                'kp': 0.35,       # MÁXIMO PESO em Kill Participation
+                'dpm': 0.10,
+                'gpm': 0.05,
+                'cspm': 0.05,
+                'objectives': 0.30,  # MÁXIMO PESO em Objetivos
+                'vision': 0.0,
+                'utility': 0.0
+            }
+        elif role == 'BOTTOM':  # ADC: FARM + DANO
+            weights = {
+                'kda': 0.15,      # Menos peso no KDA
+                'kp': 0.10,
+                'dpm': 0.35,      # MÁXIMO PESO em Dano
+                'gpm': 0.10,
+                'cspm': 0.30,     # MÁXIMO PESO em Farm
+                'objectives': 0.0,
+                'vision': 0.0,
+                'utility': 0.0
+            }
+        else:  # Top/Mid: FOCO EM KDA
+            weights = {
+                'kda': 0.45,      # MÁXIMO PESO em KDA
+                'kp': 0.20,
                 'dpm': 0.15,
-                'gpm': 0.08,
-                'cspm': 0.08,
-                'objectives': 0.18,  # Reduzido um pouco
-                'vision': 0.04,
-                'utility': 0.03
+                'gpm': 0.05,
+                'cspm': 0.10,
+                'objectives': 0.05,
+                'vision': 0.0,
+                'utility': 0.0
             }
         
         # CÁLCULO FINAL
@@ -400,21 +441,43 @@ class RiotAPI:
             norm_utility * weights['utility']
         )
         
-        # Escala para 0-100 com baseline mais alto (estilo U.GG)
-        # Garante que performances "ok" fiquem em 40-50, não em 20-30
-        score = (base_score * 85) + 15  # Offset de 15 pontos base
+        # Escala para 0-100 de forma PUNITIVA
+        # SEM offset base - você precisa merecer cada ponto
+        score = base_score * 100  # Sem bônus base, puro mérito
         
-        # Bônus de vitória mais generoso
+        # ⏱️ APLICA FATOR DE ESCALA TEMPORAL
+        # Compensa partidas curtas que naturalmente têm métricas mais baixas
+        score *= time_scale_factor
+        
+        # Bônus de vitória moderado (não muito generoso)
         if win:
-            score *= 1.08  # 8% ao invés de 5%
+            score *= 1.05  # Apenas 5% de bônus
+            
+            # 🚀 BÔNUS ADICIONAL para SNOWBALL/STOMP (vitória muito rápida)
+            # Indica domínio total do time
+            if game_duration < 20:  # Vitória em menos de 20 minutos
+                score += 5  # +5 pontos por stomp
+                if kill_participation >= 0.6:  # E você participou bem
+                    score += 5  # +5 pontos extras
+            elif game_duration < 25 and kill_participation >= 0.7:  # Vitória rápida com alta participação
+                score += 3  # +3 pontos
         
-        # Bônus adicional por performance excepcional
-        if kda >= 5:
+        # PENALIDADES por performance ruim
+        if deaths > 8:  # Morreu muito
+            score *= 0.85  # -15% de penalidade
+        elif deaths > 6:
+            score *= 0.90  # -10% de penalidade
+        
+        if kill_participation < 0.3:  # Participou pouco
+            score *= 0.85  # -15% de penalidade
+        
+        # Pequeno bônus apenas para performances EXCEPCIONAIS
+        if kda >= 8:  # KDA realmente excepcional
             score += 3
-        if kill_participation >= 0.7:
+        if kill_participation >= 0.8:  # Participou de quase tudo
             score += 2
         
-        return int(min(score, 100))  # Garante máximo de 100 e converte para inteiro
+        return int(min(max(score, 0), 100))  # Garante entre 0 e 100
     
     def extract_player_stats(self, match_data: Dict, puuid: str) -> Optional[Dict]:
         """Extrai as estatísticas do jogador específico de uma partida"""

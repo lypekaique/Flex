@@ -150,42 +150,43 @@ class FlexGuideView(discord.ui.View):
             name="📈 O que é Carry Score?",
             value=(
                 "É uma pontuação de **0 a 100** que mede o quanto você carregou seu time.\n"
-                "Sistema inspirado no **U.GG** - não é apenas KDA! Considera múltiplos fatores.\n"
-                "✨ **Menos punitivo**: performances medianas recebem scores justos!"
+                "Sistema **PUNITIVO** - apenas performances excepcionais recebem scores altos!\n"
+                "⚠️ **Mais exigente**: você precisa ser consistente para ter boas notas!"
             ),
             inline=False
         )
         embed.add_field(
-            name="📊 Fatores Analisados",
+            name="📊 Fatores Analisados por Role",
             value=(
-                "• **KDA** e **Kill Participation**\n"
-                "• **Dano** causado aos campeões\n"
-                "• **Farm** (CS/min e Gold/min)\n"
-                "• **Objetivos** (Torres, Drag, Baron)\n"
-                "• **Visão** (Vision Score, Wards)\n"
-                "• **Utility** (CC, Heals, Shields)\n"
-                "• **Bônus** de +5% por vitória"
+                "**Top/Mid**: KDA é crucial!\n"
+                "**Jungle**: Kill Participation + Objetivos\n"
+                "**ADC**: Farm + Dano aos campeões\n"
+                "**Support**: Visão + Kill Participation\n"
+                "• **Bônus** de +5% por vitória\n"
+                "• **Penalidades** por muitas mortes ou baixa participação"
             ),
             inline=False
         )
         embed.add_field(
-            name="🎯 Rankings",
+            name="🎯 Rankings (Sistema Punitivo)",
             value=(
-                "🏆 **75-100**: S+ Carry (GOD)\n"
-                "⭐ **65-74**: S Carry (Muito bom)\n"
-                "💎 **50-64**: A (Bom)\n"
-                "🥈 **35-49**: B (Normal)\n"
-                "📉 **0-34**: C (Precisa melhorar)"
+                "🏆 **95-100**: S+ (Perfeito)\n"
+                "⭐ **90-80**: S (Excelente)\n"
+                "💎 **80-70**: A (Muito Bom)\n"
+                "🥈 **70-60**: B (Bom)\n"
+                "📊 **60-40**: C (Mediano)\n"
+                "📉 **40-20**: D (Ruim)\n"
+                "💀 **20-0**: F (Muito Ruim)"
             ),
             inline=False
         )
         embed.add_field(
-            name="💡 Pesos por Role",
+            name="💡 Pesos por Role (Sistema Específico)",
             value=(
-                "**Carry Roles** (Top/Jungle/Mid/ADC):\n"
-                "Foco em dano, farm e objetivos\n\n"
-                "**Support**:\n"
-                "Foco em KP, visão e utility"
+                "**Top/Mid**: 45% KDA + 20% KP\n"
+                "**Jungle**: 35% KP + 30% Objetivos\n"
+                "**ADC**: 35% Dano + 30% Farm\n"
+                "**Support**: 35% Visão + 35% KP"
             ),
             inline=False
         )
@@ -625,22 +626,28 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
             role_count[role] = role_count.get(role, 0) + 1
         most_played_role = max(role_count, key=role_count.get) if role_count else "Unknown"
         
-        # Determina emoji baseado no carry score
-        if avg_carry >= 75:
+        # Determina emoji baseado no carry score (sistema punitivo)
+        if avg_carry >= 95:
             emoji = "🏆"
-            rank = "S+ Carry"
-        elif avg_carry >= 65:
+            rank = "S+ Perfeito"
+        elif avg_carry >= 80:
             emoji = "⭐"
-            rank = "S Carry"
-        elif avg_carry >= 50:
+            rank = "S Excelente"
+        elif avg_carry >= 70:
             emoji = "💎"
-            rank = "A Carry"
-        elif avg_carry >= 35:
+            rank = "A Muito Bom"
+        elif avg_carry >= 60:
             emoji = "🥈"
-            rank = "B Normal"
-        else:
+            rank = "B Bom"
+        elif avg_carry >= 40:
+            emoji = "📊"
+            rank = "C Mediano"
+        elif avg_carry >= 20:
             emoji = "📉"
-            rank = "C Weight"
+            rank = "D Ruim"
+        else:
+            emoji = "💀"
+            rank = "F Muito Ruim"
         
         # Emoji por role
         role_emojis = {
@@ -833,24 +840,30 @@ _Esta partida não conta para estatísticas_
             result = "✅ Vitória" if match['win'] else "❌ Derrota"
             kda_ratio = f"{match['kills']}/{match['deaths']}/{match['assists']}"
             
-            # Emoji do carry score
-            if match['carry_score'] >= 75:
+            # Emoji do carry score (sistema punitivo)
+            if match['carry_score'] >= 95:
                 carry_emoji = "🏆"
                 rank_text = "S+"
-            elif match['carry_score'] >= 65:
+            elif match['carry_score'] >= 80:
                 carry_emoji = "⭐"
                 rank_text = "S"
-            elif match['carry_score'] >= 50:
+            elif match['carry_score'] >= 70:
                 carry_emoji = "💎"
                 rank_text = "A"
-            elif match['carry_score'] >= 35:
+            elif match['carry_score'] >= 60:
                 carry_emoji = "🥈"
                 rank_text = "B"
-            else:
+            elif match['carry_score'] >= 40:
                 carry_emoji = "📊"
                 rank_text = "C"
+            elif match['carry_score'] >= 20:
+                carry_emoji = "📉"
+                rank_text = "D"
+            else:
+                carry_emoji = "💀"
+                rank_text = "F"
             
-            # Emoji por role
+         
             role_emojis = {
                 'Top': '⚔️',
                 'Jungle': '🌳',
@@ -1162,18 +1175,22 @@ async def tops_flex(interaction: discord.Interaction, quantidade: int = 10):
         else:
             position_emoji = f"**#{i}**"
         
-        # Determina rank baseado no carry score
+        # Determina rank baseado no carry score (sistema punitivo)
         avg_carry = player['avg_carry']
-        if avg_carry >= 75:
+        if avg_carry >= 95:
             rank_emoji = "🏆 S+"
-        elif avg_carry >= 65:
+        elif avg_carry >= 80:
             rank_emoji = "⭐ S"
-        elif avg_carry >= 50:
+        elif avg_carry >= 70:
             rank_emoji = "💎 A"
-        elif avg_carry >= 35:
+        elif avg_carry >= 60:
             rank_emoji = "🥈 B"
-        else:
+        elif avg_carry >= 40:
             rank_emoji = "📊 C"
+        elif avg_carry >= 20:
+            rank_emoji = "📉 D"
+        else:
+            rank_emoji = "💀 F"
         
         # Busca usuário do Discord
         try:
@@ -1243,15 +1260,15 @@ async def flex_guide(interaction: discord.Interaction):
     )
     
     embed.add_field(
-        name="🏆 **SISTEMA DE CARRY SCORE**",
+        name="🏆 **SISTEMA DE CARRY SCORE (PUNITIVO)**",
         value=(
-            "**Pontuação de 0 a 100 baseada em:**\n"
-            "⚔️ Combate: KDA, Dano, Kill Participation\n"
-            "💰 Economia: CS/min, Gold/min\n"
-            "🎯 Objetivos: Torres, Dragões, Barões\n"
-            "👁️ Visão: Vision Score, Wards\n"
-            "🛡️ Utility: CC, Heals, Shields\n\n"
-            "**Cada role tem pesos personalizados!**"
+            "**Pontuação de 0 a 100 - Sistema EXIGENTE:**\n"
+            "⚔️ **Top/Mid**: Foco em KDA\n"
+            "🌳 **Jungle**: Kill Participation + Objetivos\n"
+            "🏹 **ADC**: Farm + Dano aos campeões\n"
+            "🛡️ **Support**: Visão + Kill Participation\n\n"
+            "**Penalidades por muitas mortes ou baixa participação!**\n"
+            "**Apenas performances excepcionais recebem S/S+!**"
         ),
         inline=False
     )
@@ -1511,23 +1528,29 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
                 result_emoji = "❌"
                 result_text = "DERROTA"
             
-            # Determina emoji e rank do carry score (não relevante para remakes)
+            # Determina emoji e rank do carry score (sistema punitivo)
             carry_score = stats['carry_score']
-            if carry_score >= 75:
+            if carry_score >= 95:
                 rank_emoji = "🏆"
-                rank_text = "S+ CARRY"
-            elif carry_score >= 65:
+                rank_text = "S+ PERFEITO"
+            elif carry_score >= 80:
                 rank_emoji = "⭐"
-                rank_text = "S CARRY"
-            elif carry_score >= 50:
+                rank_text = "S EXCELENTE"
+            elif carry_score >= 70:
                 rank_emoji = "💎"
-                rank_text = "A"
-            elif carry_score >= 35:
+                rank_text = "A MUITO BOM"
+            elif carry_score >= 60:
                 rank_emoji = "🥈"
-                rank_text = "B"
-            else:
+                rank_text = "B BOM"
+            elif carry_score >= 40:
+                rank_emoji = "📊"
+                rank_text = "C MEDIANO"
+            elif carry_score >= 20:
                 rank_emoji = "📉"
-                rank_text = "C"
+                rank_text = "D RUIM"
+            else:
+                rank_emoji = "💀"
+                rank_text = "F MUITO RUIM"
             
             # Emoji por role
             role_emojis = {
