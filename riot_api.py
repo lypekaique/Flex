@@ -87,10 +87,11 @@ class RiotAPI:
         routing = self.ROUTING.get(region, 'americas')
         url = f"https://{routing}.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids"
         
+        # Nota: O parâmetro 'queue' foi removido pois causava erro 400
+        # Agora filtramos as partidas pelo queueId após buscar os detalhes
         params = {
             'start': 0,
-            'count': count,
-            'queue': queue  # 440 = Ranked Flex 5v5
+            'count': count
         }
         
         async with aiohttp.ClientSession() as session:
@@ -100,6 +101,8 @@ class RiotAPI:
                         return await response.json()
                     else:
                         print(f"Erro ao buscar histórico: {response.status}")
+                        text = await response.text()
+                        print(f"Resposta da API: {text}")
                         return None
             except Exception as e:
                 print(f"Erro ao buscar histórico: {e}")
@@ -127,6 +130,7 @@ class RiotAPI:
         if region not in self.REGIONS:
             return None
         
+        # Spectator V5 usa PUUID diretamente
         url = f"https://{self.REGIONS[region]}/lol/spectator/v5/active-games/by-summoner/{puuid}"
         
         async with aiohttp.ClientSession() as session:
@@ -135,10 +139,16 @@ class RiotAPI:
                     if response.status == 200:
                         return await response.json()
                     elif response.status == 404:
-                        # Jogador não está em partida
+                        # Jogador não está em partida (normal, não é erro)
                         return None
                     else:
-                        print(f"Erro ao buscar partida ativa: {response.status}")
+                        # Apenas mostra erro uma vez por minuto para não spammar logs
+                        if not hasattr(self, '_last_spectator_error') or \
+                           (datetime.now() - self._last_spectator_error).seconds > 60:
+                            print(f"Erro ao buscar partida ativa: {response.status}")
+                            text = await response.text()
+                            print(f"Resposta da API: {text[:200]}")
+                            self._last_spectator_error = datetime.now()
                         return None
             except Exception as e:
                 print(f"Erro ao buscar partida ativa: {e}")

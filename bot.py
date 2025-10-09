@@ -386,17 +386,22 @@ async def logar(interaction: discord.Interaction, riot_id: str, regiao: str = DE
         if new_account:
             try:
                 # Busca última partida sem processar (só para marcar como vista)
-                match_ids = await riot_api.get_match_history(account['puuid'], regiao, count=1)
+                match_ids = await riot_api.get_match_history(account['puuid'], regiao, count=5)
                 if match_ids and len(match_ids) > 0:
-                    # Busca detalhes da última partida
-                    match_data = await riot_api.get_match_details(match_ids[0], regiao)
-                    if match_data:
-                        # Extrai stats mas NÃO envia notificações
-                        stats = riot_api.extract_player_stats(match_data, account['puuid'])
-                        if stats:
-                            # Salva silenciosamente para marcar como última partida vista
-                            db.add_match(new_account['id'], stats)
-                            print(f"✅ Última partida marcada para {game_name}#{tag_line} (sem notificar histórico)")
+                    # Procura a primeira partida de Ranked Flex
+                    for match_id in match_ids:
+                        match_data = await riot_api.get_match_details(match_id, regiao)
+                        if match_data:
+                            # Verifica se é Ranked Flex (queueId 440)
+                            queue_id = match_data.get('info', {}).get('queueId', 0)
+                            if queue_id == 440:
+                                # Extrai stats mas NÃO envia notificações
+                                stats = riot_api.extract_player_stats(match_data, account['puuid'])
+                                if stats:
+                                    # Salva silenciosamente para marcar como última partida vista
+                                    db.add_match(new_account['id'], stats)
+                                    print(f"✅ Última partida marcada para {game_name}#{tag_line} (sem notificar histórico)")
+                                    break
             except Exception as e:
                 print(f"⚠️ Erro ao marcar última partida: {e}")
                 # Não interrompe o fluxo se houver erro
@@ -2129,6 +2134,12 @@ async def check_new_matches():
                     match_data = await riot_api.get_match_details(match_id, region)
                     
                     if match_data:
+                        # Verifica se é Ranked Flex (queueId 440)
+                        queue_id = match_data.get('info', {}).get('queueId', 0)
+                        if queue_id != 440:
+                            # Não é Ranked Flex, pula essa partida
+                            continue
+                        
                         # Extrai estatísticas do jogador
                         stats = riot_api.extract_player_stats(match_data, puuid)
                         
@@ -2230,6 +2241,12 @@ async def check_live_games_finished():
                 match_data = await riot_api.get_match_details(match_id, region)
                 
                 if match_data:
+                    # Verifica se é Ranked Flex (queueId 440)
+                    queue_id = match_data.get('info', {}).get('queueId', 0)
+                    if queue_id != 440:
+                        # Não é Ranked Flex, pula
+                        continue
+                    
                     # Verifica se é a partida do live game (o game_id da spectator API é diferente do match_id)
                     # Então verificamos se a partida terminou recentemente (menos de 10 minutos)
                     game_end_timestamp = match_data.get('info', {}).get('gameEndTimestamp')
