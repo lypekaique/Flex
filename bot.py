@@ -183,10 +183,11 @@ class FlexGuideView(discord.ui.View):
         embed.add_field(
             name="💡 Pesos por Role (Sistema Específico)",
             value=(
-                "**Top/Mid**: 45% KDA + 20% KP\n"
-                "**Jungle**: 35% KP + 30% Objetivos\n"
-                "**ADC**: 35% Dano + 30% Farm\n"
-                "**Support**: 35% Visão + 35% KP"
+                "**Top**: 35% KDA + 25% Dano + 11.5% Objetivos\n"
+                "**Mid**: 35% KDA + 25% Dano + 19% KP\n"
+                "**Jungle**: 35% KP + 30% KDA + 15% Objetivos\n"
+                "**ADC**: 35% KDA + 30% Dano + 15% Gold\n"
+                "**Support**: 55% KP + 25% Visão + 15% KDA"
             ),
             inline=False
         )

@@ -447,22 +447,22 @@ class RiotAPI:
             }
         elif role == 'TOP':  # Top: KDA + DANO + Split Push balanceado
             weights = {
-                'kda': 0.45,      # MÁXIMO PESO em KDA (45%!)
+                'kda': 0.35,      # KDA importante (35%)
                 'kp': 0.075,      # KP balanceado (7.5%)
                 'dpm': 0.25,      # MUITO PESO em Dano (25%)
-                'gpm': 0.08,      # Gold também importante
-                'cspm': 0.07,
-                'objectives': 0.075,  # Objetivos balanceado (7.5% - estruturas/torres)
+                'gpm': 0.11,      # Gold importante (11% - +3%)
+                'cspm': 0.10,     # Farm importante (10% - +3%)
+                'objectives': 0.115,  # Objetivos importantes (11.5% - estruturas/torres +4%)
                 'vision': 0.0,
                 'utility': 0.0
             }
         else:  # Mid: KDA + DANO (MÁXIMA PRIORIDADE)
             weights = {
-                'kda': 0.45,      # MÁXIMO PESO em KDA (45%!)
-                'kp': 0.15,
+                'kda': 0.35,      # KDA importante (35%)
+                'kp': 0.19,       # Kill Participation importante (19% - +4%)
                 'dpm': 0.25,      # MUITO PESO em Dano (25%)
-                'gpm': 0.08,      # Gold também importante
-                'cspm': 0.07,
+                'gpm': 0.11,      # Gold importante (11% - +3%)
+                'cspm': 0.10,     # Farm importante (10% - +3%)
                 'objectives': 0.0,
                 'vision': 0.0,
                 'utility': 0.0
