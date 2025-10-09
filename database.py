@@ -873,4 +873,45 @@ class Database:
         except Exception as e:
             print(f"❌ [DATABASE] Erro ao remover live game notification: {e}")
             return False
+    
+    def update_account_puuid(self, account_id: int, new_puuid: str, new_summoner_id: str, new_account_id: str) -> bool:
+        """Atualiza o PUUID e IDs de uma conta"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE lol_accounts
+                SET puuid = ?, summoner_id = ?, account_id = ?
+                WHERE id = ?
+            ''', (new_puuid, new_summoner_id, new_account_id, account_id))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"❌ [DATABASE] Erro ao atualizar PUUID: {e}")
+            return False
+    
+    def get_all_accounts(self) -> List[Dict]:
+        """Retorna todas as contas LOL do banco"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, discord_id, summoner_name, summoner_id, puuid, account_id, region
+            FROM lol_accounts
+        ''')
+        
+        accounts = []
+        for row in cursor.fetchall():
+            accounts.append({
+                'id': row[0],
+                'discord_id': row[1],
+                'summoner_name': row[2],
+                'summoner_id': row[3],
+                'puuid': row[4],
+                'account_id': row[5],
+                'region': row[6]
+            })
+        
+        conn.close()
+        return accounts
 

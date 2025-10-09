@@ -1460,6 +1460,120 @@ async def reset_media_confirmar(interaction: discord.Interaction):
             ephemeral=True
         )
 
+@bot.tree.command(name="resync_accounts", description="🔄 [ADMIN] Re-sincroniza todas as contas para corrigir PUUIDs corrompidos")
+@app_commands.checks.has_permissions(administrator=True)
+async def resync_accounts(interaction: discord.Interaction):
+    """[ADMIN] Re-sincroniza todas as contas do banco de dados com a Riot API"""
+    await interaction.response.defer(ephemeral=True)
+    
+    embed = discord.Embed(
+        title="🔄 Re-sincronizando Contas",
+        description="Atualizando PUUIDs de todas as contas vinculadas...",
+        color=discord.Color.blue()
+    )
+    await interaction.followup.send(embed=embed, ephemeral=True)
+    
+    # Busca todas as contas
+    all_accounts = db.get_all_accounts()
+    
+    if not all_accounts:
+        embed = discord.Embed(
+            title="❌ Nenhuma Conta Encontrada",
+            description="Não há contas vinculadas no banco de dados.",
+            color=discord.Color.red()
+        )
+        await interaction.edit_original_response(embed=embed)
+        return
+    
+    success_count = 0
+    fail_count = 0
+    failed_accounts = []
+    
+    for account in all_accounts:
+        try:
+            # Parse o summoner name (formato: Nome#TAG)
+            if '#' not in account['summoner_name']:
+                print(f"⚠️ Conta sem formato Riot ID: {account['summoner_name']}")
+                fail_count += 1
+                failed_accounts.append(account['summoner_name'])
+                continue
+            
+            game_name, tag_line = account['summoner_name'].split('#', 1)
+            region = account['region']
+            
+            # Busca novos dados da Riot API
+            riot_account = await riot_api.get_account_by_riot_id(game_name, tag_line, region)
+            
+            if not riot_account:
+                print(f"❌ Não foi possível buscar: {account['summoner_name']}")
+                fail_count += 1
+                failed_accounts.append(account['summoner_name'])
+                continue
+            
+            # Busca dados do summoner pelo novo PUUID
+            summoner = await riot_api.get_summoner_by_puuid(riot_account['puuid'], region)
+            
+            if not summoner:
+                print(f"❌ Não foi possível buscar summoner: {account['summoner_name']}")
+                fail_count += 1
+                failed_accounts.append(account['summoner_name'])
+                continue
+            
+            # Atualiza no banco
+            summoner_id = summoner.get('id', riot_account['puuid'])
+            account_id = summoner.get('accountId', riot_account['puuid'])
+            
+            if db.update_account_puuid(account['id'], riot_account['puuid'], summoner_id, account_id):
+                print(f"✅ Atualizado: {account['summoner_name']}")
+                success_count += 1
+            else:
+                print(f"❌ Erro ao atualizar banco: {account['summoner_name']}")
+                fail_count += 1
+                failed_accounts.append(account['summoner_name'])
+            
+            # Delay para não sobrecarregar a API
+            await asyncio.sleep(1)
+            
+        except Exception as e:
+            print(f"❌ Erro ao processar {account.get('summoner_name', 'unknown')}: {e}")
+            fail_count += 1
+            failed_accounts.append(account.get('summoner_name', 'unknown'))
+    
+    # Resultado final
+    result_embed = discord.Embed(
+        title="✅ Re-sincronização Concluída",
+        color=discord.Color.green() if fail_count == 0 else discord.Color.orange()
+    )
+    
+    result_embed.add_field(
+        name="📊 Resultado",
+        value=(
+            f"✅ **{success_count}** contas atualizadas\n"
+            f"❌ **{fail_count}** contas falharam\n"
+            f"📝 **{len(all_accounts)}** contas totais"
+        ),
+        inline=False
+    )
+    
+    if failed_accounts:
+        failed_text = "\n".join([f"• {acc}" for acc in failed_accounts[:10]])
+        if len(failed_accounts) > 10:
+            failed_text += f"\n... e mais {len(failed_accounts) - 10}"
+        
+        result_embed.add_field(
+            name="❌ Contas que falharam",
+            value=failed_text,
+            inline=False
+        )
+        result_embed.add_field(
+            name="💡 Solução",
+            value="Peça para os usuários usarem `/logar` novamente para re-vincular suas contas.",
+            inline=False
+        )
+    
+    result_embed.set_footer(text="Os usuários podem continuar usando o bot normalmente")
+    await interaction.edit_original_response(embed=result_embed)
+
 @bot.tree.command(name="purge_media", description="🗑️ [ADMIN] Reseta TODAS as estatísticas e médias salvas no bot")
 @app_commands.checks.has_permissions(administrator=True)
 async def purge_media(interaction: discord.Interaction):
