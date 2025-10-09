@@ -205,7 +205,7 @@ class FlexGuideView(discord.ui.View):
             name="⚠️ Alerta de Performance Baixa",
             value=(
                 "Se você jogar **3x seguidas** com o mesmo campeão\n"
-                "E tiver **Carry Score < 49** nas 3 partidas,\n"
+                "E tiver **Carry Score < 40** nas 3 partidas,\n"
                 "O bot enviará um alerta com sugestões!"
             ),
             inline=False
@@ -1031,7 +1031,7 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
                 name="📢 O que será notificado?",
                 value=(
                     "• Quando um jogador usar o **mesmo campeão 3x seguidas**\n"
-                    "• E tiver **carry score abaixo de 49** nas 3 partidas\n"
+                    "• E tiver **carry score abaixo de 40** nas 3 partidas\n"
                     "• Será enviada uma notificação com sugestões"
                 ),
                 inline=False
@@ -1883,8 +1883,8 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
         if len(matches) < 3:
             return
         
-        # Verifica se todas as 3 têm score abaixo de 49
-        all_bad_scores = all(match['carry_score'] < 49 for match in matches)
+        # Verifica se todas as 3 têm score abaixo de 40
+        all_bad_scores = all(match['carry_score'] < 40 for match in matches)
         
         if not all_bad_scores:
             return
