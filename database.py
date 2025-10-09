@@ -71,6 +71,7 @@ class Database:
                 game_duration INTEGER,
                 win BOOLEAN,
                 carry_score REAL,
+                mvp_score REAL DEFAULT 0,
                 kda REAL,
                 kill_participation REAL,
                 played_at TIMESTAMP,
@@ -150,6 +151,14 @@ class Database:
             print("🔄 Migrando banco: adicionando coluna is_remake...")
             cursor.execute('ALTER TABLE matches ADD COLUMN is_remake BOOLEAN DEFAULT 0')
             print("✅ Migração is_remake concluída!")
+        
+        # Migração: Adiciona coluna mvp_score em matches
+        try:
+            cursor.execute("SELECT mvp_score FROM matches LIMIT 1")
+        except sqlite3.OperationalError:
+            print("🔄 Migrando banco: adicionando coluna mvp_score...")
+            cursor.execute('ALTER TABLE matches ADD COLUMN mvp_score REAL DEFAULT 0')
+            print("✅ Migração mvp_score concluída!")
         
         conn.commit()
         conn.close()
@@ -235,8 +244,8 @@ class Database:
                     lol_account_id, match_id, game_mode, champion_name, role,
                     kills, deaths, assists, damage_dealt, damage_taken,
                     gold_earned, cs, vision_score, game_duration, win, 
-                    carry_score, kda, kill_participation, played_at, is_remake
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    carry_score, mvp_score, kda, kill_participation, played_at, is_remake
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 lol_account_id,
                 match_data['match_id'],
@@ -254,6 +263,7 @@ class Database:
                 match_data['game_duration'],
                 match_data['win'],
                 match_data['carry_score'],
+                match_data.get('mvp_score', 0),
                 match_data.get('kda', 0),
                 match_data.get('kill_participation', 0),
                 match_data['played_at'],

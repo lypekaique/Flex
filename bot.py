@@ -1815,18 +1815,40 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
                     inline=True
                 )
                 
-                # Carry Score em destaque
+                # MVP Score (comparação com o time)
+                mvp_score = stats.get('mvp_score', 0)
+                if mvp_score >= 90:
+                    mvp_emoji = "👑"
+                    mvp_rank = "MVP"
+                elif mvp_score >= 70:
+                    mvp_emoji = "🥇"
+                    mvp_rank = "1º/2º"
+                elif mvp_score >= 50:
+                    mvp_emoji = "🥈"
+                    mvp_rank = "3º"
+                elif mvp_score >= 25:
+                    mvp_emoji = "🥉"
+                    mvp_rank = "4º"
+                else:
+                    mvp_emoji = "😴"
+                    mvp_rank = "5º"
+                
                 embed.add_field(
-                    name="🏆 Carry Score",
+                    name="🎯 Performance Scores",
                     value=(
-                        f"# {rank_emoji} {carry_score}/100\n"
-                        f"**Rank:** {rank_text}\n"
-                        f"\n"
+                        f"**📊 CARRY SCORE** _(Avaliação Completa)_\n"
+                        f"{rank_emoji} **{carry_score}/100** - Rank **{rank_text}**\n"
                         f"```\n"
                         f"{'█' * int(carry_score/5)}{'░' * (20 - int(carry_score/5))}\n"
+                        f"```\n"
+                        f"\n"
+                        f"**👑 MVP SCORE** _(vs Time)_\n"
+                        f"{mvp_emoji} **{mvp_score}/100** - **{mvp_rank}** no time\n"
+                        f"```\n"
+                        f"{'█' * int(mvp_score/5)}{'░' * (20 - int(mvp_score/5))}\n"
                         f"```"
                     ),
-                    inline=True
+                    inline=False
                 )
                 
                 # Informações adicionais
