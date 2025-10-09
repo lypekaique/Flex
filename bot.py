@@ -174,8 +174,8 @@ class FlexGuideView(discord.ui.View):
                 "⭐ **90-80**: S\n"
                 "💎 **80-70**: A\n"
                 "🥈 **70-60**: B\n"
-                "📊 **60-40**: C\n"
-                "📉 **40-20**: D\n"
+                "📊 **60-50**: C\n"
+                "📉 **50-20**: D\n"
                 "💀 **20-0**: F"
             ),
             inline=False
@@ -204,7 +204,7 @@ class FlexGuideView(discord.ui.View):
             name="⚠️ Alerta de Performance Baixa",
             value=(
                 "Se você jogar **3x seguidas** com o mesmo campeão\n"
-                "E tiver **Carry Score < 50** nas 3 partidas,\n"
+                "E tiver **Carry Score < 49** nas 3 partidas,\n"
                 "O bot enviará um alerta com sugestões!"
             ),
             inline=False
@@ -645,7 +645,7 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
         elif avg_carry >= 60:
             emoji = "🥈"
             rank = "B"
-        elif avg_carry >= 40:
+        elif avg_carry >= 50:
             emoji = "📊"
             rank = "C"
         elif avg_carry >= 20:
@@ -859,7 +859,7 @@ _Esta partida não conta para estatísticas_
             elif match['carry_score'] >= 60:
                 carry_emoji = "🥈"
                 rank_text = "B"
-            elif match['carry_score'] >= 40:
+            elif match['carry_score'] >= 50:
                 carry_emoji = "📊"
                 rank_text = "C"
             elif match['carry_score'] >= 20:
@@ -1030,7 +1030,7 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
                 name="📢 O que será notificado?",
                 value=(
                     "• Quando um jogador usar o **mesmo campeão 3x seguidas**\n"
-                    "• E tiver **carry score abaixo de 60** nas 3 partidas\n"
+                    "• E tiver **carry score abaixo de 49** nas 3 partidas\n"
                     "• Será enviada uma notificação com sugestões"
                 ),
                 inline=False
@@ -1191,7 +1191,7 @@ async def tops_flex(interaction: discord.Interaction, quantidade: int = 10):
             rank_emoji = "💎 A"
         elif avg_carry >= 60:
             rank_emoji = "🥈 B"
-        elif avg_carry >= 40:
+        elif avg_carry >= 50:
             rank_emoji = "📊 C"
         elif avg_carry >= 20:
             rank_emoji = "📉 D"
@@ -1735,7 +1735,7 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
             elif carry_score >= 60:
                 rank_emoji = "🥈"
                 rank_text = "B"
-            elif carry_score >= 40:
+            elif carry_score >= 50:
                 rank_emoji = "📊"
                 rank_text = "C"
             elif carry_score >= 20:
@@ -1882,8 +1882,8 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
         if len(matches) < 3:
             return
         
-        # Verifica se todas as 3 têm score abaixo de 50
-        all_bad_scores = all(match['carry_score'] < 50 for match in matches)
+        # Verifica se todas as 3 têm score abaixo de 49
+        all_bad_scores = all(match['carry_score'] < 49 for match in matches)
         
         if not all_bad_scores:
             return
