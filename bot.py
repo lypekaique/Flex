@@ -170,23 +170,23 @@ class FlexGuideView(discord.ui.View):
         embed.add_field(
             name="🎯 Rankings (Sistema Punitivo)",
             value=(
-                "🏆 **95-100**: S+ (Perfeito)\n"
-                "⭐ **90-80**: S (Excelente)\n"
-                "💎 **80-70**: A (Muito Bom)\n"
-                "🥈 **70-60**: B (Bom)\n"
-                "📊 **60-40**: C (Mediano)\n"
-                "📉 **40-20**: D (Ruim)\n"
-                "💀 **20-0**: F (Muito Ruim)"
+                "🏆 **95-100**: S+\n"
+                "⭐ **90-80**: S\n"
+                "💎 **80-70**: A\n"
+                "🥈 **70-60**: B\n"
+                "📊 **60-40**: C\n"
+                "📉 **40-20**: D\n"
+                "💀 **20-0**: F"
             ),
             inline=False
         )
         embed.add_field(
             name="💡 Pesos por Role (Sistema Específico)",
             value=(
-                "**Top**: 35% KDA + 25% Dano + 11.5% Objetivos\n"
-                "**Mid**: 35% KDA + 25% Dano + 19% KP\n"
-                "**Jungle**: 35% KP + 30% KDA + 15% Objetivos\n"
-                "**ADC**: 35% KDA + 30% Dano + 15% Gold\n"
+                "**Top**: 35% KDA + 18% Dano + 11.5% Objetivos + 7% Visão\n"
+                "**Mid**: 35% KDA + 19% KP + 18% Dano + 7% Visão\n"
+                "**Jungle**: 35% KP + 30% KDA + 15% Objetivos + 5% Visão + 5% Dano\n"
+                "**ADC**: 35% KDA + 23% Dano + 15% Gold + 7% Visão\n"
                 "**Support**: 55% KP + 25% Visão + 15% KDA"
             ),
             inline=False
@@ -635,25 +635,25 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
         # Determina emoji baseado no carry score (sistema punitivo)
         if avg_carry >= 95:
             emoji = "🏆"
-            rank = "S+ Perfeito"
+            rank = "S+"
         elif avg_carry >= 80:
             emoji = "⭐"
-            rank = "S Excelente"
+            rank = "S"
         elif avg_carry >= 70:
             emoji = "💎"
-            rank = "A Muito Bom"
+            rank = "A"
         elif avg_carry >= 60:
             emoji = "🥈"
-            rank = "B Bom"
+            rank = "B"
         elif avg_carry >= 40:
             emoji = "📊"
-            rank = "C Mediano"
+            rank = "C"
         elif avg_carry >= 20:
             emoji = "📉"
-            rank = "D Ruim"
+            rank = "D"
         else:
             emoji = "💀"
-            rank = "F Muito Ruim"
+            rank = "F"
         
         # Emoji por role
         role_emojis = {
@@ -1725,25 +1725,25 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
             carry_score = stats['carry_score']
             if carry_score >= 95:
                 rank_emoji = "🏆"
-                rank_text = "S+ PERFEITO"
+                rank_text = "S+"
             elif carry_score >= 80:
                 rank_emoji = "⭐"
-                rank_text = "S EXCELENTE"
+                rank_text = "S"
             elif carry_score >= 70:
                 rank_emoji = "💎"
-                rank_text = "A MUITO BOM"
+                rank_text = "A"
             elif carry_score >= 60:
                 rank_emoji = "🥈"
-                rank_text = "B BOM"
+                rank_text = "B"
             elif carry_score >= 40:
                 rank_emoji = "📊"
-                rank_text = "C MEDIANO"
+                rank_text = "C"
             elif carry_score >= 20:
                 rank_emoji = "📉"
-                rank_text = "D RUIM"
+                rank_text = "D"
             else:
                 rank_emoji = "💀"
-                rank_text = "F MUITO RUIM"
+                rank_text = "F"
             
             # Emoji por role
             role_emojis = {

@@ -411,7 +411,7 @@ class RiotAPI:
         norm_vision = self.normalize(vision_per_min, 0.1, 2.5)  # Range expandido
         norm_utility = self.normalize(utility_score, 0, 70)  # Mais difícil
         
-        # PESOS POR ROLE - MÁXIMA PRIORIDADE EM KDA E DANO/GOLD PARA TOP/MID/ADC
+        # PESOS POR ROLE - VISÃO AGORA É IMPORTANTE PARA TODAS AS ROLES
         if role == 'UTILITY':  # Support: VISÃO + KILL PARTICIPATION
             weights = {
                 'kda': 0.15,      # Menos peso no KDA
@@ -420,51 +420,51 @@ class RiotAPI:
                 'gpm': 0.0,
                 'cspm': 0.0,
                 'objectives': 0.10,
-                'vision': 0.25,   
+                'vision': 0.25,   # Support mantém 25% em visão
                 'utility': 0.05
             }
-        elif role == 'JUNGLE':  # Jungle: KILL PARTICIPATION + KDA + OBJETIVOS
+        elif role == 'JUNGLE':  # Jungle: KILL PARTICIPATION + KDA + VISÃO
             weights = {
                 'kda': 0.30,      # KDA importante (30%)
                 'kp': 0.35,       # MÁXIMO PESO em Kill Participation (35%)
-                'dpm': 0.10,
+                'dpm': 0.05,      # Dano balanceado (5%)
                 'gpm': 0.05,
                 'cspm': 0.05,
                 'objectives': 0.15,  # Objetivos balanceados (15%)
-                'vision': 0.0,
+                'vision': 0.05,   # Visão balanceada (5% - igual ao dano)
                 'utility': 0.0
             }
-        elif role == 'BOTTOM':  # ADC: KDA + DANO/GOLD (MÁXIMA PRIORIDADE)
+        elif role == 'BOTTOM':  # ADC: KDA + DANO/GOLD + VISÃO
             weights = {
                 'kda': 0.35,      # MÁXIMO PESO em KDA
                 'kp': 0.08,
-                'dpm': 0.30,      # MÁXIMO PESO em Dano
+                'dpm': 0.23,      # Dano reduzido (23% - antes 30%)
                 'gpm': 0.15,      # MUITO PESO em Gold
                 'cspm': 0.12,     # Farm também importante
                 'objectives': 0.0,
-                'vision': 0.0,
+                'vision': 0.07,   # Visão importante (7% - NOVO!)
                 'utility': 0.0
             }
-        elif role == 'TOP':  # Top: KDA + DANO + Split Push balanceado
+        elif role == 'TOP':  # Top: KDA + DANO + Split Push + VISÃO
             weights = {
                 'kda': 0.35,      # KDA importante (35%)
                 'kp': 0.075,      # KP balanceado (7.5%)
-                'dpm': 0.25,      # MUITO PESO em Dano (25%)
-                'gpm': 0.11,      # Gold importante (11% - +3%)
-                'cspm': 0.10,     # Farm importante (10% - +3%)
-                'objectives': 0.115,  # Objetivos importantes (11.5% - estruturas/torres +4%)
-                'vision': 0.0,
+                'dpm': 0.18,      # Dano reduzido (18% - antes 25%)
+                'gpm': 0.11,      # Gold importante (11%)
+                'cspm': 0.10,     # Farm importante (10%)
+                'objectives': 0.115,  # Objetivos importantes (11.5%)
+                'vision': 0.07,   # Visão importante (7% - NOVO!)
                 'utility': 0.0
             }
-        else:  # Mid: KDA + DANO (MÁXIMA PRIORIDADE)
+        else:  # Mid: KDA + DANO + VISÃO
             weights = {
                 'kda': 0.35,      # KDA importante (35%)
-                'kp': 0.19,       # Kill Participation importante (19% - +4%)
-                'dpm': 0.25,      # MUITO PESO em Dano (25%)
-                'gpm': 0.11,      # Gold importante (11% - +3%)
-                'cspm': 0.10,     # Farm importante (10% - +3%)
+                'kp': 0.19,       # Kill Participation importante (19%)
+                'dpm': 0.18,      # Dano reduzido (18% - antes 25%)
+                'gpm': 0.11,      # Gold importante (11%)
+                'cspm': 0.10,     # Farm importante (10%)
                 'objectives': 0.0,
-                'vision': 0.0,
+                'vision': 0.07,   # Visão importante (7% - NOVO!)
                 'utility': 0.0
             }
         
