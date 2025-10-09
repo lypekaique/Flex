@@ -160,9 +160,9 @@ class FlexGuideView(discord.ui.View):
             value=(
                 "**Top**: KDA + Dano + Tank (absorver dano)\n"
                 "**Mid**: KDA + Dano + Farm\n"
-                "**Jungle**: KDA + KP + Objetivos + Utility (Tank/CC/Peel)\n"
+                "**Jungle**: KDA + Objetivos + Utility (Tank/CC/Peel) + CS\n"
                 "**ADC**: Dano + Farm + Gold\n"
-                "**Support**: KDA + Visão + Utility (CC/Heal/Shield/Tank)\n"
+                "**Support**: KDA + Visão + Utility (CC/Heal/Shield/Tank) + Dano\n"
                 "• **Bônus** de +4% por vitória\n"
                 "• **Penalidades** por muitas mortes ou baixa participação"
             ),
@@ -186,9 +186,9 @@ class FlexGuideView(discord.ui.View):
             value=(
                 "**Top**: 30% KDA + 18% Dano + 11% Gold + 10% CS + 8.25% Objetivos + 8.25% Tank + 7.5% KP + 7% Visão\n"
                 "**Mid**: 35% KDA + 15% Gold + 15% Dano + 13% CS + 9% KP + 7% Visão + 6% Obj\n"
-                "**Jungle**: 35% KDA + 30% KP + 15% Objetivos + 5% Visão + 5% Dano + 5% Gold + 5% Utility\n"
+                "**Jungle**: 35% KDA + 15% Objetivos + 10% CS + 10% KP + 9% Dano + 9% Utility + 7% Visão + 5% Gold\n"
                 "**ADC**: 35% KDA + 20% Dano + 15% Gold + 12% CS + 8% KP + 7% Visão + 3% Obj\n"
-                "**Support**: 35% KDA + 25% Visão + 20% KP + 20% Utility"
+                "**Support**: 35% KDA + 25% Visão + 15% Utility + 15% KP + 10% Dano"
             ),
             inline=False
         )

@@ -418,27 +418,27 @@ class RiotAPI:
         norm_utility = self.normalize(utility_score, 0, 70)  # Mais difícil
         
         # PESOS POR ROLE - VISÃO AGORA É IMPORTANTE PARA TODAS AS ROLES
-        if role == 'UTILITY':  # Support: KDA + VISÃO + UTILITY
+        if role == 'UTILITY':  # Support: KDA + VISÃO + DANO + UTILITY
             weights = {
-                'kda': 0.35,      # KDA muito importante (35% - +5%)
-                'kp': 0.20,       # Kill Participation (20% - -5%)
-                'dpm': 0.0,       # Dano não importa para support
+                'kda': 0.35,      # KDA muito importante (35%)
+                'kp': 0.15,       # Kill Participation (15%)
+                'dpm': 0.10,      # Dano importante (10% - +5%) ✨
                 'gpm': 0.0,
                 'cspm': 0.0,
                 'objectives': 0.0,
                 'vision': 0.25,   # Visão mantém 25%
-                'utility': 0.20   # Utility (20% - CC/Heal/Shield/Tank)
+                'utility': 0.15   # Utility (15% - CC/Heal/Shield/Tank - -5%)
             }
-        elif role == 'JUNGLE':  # Jungle: KDA + KP + OBJETIVOS + UTILITY
+        elif role == 'JUNGLE':  # Jungle: KDA + CS + OBJETIVOS + UTILITY + VISÃO
             weights = {
                 'kda': 0.35,      # KDA importante (35%)
-                'kp': 0.30,       # Kill Participation (30% - -5%)
-                'dpm': 0.05,      # Dano balanceado (5%)
-                'gpm': 0.05,
-                'cspm': 0.0,      # CS não importa para jungle
-                'objectives': 0.15,  # Objetivos balanceados (15%)
-                'vision': 0.05,   # Visão balanceada (5%)
-                'utility': 0.05   # Utility (5% - Tank/CC/Peel) ✨ NOVO!
+                'kp': 0.10,       # Kill Participation (10% - -5%)
+                'dpm': 0.09,      # Dano importante (9% - +1.5%) ✨
+                'gpm': 0.05,      # Gold balanceado (5%)
+                'cspm': 0.10,     # CS importante (10%)
+                'objectives': 0.15,  # Objetivos importantes (15%)
+                'vision': 0.07,   # Visão importante (7% - +2%) ✨
+                'utility': 0.09   # Utility (9% - Tank/CC/Peel - +1.5%) ✨
             }
         elif role == 'BOTTOM':  # ADC: KDA + DANO/GOLD + OBJETIVOS
             weights = {
