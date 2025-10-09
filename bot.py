@@ -205,7 +205,7 @@ class FlexGuideView(discord.ui.View):
             name="⚠️ Alerta de Performance Baixa",
             value=(
                 "Se você jogar **3x seguidas** com o mesmo campeão\n"
-                "E tiver **Carry Score < 40** nas 3 partidas,\n"
+                "E tiver **MVP Score < 45** nas 3 partidas,\n"
                 "O bot enviará um alerta com sugestões!"
             ),
             inline=False
@@ -970,8 +970,8 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
             
             if config['match_channel_id']:
                 embed.add_field(
-                    name="🎮 Canal de Partidas (Live Tracking Unificado)",
-                    value=f"<#{config['match_channel_id']}>\n🔵 Ao vivo quando começa → 🟢🔴 Atualiza quando termina",
+                    name="🎮 Canal de Partidas",
+                    value=f"<#{config['match_channel_id']}>\nNotificações individuais com Carry Score + MVP Score de cada jogador",
                     inline=False
                 )
             else:
@@ -983,14 +983,14 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
             
             if config['live_game_channel_id']:
                 embed.add_field(
-                    name="🔴 Canal de Live (Opcional/Backup)",
-                    value=f"<#{config['live_game_channel_id']}>\n⚠️ Use o canal de partidas para tracking completo!",
+                    name="🔴 Canal de Live Games",
+                    value=f"<#{config['live_game_channel_id']}>\n🔴 Notificação ao vivo → 🏁 Editada com resultado final (KDA + CS + Dano de todos)",
                     inline=False
                 )
             else:
                 embed.add_field(
-                    name="🔴 Canal de Live (Opcional/Backup)",
-                    value="❌ Não configurado (não é necessário se usar canal de partidas)",
+                    name="🔴 Canal de Live Games",
+                    value="❌ Não configurado",
                     inline=False
                 )
         else:
@@ -1031,7 +1031,7 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
                 name="📢 O que será notificado?",
                 value=(
                     "• Quando um jogador usar o **mesmo campeão 3x seguidas**\n"
-                    "• E tiver **carry score abaixo de 40** nas 3 partidas\n"
+                    "• E tiver **MVP Score abaixo de 45** nas 3 partidas\n"
                     "• Será enviada uma notificação com sugestões"
                 ),
                 inline=False
@@ -1045,18 +1045,20 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
         if success:
             embed = discord.Embed(
                 title="✅ Canal de Partidas Configurado!",
-                description=f"Partidas terminadas serão enviadas em {canal.mention}",
+                description=f"Notificações individuais de partidas serão enviadas em {canal.mention}",
                 color=discord.Color.blue()
             )
             embed.add_field(
                 name="🎮 O que será enviado?",
                 value=(
-                    "• 🔵 **Partida começa**: Notificação AZUL ao vivo\n"
-                    "• 🟢 **Partida termina**: Atualiza para VERDE (vitória)\n"
-                    "• 🔴 **Partida termina**: Atualiza para VERMELHO (derrota)\n"
-                    "• Mostra **Carry Score**, KDA, Role, Champion\n"
-                    "• Links para **OP.GG**, **U.GG** e **Porofessor**\n"
-                    "• Sistema unificado: uma mensagem do início ao fim!"
+                    "**Quando a partida termina:**\n"
+                    "• ✅/❌ **Resultado** (Vitória/Derrota)\n"
+                    "• 📊 **Carry Score** (avaliação completa)\n"
+                    "• 👑 **MVP Score** (colocação entre 10 jogadores)\n"
+                    "• ⚔️ **KDA**, 🗡️ **Dano**, 🌾 **CS**, 👁️ **Vision**\n"
+                    "• 🏆 **Campeão** e **Role**\n\n"
+                    "**CADA jogador** recebe sua notificação individual\n"
+                    "com análise detalhada da performance!"
                 ),
                 inline=False
             )
@@ -1089,20 +1091,24 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
         success = db.set_live_game_channel(guild_id, channel_id)
         if success:
             embed = discord.Embed(
-                title="✅ Canal de Live Tracking Configurado!",
-                description=f"Tracking de partidas ao vivo será enviado em {canal.mention}",
+                title="✅ Canal de Live Games Configurado!",
+                description=f"Notificações de live games serão enviadas em {canal.mention}",
                 color=discord.Color.red()
             )
             embed.add_field(
                 name="🔴 Como funciona?",
                 value=(
-                    "**💡 Dica:** Use o mesmo canal de `partidas` para sistema unificado!\n\n"
-                    "Este canal é **opcional** e funciona como backup.\n"
-                    "Se configurado sem o canal de partidas:\n"
-                    "• Envia notificação ao vivo quando entrar em jogo\n"
-                    "• Mas não consegue atualizar quando terminar\n\n"
-                    "**Recomendado:** Configure apenas o canal de `partidas`\n"
-                    "para ter o sistema completo de tracking!"
+                    "**Sistema de Live Games:**\n"
+                    "• 🔴 **Partida começa**: Notificação mostrando quem entrou em partida\n"
+                    "• 🏁 **Partida termina**: Mensagem EDITADA mostrando resultado:\n"
+                    "   - Qual time venceu (Azul/Vermelho)\n"
+                    "   - KDA de todos os 10 jogadores\n"
+                    "   - CS e Dano de todos\n\n"
+                    "**Notificações individuais** (com Carry/MVP Score) são enviadas\n"
+                    "no **canal de partidas** configurado.\n\n"
+                    "💡 **Recomendação:** Configure ambos os canais:\n"
+                    "• `live` - Para acompanhar partidas em grupo\n"
+                    "• `partidas` - Para avaliações individuais"
                 ),
                 inline=False
             )
@@ -1144,7 +1150,7 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
     quantidade="Quantidade de jogadores no ranking (padrão: 10)"
 )
 async def tops_flex(interaction: discord.Interaction, quantidade: int = 10):
-    """Mostra o ranking dos melhores jogadores por carry score"""
+    """Mostra o ranking dos melhores jogadores por MVP score"""
     # Verifica permissão de canal
     if not await check_command_channel(interaction):
         return
@@ -1168,7 +1174,7 @@ async def tops_flex(interaction: discord.Interaction, quantidade: int = 10):
     now = datetime.now()
     embed = discord.Embed(
         title="🏆 TOP FLEX PLAYERS - RANKING",
-        description=f"**{now.strftime('%B/%Y')}** • Mínimo: 5 partidas",
+        description=f"**{now.strftime('%B/%Y')}** • Mínimo: 5 partidas\n_Ordenado por MVP Score_",
         color=discord.Color.gold()
     )
     
@@ -1182,22 +1188,22 @@ async def tops_flex(interaction: discord.Interaction, quantidade: int = 10):
         else:
             position_emoji = f"**#{i}**"
         
-        # Determina rank baseado no carry score (sistema punitivo)
+        # Determina rank baseado no MVP score
+        avg_mvp = player['avg_mvp']
         avg_carry = player['avg_carry']
-        if avg_carry >= 95:
-            rank_emoji = "🏆 S+"
-        elif avg_carry >= 80:
-            rank_emoji = "⭐ S"
-        elif avg_carry >= 70:
-            rank_emoji = "💎 A"
-        elif avg_carry >= 60:
-            rank_emoji = "🥈 B"
-        elif avg_carry >= 50:
-            rank_emoji = "📊 C"
-        elif avg_carry >= 20:
-            rank_emoji = "📉 D"
+        
+        if avg_mvp >= 90:
+            rank_emoji = "👑"
+        elif avg_mvp >= 80:
+            rank_emoji = "⭐"
+        elif avg_mvp >= 70:
+            rank_emoji = "💎"
+        elif avg_mvp >= 60:
+            rank_emoji = "🥈"
+        elif avg_mvp >= 50:
+            rank_emoji = "📊"
         else:
-            rank_emoji = "💀 F"
+            rank_emoji = "📉"
         
         # Busca usuário do Discord
         try:
@@ -1208,9 +1214,9 @@ async def tops_flex(interaction: discord.Interaction, quantidade: int = 10):
         
         player_info = f"""
 {position_emoji} {player_name} • {rank_emoji}
-📈 Carry: **{int(avg_carry)}/100** | 🎮 Jogos: **{player['total_games']}**
-✅ WR: **{player['win_rate']:.1f}%** | ⚔️ KDA: **{player['avg_kda']:.2f}**
-🎯 KP: **{player['avg_kp']:.1f}%**
+👑 **MVP:** {int(avg_mvp)}/100 | 📊 **Carry:** {int(avg_carry)}/100
+🎮 Jogos: **{player['total_games']}** | ✅ WR: **{player['win_rate']:.1f}%**
+⚔️ KDA: **{player['avg_kda']:.2f}** | 🎯 KP: **{player['avg_kp']:.1f}%**
         """
         
         embed.add_field(
@@ -1650,7 +1656,11 @@ async def purge_media(interaction: discord.Interaction):
     await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 async def send_match_notification(lol_account_id: int, stats: Dict):
-    """Atualiza notificação de live game ou envia nova quando uma partida termina"""
+    """
+    Envia notificação INDIVIDUAL quando uma partida termina.
+    SEMPRE envia uma notificação separada no canal de partidas.
+    NÃO edita mais a mensagem de live game.
+    """
     try:
         # Busca informações da conta
         conn = db.get_connection()
@@ -1667,9 +1677,6 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
         
         discord_id, summoner_name = account_info
         
-        # Busca se existe uma mensagem de live game para editar
-        live_game_msg = db.get_live_game_message(lol_account_id, stats['match_id'])
-        
         # Busca todos os servidores onde está o bot
         for guild in bot.guilds:
             # Verifica se o usuário está nesse servidor
@@ -1677,33 +1684,15 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
             if not member:
                 continue
             
-            # Se temos mensagem de live game, tenta editar
-            if live_game_msg and live_game_msg.get('message_id'):
-                # Verifica se é o servidor correto
-                if str(guild.id) != live_game_msg.get('guild_id'):
-                    continue
-                
-                channel = guild.get_channel(int(live_game_msg['channel_id']))
-                if not channel:
-                    continue
-                
-                try:
-                    message = await channel.fetch_message(int(live_game_msg['message_id']))
-                except:
-                    # Mensagem não encontrada, envia nova
-                    message = None
-            else:
-                # Não tem live game, busca canal de partidas configurado
-                channel_id = db.get_match_channel(str(guild.id))
-                if not channel_id:
-                    continue
-                
-                # Busca o canal
-                channel = guild.get_channel(int(channel_id))
-                if not channel:
-                    continue
-                
-                message = None
+            # Busca canal de partidas configurado
+            channel_id = db.get_match_channel(str(guild.id))
+            if not channel_id:
+                continue
+            
+            # Busca o canal
+            channel = guild.get_channel(int(channel_id))
+            if not channel:
+                continue
             
             # Verifica se é remake
             is_remake = stats.get('is_remake', False)
@@ -1815,23 +1804,26 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
                     inline=True
                 )
                 
-                # MVP Score (comparação com o time)
+                # MVP Score (comparação com TODOS os 10 jogadores)
                 mvp_score = stats.get('mvp_score', 0)
-                if mvp_score >= 90:
+                mvp_placement = stats.get('mvp_placement', 0)
+                
+                # Emoji baseado na colocação
+                if mvp_placement == 1:
                     mvp_emoji = "👑"
-                    mvp_rank = "MVP"
-                elif mvp_score >= 70:
+                elif mvp_placement == 2:
                     mvp_emoji = "🥇"
-                    mvp_rank = "1º/2º"
-                elif mvp_score >= 50:
+                elif mvp_placement == 3:
                     mvp_emoji = "🥈"
-                    mvp_rank = "3º"
-                elif mvp_score >= 25:
+                elif mvp_placement <= 5:
                     mvp_emoji = "🥉"
-                    mvp_rank = "4º"
+                elif mvp_placement <= 7:
+                    mvp_emoji = "📊"
                 else:
                     mvp_emoji = "😴"
-                    mvp_rank = "5º"
+                
+                # Formata o ordinal (1º, 2º, 3º...)
+                placement_text = f"{mvp_placement}º"
                 
                 embed.add_field(
                     name="🎯 Performance Scores",
@@ -1842,8 +1834,8 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
                         f"{'█' * int(carry_score/5)}{'░' * (20 - int(carry_score/5))}\n"
                         f"```\n"
                         f"\n"
-                        f"**👑 MVP SCORE** _(vs Time)_\n"
-                        f"{mvp_emoji} **{mvp_score}/100** - **{mvp_rank}** no time\n"
+                        f"**👑 MVP SCORE** _(vs 10 Jogadores)_\n"
+                        f"{mvp_emoji} **{mvp_score} ({placement_text})**\n"
                         f"```\n"
                         f"{'█' * int(mvp_score/5)}{'░' * (20 - int(mvp_score/5))}\n"
                         f"```"
@@ -1873,27 +1865,160 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
                 icon_url="https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-shared-components/global/default/ranked-emblem-flex.png"
             )
             
-            # Envia ou edita notificação
+            # Envia nova mensagem (sempre)
             try:
-                if message:
-                    # Edita a mensagem existente
-                    await message.edit(embed=embed)
-                    if is_remake:
-                        print(f"⚠️ Partida atualizada (REMAKE): {summoner_name} - {stats['champion_name']}")
-                    else:
-                        print(f"🎮 Partida atualizada: {summoner_name} - {stats['champion_name']} (Score: {carry_score})")
+                await channel.send(embed=embed)
+                if is_remake:
+                    print(f"⚠️ Partida enviada (REMAKE): {summoner_name} - {stats['champion_name']}")
                 else:
-                    # Envia nova mensagem
-                    await channel.send(embed=embed)
-                    if is_remake:
-                        print(f"⚠️ Partida enviada (REMAKE): {summoner_name} - {stats['champion_name']}")
-                    else:
-                        print(f"🎮 Partida enviada: {summoner_name} - {stats['champion_name']} (Score: {carry_score})")
+                    print(f"🎮 Partida enviada: {summoner_name} - {stats['champion_name']} (Carry: {carry_score}, MVP: {mvp_score})")
             except Exception as e:
-                print(f"Erro ao enviar/atualizar partida: {e}")
+                print(f"Erro ao enviar partida: {e}")
     
     except Exception as e:
         print(f"Erro ao processar notificação de partida: {e}")
+
+async def update_live_game_result(match_id: str, match_data: Dict):
+    """
+    Atualiza a mensagem de live game com o resultado final da partida.
+    Mostra qual time venceu e o KDA de todos os 10 jogadores.
+    """
+    try:
+        # Busca se existe mensagem de live game para este match
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT DISTINCT message_id, channel_id, guild_id
+            FROM live_games_notified
+            WHERE game_id = ?
+              AND message_id IS NOT NULL
+            LIMIT 1
+        ''', (match_id,))
+        live_msg = cursor.fetchone()
+        conn.close()
+        
+        if not live_msg:
+            return  # Não tem mensagem de live game
+        
+        message_id, channel_id, guild_id = live_msg
+        
+        # Busca o servidor e canal
+        guild = bot.get_guild(int(guild_id))
+        if not guild:
+            return
+        
+        channel = guild.get_channel(int(channel_id))
+        if not channel:
+            return
+        
+        try:
+            message = await channel.fetch_message(int(message_id))
+        except:
+            return  # Mensagem não encontrada
+        
+        # Extrai informações da partida
+        participants = match_data['info']['participants']
+        
+        # Busca todos os jogadores vinculados no banco para adicionar mentions
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT summoner_name, discord_id FROM lol_accounts')
+        linked_accounts = {row[0].lower(): row[1] for row in cursor.fetchall()}
+        conn.close()
+        
+        # Separa por time
+        team_100 = [p for p in participants if p['teamId'] == 100]
+        team_200 = [p for p in participants if p['teamId'] == 200]
+        
+        # Verifica qual time venceu
+        team_100_win = team_100[0]['win'] if team_100 else False
+        
+        # Determina cor
+        if team_100_win:
+            color = discord.Color.blue()
+            winner_text = "🔵 **TIME AZUL VENCEU!**"
+        else:
+            color = discord.Color.red()
+            winner_text = "🔴 **TIME VERMELHO VENCEU!**"
+        
+        # Cria novo embed com resultado
+        embed = discord.Embed(
+            title="🏁 PARTIDA FINALIZADA!",
+            description=winner_text,
+            color=color,
+            timestamp=datetime.now()
+        )
+        
+        # Time Azul
+        team_100_text = ""
+        for p in team_100:
+            kda_ratio = (p['kills'] + p['assists']) / max(p['deaths'], 1)
+            cs = p.get('totalMinionsKilled', 0) + p.get('neutralMinionsKilled', 0)
+            damage = p.get('totalDamageDealtToChampions', 0)
+            
+            # Busca mention do Discord
+            summoner_name = p['summonerName']
+            discord_id = linked_accounts.get(summoner_name.lower())
+            
+            if discord_id:
+                member = guild.get_member(int(discord_id))
+                mention = member.mention if member else summoner_name
+                team_100_text += f"**{p['championName']}** - {summoner_name} - {mention}\n"
+            else:
+                team_100_text += f"**{p['championName']}** - {summoner_name}\n"
+            
+            team_100_text += f"     📊 KDA: {p['kills']}/{p['deaths']}/{p['assists']} ({kda_ratio:.2f})\n"
+            team_100_text += f"     🌾 CS: {cs} | 🗡️ Dano: {damage:,}\n\n"
+        
+        embed.add_field(
+            name="🔵 TIME AZUL" + (" - VITÓRIA" if team_100_win else " - DERROTA"),
+            value=team_100_text.strip() if team_100_text else "Sem dados",
+            inline=False
+        )
+        
+        # Time Vermelho
+        team_200_text = ""
+        for p in team_200:
+            kda_ratio = (p['kills'] + p['assists']) / max(p['deaths'], 1)
+            cs = p.get('totalMinionsKilled', 0) + p.get('neutralMinionsKilled', 0)
+            damage = p.get('totalDamageDealtToChampions', 0)
+            
+            # Busca mention do Discord
+            summoner_name = p['summonerName']
+            discord_id = linked_accounts.get(summoner_name.lower())
+            
+            if discord_id:
+                member = guild.get_member(int(discord_id))
+                mention = member.mention if member else summoner_name
+                team_200_text += f"**{p['championName']}** - {summoner_name} - {mention}\n"
+            else:
+                team_200_text += f"**{p['championName']}** - {summoner_name}\n"
+            
+            team_200_text += f"     📊 KDA: {p['kills']}/{p['deaths']}/{p['assists']} ({kda_ratio:.2f})\n"
+            team_200_text += f"     🌾 CS: {cs} | 🗡️ Dano: {damage:,}\n\n"
+        
+        embed.add_field(
+            name="🔴 TIME VERMELHO" + (" - VITÓRIA" if not team_100_win else " - DERROTA"),
+            value=team_200_text.strip() if team_200_text else "Sem dados",
+            inline=False
+        )
+        
+        # Informações adicionais
+        game_duration = match_data['info']['gameDuration']
+        game_duration_min = game_duration // 60
+        game_duration_sec = game_duration % 60
+        
+        embed.set_footer(
+            text=f"Duração: {game_duration_min}min {game_duration_sec}s",
+            icon_url="https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-shared-components/global/default/ranked-emblem-flex.png"
+        )
+        
+        # Edita a mensagem de live game
+        await message.edit(embed=embed)
+        print(f"🏁 Live game atualizado com resultado: {match_id}")
+        
+    except Exception as e:
+        print(f"Erro ao atualizar resultado do live game: {e}")
 
 async def check_champion_performance(lol_account_id: int, champion_name: str):
     """Verifica se o jogador teve 3 performances ruins seguidas com o mesmo campeão"""
@@ -1905,8 +2030,8 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
         if len(matches) < 3:
             return
         
-        # Verifica se todas as 3 têm score abaixo de 40
-        all_bad_scores = all(match['carry_score'] < 40 for match in matches)
+        # Verifica se todas as 3 têm MVP Score abaixo de 45
+        all_bad_scores = all(match.get('mvp_score', 0) < 45 for match in matches)
         
         if not all_bad_scores:
             return
@@ -1943,8 +2068,9 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
             if not channel:
                 continue
             
-            # Calcula média dos scores
-            avg_score = sum(m['carry_score'] for m in matches) / 3
+            # Calcula média dos MVP Scores
+            avg_mvp_score = sum(m.get('mvp_score', 0) for m in matches) / 3
+            avg_carry_score = sum(m['carry_score'] for m in matches) / 3
             
             # Cria embed de "vergonha"
             embed = discord.Embed(
@@ -1957,8 +2083,9 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
                 name="📊 Estatísticas Recentes",
                 value=(
                     f"🎮 **3 últimas partidas** com {champion_name}\n"
-                    f"📉 Carry Score médio: **{int(avg_score)}/100**\n"
-                    f"⚠️ Todas abaixo de 50!"
+                    f"👑 MVP Score médio: **{int(avg_mvp_score)}/100**\n"
+                    f"📊 Carry Score médio: **{int(avg_carry_score)}/100**\n"
+                    f"⚠️ MVP Score abaixo de 45 nas 3 partidas!"
                 ),
                 inline=False
             )
@@ -1967,10 +2094,11 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
             matches_text = ""
             for i, match in enumerate(matches, 1):
                 result_emoji = "✅" if match['win'] else "❌"
+                mvp_placement = match.get('mvp_placement', 0)
                 matches_text += (
-                    f"{result_emoji} **{match['carry_score']}** - "
-                    f"{match['kills']}/{match['deaths']}/{match['assists']} "
-                    f"({match['role']})\n"
+                    f"{result_emoji} MVP: **{match.get('mvp_score', 0)} ({mvp_placement}º)** | "
+                    f"Carry: **{match['carry_score']}** | "
+                    f"{match['kills']}/{match['deaths']}/{match['assists']}\n"
                 )
             
             embed.add_field(
@@ -1996,7 +2124,7 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
             # Envia notificação
             try:
                 await channel.send(embed=embed)
-                print(f"⚠️ Notificação enviada: {summoner_name} com {champion_name} ({avg_score:.2f})")
+                print(f"⚠️ Notificação enviada: {summoner_name} com {champion_name} (MVP: {avg_mvp_score:.2f}, Carry: {avg_carry_score:.2f})")
             except Exception as e:
                 print(f"Erro ao enviar notificação: {e}")
     
@@ -2028,10 +2156,10 @@ async def send_live_game_notification(lol_account_id: int, live_info: Dict):
             if not member:
                 continue
             
-            # Busca canal configurado (prioriza canal de partidas, depois live)
-            channel_id = db.get_match_channel(str(guild.id))
+            # Busca canal configurado (prioriza live games, depois partidas como fallback)
+            channel_id = db.get_live_game_channel(str(guild.id))
             if not channel_id:
-                channel_id = db.get_live_game_channel(str(guild.id))
+                channel_id = db.get_match_channel(str(guild.id))
             if not channel_id:
                 continue
             
@@ -2154,9 +2282,158 @@ async def send_live_game_notification(lol_account_id: int, live_info: Dict):
     except Exception as e:
         print(f"Erro ao processar notificação de live game: {e}")
 
-@tasks.loop(minutes=2)
+async def send_live_game_notification_grouped(game_id: str, players: list):
+    """Envia UMA notificação para múltiplos jogadores na mesma partida"""
+    try:
+        # Usa as informações do primeiro jogador como base
+        first_player = players[0]
+        live_info = first_player['live_info']
+        
+        # Busca o servidor comum (assume que todos estão no mesmo servidor)
+        # Pega o primeiro guild onde pelo menos um jogador está
+        target_guild = None
+        target_channel = None
+        
+        for guild in bot.guilds:
+            # Verifica se todos os jogadores estão neste servidor
+            members_in_guild = []
+            for player in players:
+                member = guild.get_member(int(player['discord_id']))
+                if member:
+                    members_in_guild.append(member)
+            
+            # Se tem pelo menos 2 jogadores nesse servidor, usa ele
+            if len(members_in_guild) >= 2:
+                target_guild = guild
+                
+                # Busca canal configurado (prioriza live games, depois partidas como fallback)
+                channel_id = db.get_live_game_channel(str(guild.id))
+                if not channel_id:
+                    channel_id = db.get_match_channel(str(guild.id))
+                if channel_id:
+                    target_channel = guild.get_channel(int(channel_id))
+                    if target_channel:
+                        break
+        
+        if not target_guild or not target_channel:
+            print(f"⚠️ Servidor ou canal não encontrado para partida agrupada {game_id}")
+            return None
+        
+        # Busca os members
+        members = []
+        for player in players:
+            member = target_guild.get_member(int(player['discord_id']))
+            if member:
+                members.append({'member': member, 'player': player})
+        
+        if not members:
+            return None
+        
+        # Determina cor baseada no modo de jogo
+        queue_id = live_info.get('queueId', 0)
+        if queue_id == 440:  # Ranked Flex
+            color = discord.Color.gold()
+        elif queue_id == 420:  # Ranked Solo/Duo
+            color = discord.Color.purple()
+        else:
+            color = discord.Color.blue()
+        
+        # Cria embed agrupado
+        players_mentions = ", ".join([m['member'].mention for m in members])
+        
+        embed = discord.Embed(
+            title="🔴 PARTIDA EM GRUPO AO VIVO!",
+            description=f"**{len(members)} jogadores** entraram em partida juntos!\n\n{players_mentions}",
+            color=color,
+            timestamp=datetime.now()
+        )
+        
+        # Informações principais
+        embed.add_field(
+            name="🎮 Modo de Jogo",
+            value=f"**{live_info['gameMode']}**",
+            inline=True
+        )
+        
+        # Calcula tempo de jogo
+        game_length = live_info.get('gameLength', 0)
+        game_time_min = game_length // 60
+        game_time_sec = game_length % 60
+        
+        if game_length <= 0:
+            game_time_display = "00:00"
+        else:
+            game_time_display = f"{game_time_min}:{game_time_sec:02d}"
+        
+        embed.add_field(
+            name="⏱️ Tempo de Jogo",
+            value=f"**{game_time_display}**",
+            inline=True
+        )
+        
+        # Lista os jogadores e seus campeões
+        players_text = ""
+        for m in members:
+            info = m['player']['live_info']
+            role_emoji = {
+                'TOP': '⚔️', 'JUNGLE': '🌳', 'MIDDLE': '✨',
+                'BOTTOM': '🏹', 'UTILITY': '🛡️'
+            }.get(info.get('role', ''), '❓')
+            
+            players_text += f"{role_emoji} **{info['champion']}** - {m['member'].display_name}\n"
+        
+        embed.add_field(
+            name="👥 Jogadores da Partida",
+            value=players_text.strip(),
+            inline=False
+        )
+        
+        # Composições de time
+        team_100 = live_info.get('team_100', [])
+        team_200 = live_info.get('team_200', [])
+        
+        if team_100:
+            team_100_text = "\n".join([f"• **{p['champion']}** - {p['summonerName']}" for p in team_100[:5]])
+            embed.add_field(
+                name="🔵 Time Azul",
+                value=team_100_text,
+                inline=True
+            )
+        
+        if team_200:
+            team_200_text = "\n".join([f"• **{p['champion']}** - {p['summonerName']}" for p in team_200[:5]])
+            embed.add_field(
+                name="🔴 Time Vermelho",
+                value=team_200_text,
+                inline=True
+            )
+        
+        embed.set_footer(
+            text=f"Game ID: {game_id} • {first_player['region'].upper()}",
+            icon_url="https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-shared-components/global/default/ranked-emblem-flex.png"
+        )
+        
+        # Envia notificação
+        try:
+            message = await target_channel.send(embed=embed)
+            print(f"🔴 Live game agrupado: {len(members)} jogadores - {live_info['gameMode']}")
+            
+            return {
+                'message_id': str(message.id),
+                'channel_id': str(target_channel.id),
+                'guild_id': str(target_guild.id)
+            }
+        except Exception as e:
+            print(f"Erro ao enviar notificação agrupada: {e}")
+            return None
+    
+    except Exception as e:
+        print(f"Erro ao processar notificação agrupada: {e}")
+        return None
+
+@tasks.loop(seconds=30)
 async def check_live_games():
-    """Task que verifica se jogadores estão em partidas ao vivo a cada 2 minutos"""
+    """Task que verifica se jogadores estão em partidas ao vivo a cada 30 segundos"""
     try:
         print("🔄 [Live Games] Verificando partidas ao vivo...")
         
@@ -2166,7 +2443,7 @@ async def check_live_games():
         # Busca todas as contas vinculadas
         conn = db.get_connection()
         cursor = conn.cursor()
-        cursor.execute('SELECT id, puuid, region FROM lol_accounts')
+        cursor.execute('SELECT id, puuid, region, discord_id, summoner_name FROM lol_accounts')
         accounts = cursor.fetchall()
         conn.close()
         
@@ -2176,7 +2453,10 @@ async def check_live_games():
         
         print(f"📊 [Live Games] Verificando {len(accounts)} conta(s)...")
         
-        for account_id, puuid, region in accounts:
+        # Agrupa jogadores por partida (game_id)
+        games_map = {}  # game_id -> [(account_id, puuid, region, discord_id, summoner_name, live_info)]
+        
+        for account_id, puuid, region, discord_id, summoner_name in accounts:
             try:
                 # Busca se está em partida ativa
                 game_data = await riot_api.get_active_game(puuid, region)
@@ -2190,24 +2470,59 @@ async def check_live_games():
                         live_info = riot_api.extract_live_game_info(game_data, puuid)
                         
                         if live_info:
-                            # Envia notificação e pega o message_id
-                            message_info = await send_live_game_notification(account_id, live_info)
+                            # Agrupa por game_id
+                            if game_id not in games_map:
+                                games_map[game_id] = []
                             
-                            # Marca como notificado com os IDs da mensagem
-                            if message_info:
-                                db.mark_live_game_notified(
-                                    account_id, 
-                                    game_id,
-                                    message_info.get('message_id'),
-                                    message_info.get('channel_id'),
-                                    message_info.get('guild_id')
-                                )
+                            games_map[game_id].append({
+                                'account_id': account_id,
+                                'puuid': puuid,
+                                'region': region,
+                                'discord_id': discord_id,
+                                'summoner_name': summoner_name,
+                                'live_info': live_info
+                            })
                 
                 # Delay para não sobrecarregar a API
                 await asyncio.sleep(0.5)
                 
             except Exception as e:
                 print(f"❌ [Live Games] Erro ao verificar conta {account_id}: {e}")
+                continue
+        
+        # Envia notificações agrupadas
+        for game_id, players in games_map.items():
+            try:
+                if len(players) > 1:
+                    print(f"🎮 [Live Games] {len(players)} jogadores na mesma partida {game_id}")
+                    # Múltiplos jogadores na mesma partida - envia UMA notificação
+                    message_info = await send_live_game_notification_grouped(game_id, players)
+                    
+                    # Marca TODOS como notificados com a mesma mensagem
+                    if message_info:
+                        for player in players:
+                            db.mark_live_game_notified(
+                                player['account_id'], 
+                                game_id,
+                                message_info.get('message_id'),
+                                message_info.get('channel_id'),
+                                message_info.get('guild_id')
+                            )
+                else:
+                    # Apenas 1 jogador - envia notificação individual normal
+                    player = players[0]
+                    message_info = await send_live_game_notification(player['account_id'], player['live_info'])
+                    
+                    if message_info:
+                        db.mark_live_game_notified(
+                            player['account_id'], 
+                            game_id,
+                            message_info.get('message_id'),
+                            message_info.get('channel_id'),
+                            message_info.get('guild_id')
+                        )
+            except Exception as e:
+                print(f"❌ [Live Games] Erro ao enviar notificação para game {game_id}: {e}")
                 continue
         
         print("✅ [Live Games] Verificação concluída")
@@ -2345,6 +2660,9 @@ async def check_live_games_finished():
         
         print(f"🔄 [Live Check] Verificando {len(live_games)} partida(s) ao vivo...")
         
+        # Agrupa por match_id para processar uma vez por partida
+        processed_matches = set()
+        
         for live_game in live_games:
             account_id = live_game['lol_account_id']
             game_id = live_game['game_id']
@@ -2399,6 +2717,11 @@ async def check_live_games_finished():
                             stats = riot_api.extract_player_stats(match_data, puuid)
                             
                             if stats:
+                                # Atualiza o resultado no live game (apenas uma vez por partida)
+                                if match_id not in processed_matches:
+                                    await update_live_game_result(match_id, match_data)
+                                    processed_matches.add(match_id)
+                                
                                 # Salva no banco de dados
                                 db.add_match(account_id, stats)
                                 
@@ -2406,9 +2729,9 @@ async def check_live_games_finished():
                                 if stats.get('is_remake', False):
                                     print(f"⚠️ [Live Check] Remake detectado: {match_id} ({stats['game_duration']}s)")
                                 else:
-                                    print(f"✅ [Live Check] Partida terminada detectada: {match_id} (Score: {stats['carry_score']})")
+                                    print(f"✅ [Live Check] Partida terminada detectada: {match_id} (Carry: {stats['carry_score']}, MVP: {stats.get('mvp_score', 0)})")
                                 
-                                # Atualiza a mensagem de live game (inclusive para remakes)
+                                # Envia notificação individual
                                 await send_match_notification(account_id, stats)
                                 
                                 # Verifica performance apenas se não for remake

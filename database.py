@@ -72,6 +72,7 @@ class Database:
                 win BOOLEAN,
                 carry_score REAL,
                 mvp_score REAL DEFAULT 0,
+                mvp_placement INTEGER DEFAULT 0,
                 kda REAL,
                 kill_participation REAL,
                 played_at TIMESTAMP,
@@ -160,6 +161,14 @@ class Database:
             cursor.execute('ALTER TABLE matches ADD COLUMN mvp_score REAL DEFAULT 0')
             print("✅ Migração mvp_score concluída!")
         
+        # Migração: Adiciona coluna mvp_placement em matches
+        try:
+            cursor.execute("SELECT mvp_placement FROM matches LIMIT 1")
+        except sqlite3.OperationalError:
+            print("🔄 Migrando banco: adicionando coluna mvp_placement...")
+            cursor.execute('ALTER TABLE matches ADD COLUMN mvp_placement INTEGER DEFAULT 0')
+            print("✅ Migração mvp_placement concluída!")
+        
         conn.commit()
         conn.close()
     
@@ -244,8 +253,8 @@ class Database:
                     lol_account_id, match_id, game_mode, champion_name, role,
                     kills, deaths, assists, damage_dealt, damage_taken,
                     gold_earned, cs, vision_score, game_duration, win, 
-                    carry_score, mvp_score, kda, kill_participation, played_at, is_remake
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    carry_score, mvp_score, mvp_placement, kda, kill_participation, played_at, is_remake
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 lol_account_id,
                 match_data['match_id'],
@@ -264,6 +273,7 @@ class Database:
                 match_data['win'],
                 match_data['carry_score'],
                 match_data.get('mvp_score', 0),
+                match_data.get('mvp_placement', 0),
                 match_data.get('kda', 0),
                 match_data.get('kill_participation', 0),
                 match_data['played_at'],
@@ -630,11 +640,12 @@ class Database:
         return matches
     
     def get_top_players_by_carry(self, limit: int = 10, min_games: int = 5) -> List[Dict]:
-        """Retorna o ranking dos melhores jogadores por carry score médio (mínimo de jogos, exclui remakes)"""
+        """Retorna o ranking dos melhores jogadores por MVP score médio (mínimo de jogos, exclui remakes)"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
         # Busca melhores médias (apenas jogadores com mínimo de partidas, excluindo remakes)
+        # Ordenado por MVP Score, mas mostra ambos os scores
         cursor.execute('''
             SELECT 
                 la.discord_id,
@@ -642,6 +653,7 @@ class Database:
                 la.region,
                 COUNT(m.id) as total_games,
                 AVG(m.carry_score) as avg_carry,
+                AVG(COALESCE(m.mvp_score, 0)) as avg_mvp,
                 SUM(CASE WHEN m.win = 1 THEN 1 ELSE 0 END) as wins,
                 AVG(m.kda) as avg_kda,
                 AVG(m.kill_participation) as avg_kp
@@ -651,14 +663,14 @@ class Database:
               AND (m.is_remake = 0 OR m.is_remake IS NULL)
             GROUP BY la.id
             HAVING COUNT(m.id) >= ?
-            ORDER BY avg_carry DESC
+            ORDER BY avg_mvp DESC
             LIMIT ?
         ''', (min_games, limit))
         
         ranking = []
         for row in cursor.fetchall():
             total_games = row[3]
-            wins = row[5]
+            wins = row[6]
             win_rate = (wins / total_games * 100) if total_games > 0 else 0
             
             ranking.append({
@@ -667,10 +679,11 @@ class Database:
                 'region': row[2],
                 'total_games': total_games,
                 'avg_carry': round(row[4], 2),
+                'avg_mvp': round(row[5], 2),
                 'wins': wins,
                 'win_rate': round(win_rate, 1),
-                'avg_kda': round(row[6], 2),
-                'avg_kp': round(row[7], 1)
+                'avg_kda': round(row[7], 2),
+                'avg_kp': round(row[8], 1)
             })
         
         conn.close()

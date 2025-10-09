@@ -540,28 +540,29 @@ class RiotAPI:
         
         return int(min(max(score, 0), 100))  # Garante entre 0 e 100
     
-    def calculate_mvp_score(self, player_stats: Dict, team_stats: Dict) -> int:
+    def calculate_mvp_score(self, player_stats: Dict, all_players_stats: Dict) -> tuple:
         """
         Calcula o MVP Score (estilo OP.GG/U.GG)
-        Compara o jogador com seus aliados do time
-        100 = melhor em tudo, 0 = pior em tudo
+        Compara o jogador com TODOS os 10 jogadores da partida
+        Retorna: (score, placement) - ex: (65, 7) = 65 pontos, 7º lugar
         """
-        # Normaliza baseado no rank do time (1º = 100%, 5º = 0%)
-        def rank_normalize(value: float, team_values: list) -> float:
-            """Normaliza baseado na posição no ranking do time"""
-            sorted_values = sorted(team_values, reverse=True)
+        # Normaliza baseado no rank entre 10 jogadores
+        def rank_normalize(value: float, all_values: list) -> tuple:
+            """Normaliza baseado na posição no ranking dos 10 jogadores"""
+            sorted_values = sorted(all_values, reverse=True)
             if len(sorted_values) <= 1:
-                return 1.0
+                return 1.0, 1
             
-            # Encontra a posição do jogador
+            # Encontra a posição do jogador (1º ao 10º)
             try:
-                rank = sorted_values.index(value)
+                rank = sorted_values.index(value) + 1  # +1 para 1-indexed
             except ValueError:
-                return 0.5
+                return 0.5, 5
             
-            # 1º = 100%, 2º = 75%, 3º = 50%, 4º = 25%, 5º = 0%
-            rank_scores = {0: 1.0, 1: 0.75, 2: 0.5, 3: 0.25, 4: 0.0}
-            return rank_scores.get(rank, 0.5)
+            # 1º = 100%, 2º = 90%, 3º = 80%, ..., 10º = 10%
+            # Escala linear: (11 - rank) / 10
+            normalized = max(0.0, (11 - rank) / 10)
+            return normalized, rank
         
         # Extrai métricas do jogador
         kda = player_stats['kda']
@@ -571,21 +572,21 @@ class RiotAPI:
         cs = player_stats['total_minions_killed'] + player_stats['neutral_minions_killed']
         vision = player_stats['vision_score']
         
-        # Compara com os aliados
-        team_kdas = team_stats.get('team_kdas', [kda])
-        team_kps = team_stats.get('team_kps', [kill_participation])
-        team_damages = team_stats.get('team_damages', [damage])
-        team_golds = team_stats.get('team_golds', [gold])
-        team_cs = team_stats.get('team_cs', [cs])
-        team_visions = team_stats.get('team_visions', [vision])
+        # Compara com TODOS os 10 jogadores
+        all_kdas = all_players_stats.get('all_kdas', [kda])
+        all_kps = all_players_stats.get('all_kps', [kill_participation])
+        all_damages = all_players_stats.get('all_damages', [damage])
+        all_golds = all_players_stats.get('all_golds', [gold])
+        all_cs = all_players_stats.get('all_cs', [cs])
+        all_visions = all_players_stats.get('all_visions', [vision])
         
-        # Calcula scores normalizados
-        norm_kda = rank_normalize(kda, team_kdas)
-        norm_kp = rank_normalize(kill_participation, team_kps)
-        norm_damage = rank_normalize(damage, team_damages)
-        norm_gold = rank_normalize(gold, team_golds)
-        norm_cs = rank_normalize(cs, team_cs)
-        norm_vision = rank_normalize(vision, team_visions)
+        # Calcula scores normalizados E posições
+        norm_kda, rank_kda = rank_normalize(kda, all_kdas)
+        norm_kp, rank_kp = rank_normalize(kill_participation, all_kps)
+        norm_damage, rank_damage = rank_normalize(damage, all_damages)
+        norm_gold, rank_gold = rank_normalize(gold, all_golds)
+        norm_cs, rank_cs = rank_normalize(cs, all_cs)
+        norm_vision, rank_vision = rank_normalize(vision, all_visions)
         
         # PESOS - focado em KDA/Dano/Gold (estilo OP.GG)
         weights = {
@@ -597,7 +598,7 @@ class RiotAPI:
             'vision': 0.05     # Vision quase ignorada (realista com sites)
         }
         
-        # Calcula score final
+        # Calcula score final (0-100)
         score = (
             norm_kda * weights['kda'] +
             norm_kp * weights['kp'] +
@@ -607,7 +608,17 @@ class RiotAPI:
             norm_vision * weights['vision']
         ) * 100
         
-        return int(min(max(score, 0), 100))
+        # Calcula colocação geral (média ponderada das posições)
+        overall_placement = (
+            rank_kda * weights['kda'] +
+            rank_kp * weights['kp'] +
+            rank_damage * weights['damage'] +
+            rank_gold * weights['gold'] +
+            rank_cs * weights['cs'] +
+            rank_vision * weights['vision']
+        )
+        
+        return (int(min(max(score, 0), 100)), int(round(overall_placement)))
     
     def extract_player_stats(self, match_data: Dict, puuid: str) -> Optional[Dict]:
         """Extrai as estatísticas do jogador específico de uma partida"""
@@ -624,39 +635,39 @@ class RiotAPI:
             if not participant:
                 return None
             
-            # Calcula total de kills do time e coleta stats dos aliados
-            team_kills = 0
-            team_kdas = []
-            team_kps = []
-            team_damages = []
-            team_golds = []
-            team_cs = []
-            team_visions = []
+            # Calcula total de kills do time (para Carry Score)
+            team_kills = sum(
+                p['kills'] for p in match_data['info']['participants']
+                if p['teamId'] == team_id
+            )
+            
+            # Coleta stats de TODOS os 10 jogadores (para MVP Score)
+            all_kdas = []
+            all_damages = []
+            all_golds = []
+            all_cs = []
+            all_visions = []
             
             for p in match_data['info']['participants']:
-                if p['teamId'] == team_id:
-                    team_kills += p['kills']
-                    
-                    # Calcula KDA do aliado
-                    deaths = p['deaths'] if p['deaths'] > 0 else 1
-                    ally_kda = (p['kills'] + p['assists']) / deaths
-                    team_kdas.append(ally_kda)
-                    
-                    # Calcula KP do aliado
-                    ally_kp = (p['kills'] + p['assists']) / max(team_kills, 1)
-                    team_kps.append(ally_kp)
-                    
-                    team_damages.append(p.get('totalDamageDealtToChampions', 0))
-                    team_golds.append(p.get('goldEarned', 0))
-                    team_cs.append(p.get('totalMinionsKilled', 0) + p.get('neutralMinionsKilled', 0))
-                    team_visions.append(p.get('visionScore', 0))
+                # Calcula KDA do jogador
+                deaths = p['deaths'] if p['deaths'] > 0 else 1
+                player_kda = (p['kills'] + p['assists']) / deaths
+                all_kdas.append(player_kda)
+                
+                all_damages.append(p.get('totalDamageDealtToChampions', 0))
+                all_golds.append(p.get('goldEarned', 0))
+                all_cs.append(p.get('totalMinionsKilled', 0) + p.get('neutralMinionsKilled', 0))
+                all_visions.append(p.get('visionScore', 0))
             
-            # Recalcula KPs com o total correto de kills
-            team_kps = []
+            # Calcula KPs de todos (precisa dos kills de cada time)
+            team_1_kills = sum(p['kills'] for p in match_data['info']['participants'] if p['teamId'] == 100)
+            team_2_kills = sum(p['kills'] for p in match_data['info']['participants'] if p['teamId'] == 200)
+            
+            all_kps = []
             for p in match_data['info']['participants']:
-                if p['teamId'] == team_id:
-                    ally_kp = (p['kills'] + p['assists']) / max(team_kills, 1)
-                    team_kps.append(ally_kp)
+                team_total_kills = team_1_kills if p['teamId'] == 100 else team_2_kills
+                player_kp = (p['kills'] + p['assists']) / max(team_total_kills, 1)
+                all_kps.append(player_kp)
             
             # Dados do time para cálculo do Carry Score
             team_stats = {
@@ -666,14 +677,14 @@ class RiotAPI:
             # Calcula o carry score com o novo sistema
             carry_score = self.calculate_carry_score(participant, team_stats)
             
-            # Dados do time para cálculo do MVP Score
-            mvp_team_stats = {
-                'team_kdas': team_kdas,
-                'team_kps': team_kps,
-                'team_damages': team_damages,
-                'team_golds': team_golds,
-                'team_cs': team_cs,
-                'team_visions': team_visions
+            # Dados de TODOS os jogadores para cálculo do MVP Score
+            all_players_stats = {
+                'all_kdas': all_kdas,
+                'all_kps': all_kps,
+                'all_damages': all_damages,
+                'all_golds': all_golds,
+                'all_cs': all_cs,
+                'all_visions': all_visions
             }
             
             # Prepara stats do jogador para MVP Score
@@ -687,8 +698,8 @@ class RiotAPI:
                 'vision_score': participant.get('visionScore', 0)
             }
             
-            # Calcula o MVP score
-            mvp_score = self.calculate_mvp_score(player_mvp_stats, mvp_team_stats)
+            # Calcula o MVP score (retorna tupla: score, placement)
+            mvp_score, mvp_placement = self.calculate_mvp_score(player_mvp_stats, all_players_stats)
             
             # Extrai role
             role = participant.get('teamPosition', '')
@@ -731,6 +742,7 @@ class RiotAPI:
                 'win': participant.get('win', False),
                 'carry_score': carry_score,
                 'mvp_score': mvp_score,
+                'mvp_placement': mvp_placement,
                 'kda': round((participant.get('kills', 0) + participant.get('assists', 0)) / max(participant.get('deaths', 1), 1), 2),
                 'kill_participation': round((participant.get('kills', 0) + participant.get('assists', 0)) / max(team_kills, 1) * 100, 1),
                 'played_at': datetime.fromtimestamp(match_data['info'].get('gameStartTimestamp', 0) / 1000).isoformat() if match_data['info'].get('gameStartTimestamp') else datetime.now().isoformat(),
