@@ -158,11 +158,12 @@ class FlexGuideView(discord.ui.View):
         embed.add_field(
             name="📊 Fatores Analisados por Role",
             value=(
-                "**Top/Mid**: KDA é crucial!\n"
-                "**Jungle**: Kill Participation + Objetivos\n"
-                "**ADC**: Farm + Dano aos campeões\n"
-                "**Support**: Visão + Kill Participation\n"
-                "• **Bônus** de +5% por vitória\n"
+                "**Top**: KDA + Dano + Tank (absorver dano)\n"
+                "**Mid**: KDA + Dano + Farm\n"
+                "**Jungle**: KDA + KP + Objetivos + Utility (Tank/CC/Peel)\n"
+                "**ADC**: Dano + Farm + Gold\n"
+                "**Support**: KDA + Visão + Utility (CC/Heal/Shield/Tank)\n"
+                "• **Bônus** de +4% por vitória\n"
                 "• **Penalidades** por muitas mortes ou baixa participação"
             ),
             inline=False
@@ -183,11 +184,11 @@ class FlexGuideView(discord.ui.View):
         embed.add_field(
             name="💡 Pesos por Role (Sistema Específico)",
             value=(
-                "**Top**: 35% KDA + 18% Dano + 11.5% Objetivos + 7% Visão\n"
-                "**Mid**: 35% KDA + 19% KP + 18% Dano + 7% Visão\n"
-                "**Jungle**: 35% KP + 30% KDA + 15% Objetivos + 5% Visão + 5% Dano\n"
-                "**ADC**: 35% KDA + 23% Dano + 15% Gold + 7% Visão\n"
-                "**Support**: 55% KP + 25% Visão + 15% KDA"
+                "**Top**: 30% KDA + 18% Dano + 11% Gold + 10% CS + 8.25% Objetivos + 8.25% Tank + 7.5% KP + 7% Visão\n"
+                "**Mid**: 35% KDA + 15% Gold + 15% Dano + 13% CS + 9% KP + 7% Visão + 6% Obj\n"
+                "**Jungle**: 35% KDA + 30% KP + 15% Objetivos + 5% Visão + 5% Dano + 5% Gold + 5% Utility\n"
+                "**ADC**: 35% KDA + 20% Dano + 15% Gold + 12% CS + 8% KP + 7% Visão + 3% Obj\n"
+                "**Support**: 35% KDA + 25% Visão + 20% KP + 20% Utility"
             ),
             inline=False
         )
