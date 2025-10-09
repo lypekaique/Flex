@@ -120,7 +120,7 @@ class FlexGuideView(discord.ui.View):
                 "`/configurar` - Ver configuração atual\n"
                 "`/configurar comandos #canal` - Definir canal de comandos\n"
                 "`/configurar alertas #canal` - Canal de alertas\n"
-                "`/configurar partidas #canal` - Canal de partidas\n"
+                "`/configurar score #canal` - Canal de score (avaliações)\n"
                 "`/configurar live #canal` - Canal de live tracking\n"
                 "• Admins podem usar comandos em **qualquer lugar**\n"
                 "• Usuários comuns só no **canal configurado**"
@@ -908,7 +908,7 @@ async def config_type_autocomplete(
     """Auto-complete para tipos de configuração"""
     types = [
         ('🔔 Alertas - Notificações de performance', 'alertas'),
-        ('🎮 Partidas - Notificações de jogos', 'partidas'),
+        ('📊 Score - Avaliações individuais (Carry + MVP)', 'score'),
         ('💬 Comandos - Canal onde usuários podem usar comandos', 'comandos'),
         ('🔴 Live - Notificações de partidas ao vivo', 'live'),
     ]
@@ -920,7 +920,7 @@ async def config_type_autocomplete(
 
 @bot.tree.command(name="configurar", description="⚙️ [ADMIN] Configure os canais do bot ou veja a configuração atual")
 @app_commands.describe(
-    tipo="Tipo de configuração: alertas, partidas, comandos ou live (deixe vazio para ver config atual)",
+    tipo="Tipo de configuração: alertas, score, comandos ou live (deixe vazio para ver config atual)",
     canal="Canal onde serão enviadas as mensagens (obrigatório se tipo for especificado)"
 )
 @app_commands.autocomplete(tipo=config_type_autocomplete)
@@ -970,13 +970,13 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
             
             if config['match_channel_id']:
                 embed.add_field(
-                    name="🎮 Canal de Partidas",
+                    name="📊 Canal de Score",
                     value=f"<#{config['match_channel_id']}>\nNotificações individuais com Carry Score + MVP Score de cada jogador",
                     inline=False
                 )
             else:
                 embed.add_field(
-                    name="🎮 Canal de Partidas",
+                    name="📊 Canal de Score",
                     value="❌ Não configurado",
                     inline=False
                 )
@@ -1012,9 +1012,9 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
     channel_id = str(canal.id)
     tipo = tipo.lower()
     
-    if tipo not in ['alertas', 'partidas', 'comandos', 'live']:
+    if tipo not in ['alertas', 'score', 'comandos', 'live']:
         await interaction.followup.send(
-            "❌ Tipo inválido! Use: `alertas`, `partidas`, `comandos` ou `live`",
+            "❌ Tipo inválido! Use: `alertas`, `score`, `comandos` ou `live`",
             ephemeral=True
         )
         return
@@ -1040,16 +1040,16 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
             await interaction.followup.send("❌ Erro ao configurar canal.", ephemeral=True)
             return
     
-    elif tipo == 'partidas':
+    elif tipo == 'score':
         success = db.set_match_channel(guild_id, channel_id)
         if success:
             embed = discord.Embed(
-                title="✅ Canal de Partidas Configurado!",
-                description=f"Notificações individuais de partidas serão enviadas em {canal.mention}",
+                title="✅ Canal de Score Configurado!",
+                description=f"Notificações de score individuais serão enviadas em {canal.mention}",
                 color=discord.Color.blue()
             )
             embed.add_field(
-                name="🎮 O que será enviado?",
+                name="📊 O que será enviado?",
                 value=(
                     "**Quando a partida termina:**\n"
                     "• ✅/❌ **Resultado** (Vitória/Derrota)\n"
@@ -1105,10 +1105,10 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
                     "   - KDA de todos os 10 jogadores\n"
                     "   - CS e Dano de todos\n\n"
                     "**Notificações individuais** (com Carry/MVP Score) são enviadas\n"
-                    "no **canal de partidas** configurado.\n\n"
+                    "no **canal de score** configurado.\n\n"
                     "💡 **Recomendação:** Configure ambos os canais:\n"
                     "• `live` - Para acompanhar partidas em grupo\n"
-                    "• `partidas` - Para avaliações individuais"
+                    "• `score` - Para avaliações individuais"
                 ),
                 inline=False
             )
@@ -1658,7 +1658,7 @@ async def purge_media(interaction: discord.Interaction):
 async def send_match_notification(lol_account_id: int, stats: Dict):
     """
     Envia notificação INDIVIDUAL quando uma partida termina.
-    SEMPRE envia uma notificação separada no canal de partidas.
+    SEMPRE envia uma notificação separada no canal de score.
     NÃO edita mais a mensagem de live game.
     """
     try:
@@ -1684,7 +1684,7 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
             if not member:
                 continue
             
-            # Busca canal de partidas configurado
+            # Busca canal de score configurado
             channel_id = db.get_match_channel(str(guild.id))
             if not channel_id:
                 continue
