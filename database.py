@@ -614,7 +614,7 @@ class Database:
         cursor = conn.cursor()
         cursor.execute('''
             SELECT match_id, champion_name, role, kills, deaths, assists,
-                   carry_score, win, played_at
+                   carry_score, mvp_score, mvp_placement, win, played_at
             FROM matches
             WHERE lol_account_id = ? AND champion_name = ?
               AND (is_remake = 0 OR is_remake IS NULL)
@@ -632,8 +632,10 @@ class Database:
                 'deaths': row[4],
                 'assists': row[5],
                 'carry_score': row[6],
-                'win': row[7],
-                'played_at': row[8]
+                'mvp_score': row[7],
+                'mvp_placement': row[8],
+                'win': row[9],
+                'played_at': row[10]
             })
         
         conn.close()

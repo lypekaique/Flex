@@ -1926,12 +1926,71 @@ async def update_live_game_result(match_id: str, match_data: Dict):
         linked_accounts = {row[0].lower(): row[1] for row in cursor.fetchall()}
         conn.close()
         
+        # Calcula o MVP Score para todos os jogadores
+        players_with_scores = []
+        for p in participants:
+            # Calcula team kills
+            team_id = p['teamId']
+            team_kills = sum(player['kills'] for player in participants if player['teamId'] == team_id)
+            
+            # Prepara dados para cálculo do carry score
+            team_stats = {'team_kills': team_kills}
+            carry_score = riot_api.calculate_carry_score(p, team_stats)
+            
+            # Prepara dados para MVP score
+            all_kdas = [(player['kills'] + player['assists']) / max(player['deaths'], 1) for player in participants]
+            all_damages = [player.get('totalDamageDealtToChampions', 0) for player in participants]
+            all_golds = [player.get('goldEarned', 0) for player in participants]
+            all_cs = [player.get('totalMinionsKilled', 0) + player.get('neutralMinionsKilled', 0) for player in participants]
+            all_visions = [player.get('visionScore', 0) for player in participants]
+            
+            all_kps = []
+            for player in participants:
+                player_team_kills = sum(p2['kills'] for p2 in participants if p2['teamId'] == player['teamId'])
+                player_kp = (player['kills'] + player['assists']) / max(player_team_kills, 1)
+                all_kps.append(player_kp)
+            
+            player_mvp_stats = {
+                'kda': (p['kills'] + p['assists']) / max(p['deaths'], 1),
+                'kill_participation': (p['kills'] + p['assists']) / max(team_kills, 1),
+                'total_damage_to_champions': p.get('totalDamageDealtToChampions', 0),
+                'gold_earned': p.get('goldEarned', 0),
+                'total_minions_killed': p.get('totalMinionsKilled', 0),
+                'neutral_minions_killed': p.get('neutralMinionsKilled', 0),
+                'vision_score': p.get('visionScore', 0)
+            }
+            
+            all_players_stats = {
+                'all_kdas': all_kdas,
+                'all_kps': all_kps,
+                'all_damages': all_damages,
+                'all_golds': all_golds,
+                'all_cs': all_cs,
+                'all_visions': all_visions
+            }
+            
+            mvp_score, mvp_placement = riot_api.calculate_mvp_score(player_mvp_stats, all_players_stats)
+            
+            players_with_scores.append({
+                'player': p,
+                'carry_score': carry_score,
+                'mvp_score': mvp_score,
+                'mvp_placement': mvp_placement
+            })
+        
+        # Encontra o MVP geral (maior MVP Score)
+        mvp_player = max(players_with_scores, key=lambda x: x['mvp_score'])
+        
         # Separa por time
-        team_100 = [p for p in participants if p['teamId'] == 100]
-        team_200 = [p for p in participants if p['teamId'] == 200]
+        team_100 = [p for p in players_with_scores if p['player']['teamId'] == 100]
+        team_200 = [p for p in players_with_scores if p['player']['teamId'] == 200]
+        
+        # Ordena cada time por MVP Score (maior primeiro)
+        team_100.sort(key=lambda x: x['mvp_score'], reverse=True)
+        team_200.sort(key=lambda x: x['mvp_score'], reverse=True)
         
         # Verifica qual time venceu
-        team_100_win = team_100[0]['win'] if team_100 else False
+        team_100_win = team_100[0]['player']['win'] if team_100 else False
         
         # Determina cor
         if team_100_win:
@@ -1941,6 +2000,11 @@ async def update_live_game_result(match_id: str, match_data: Dict):
             color = discord.Color.red()
             winner_text = "🔴 **TIME VERMELHO VENCEU!**"
         
+        # Adiciona MVP ao texto do vencedor
+        mvp_name = mvp_player['player']['summonerName']
+        mvp_champ = mvp_player['player']['championName']
+        winner_text += f"\n👑 **MVP: {mvp_name}** ({mvp_champ}) - Score: {mvp_player['mvp_score']}"
+        
         # Cria novo embed com resultado
         embed = discord.Embed(
             title="🏁 PARTIDA FINALIZADA!",
@@ -1949,12 +2013,20 @@ async def update_live_game_result(match_id: str, match_data: Dict):
             timestamp=datetime.now()
         )
         
-        # Time Azul
+        # Time Azul (já ordenado por MVP Score)
         team_100_text = ""
-        for p in team_100:
+        for idx, p_data in enumerate(team_100, 1):
+            p = p_data['player']
             kda_ratio = (p['kills'] + p['assists']) / max(p['deaths'], 1)
             cs = p.get('totalMinionsKilled', 0) + p.get('neutralMinionsKilled', 0)
             damage = p.get('totalDamageDealtToChampions', 0)
+            
+            # Emoji de colocação
+            placement_emoji = "🥇" if idx == 1 else "🥈" if idx == 2 else "🥉" if idx == 3 else f"{idx}º"
+            
+            # Destaca MVP geral
+            is_mvp = p_data['player']['summonerName'] == mvp_player['player']['summonerName']
+            mvp_mark = "👑 " if is_mvp else ""
             
             # Busca mention do Discord
             summoner_name = p['summonerName']
@@ -1963,12 +2035,13 @@ async def update_live_game_result(match_id: str, match_data: Dict):
             if discord_id:
                 member = guild.get_member(int(discord_id))
                 mention = member.mention if member else summoner_name
-                team_100_text += f"**{p['championName']}** - {summoner_name} - {mention}\n"
+                team_100_text += f"{placement_emoji} {mvp_mark}**{p['championName']}** - {mention}\n"
             else:
-                team_100_text += f"**{p['championName']}** - {summoner_name}\n"
+                team_100_text += f"{placement_emoji} {mvp_mark}**{p['championName']}** - {summoner_name}\n"
             
             team_100_text += f"     📊 KDA: {p['kills']}/{p['deaths']}/{p['assists']} ({kda_ratio:.2f})\n"
-            team_100_text += f"     🌾 CS: {cs} | 🗡️ Dano: {damage:,}\n\n"
+            team_100_text += f"     🗡️ Dano: {damage:,} | 🌾 CS: {cs}\n"
+            team_100_text += f"     ⭐ MVP Score: {p_data['mvp_score']} | Carry: {p_data['carry_score']}\n\n"
         
         embed.add_field(
             name="🔵 TIME AZUL" + (" - VITÓRIA" if team_100_win else " - DERROTA"),
@@ -1976,12 +2049,20 @@ async def update_live_game_result(match_id: str, match_data: Dict):
             inline=False
         )
         
-        # Time Vermelho
+        # Time Vermelho (já ordenado por MVP Score)
         team_200_text = ""
-        for p in team_200:
+        for idx, p_data in enumerate(team_200, 1):
+            p = p_data['player']
             kda_ratio = (p['kills'] + p['assists']) / max(p['deaths'], 1)
             cs = p.get('totalMinionsKilled', 0) + p.get('neutralMinionsKilled', 0)
             damage = p.get('totalDamageDealtToChampions', 0)
+            
+            # Emoji de colocação
+            placement_emoji = "🥇" if idx == 1 else "🥈" if idx == 2 else "🥉" if idx == 3 else f"{idx}º"
+            
+            # Destaca MVP geral
+            is_mvp = p_data['player']['summonerName'] == mvp_player['player']['summonerName']
+            mvp_mark = "👑 " if is_mvp else ""
             
             # Busca mention do Discord
             summoner_name = p['summonerName']
@@ -1990,12 +2071,13 @@ async def update_live_game_result(match_id: str, match_data: Dict):
             if discord_id:
                 member = guild.get_member(int(discord_id))
                 mention = member.mention if member else summoner_name
-                team_200_text += f"**{p['championName']}** - {summoner_name} - {mention}\n"
+                team_200_text += f"{placement_emoji} {mvp_mark}**{p['championName']}** - {mention}\n"
             else:
-                team_200_text += f"**{p['championName']}** - {summoner_name}\n"
+                team_200_text += f"{placement_emoji} {mvp_mark}**{p['championName']}** - {summoner_name}\n"
             
             team_200_text += f"     📊 KDA: {p['kills']}/{p['deaths']}/{p['assists']} ({kda_ratio:.2f})\n"
-            team_200_text += f"     🌾 CS: {cs} | 🗡️ Dano: {damage:,}\n\n"
+            team_200_text += f"     🗡️ Dano: {damage:,} | 🌾 CS: {cs}\n"
+            team_200_text += f"     ⭐ MVP Score: {p_data['mvp_score']} | Carry: {p_data['carry_score']}\n\n"
         
         embed.add_field(
             name="🔴 TIME VERMELHO" + (" - VITÓRIA" if not team_100_win else " - DERROTA"),
