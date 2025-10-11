@@ -547,16 +547,21 @@ class RiotAPI:
         Retorna: (score, placement) - ex: (65, 7) = 65 pontos, 7º lugar
         """
         # Normaliza baseado no rank entre 10 jogadores
-        def rank_normalize(value: float, all_values: list) -> tuple:
+        def rank_normalize(value: float, all_values: list, player_index: int) -> tuple:
             """Normaliza baseado na posição no ranking dos 10 jogadores"""
-            sorted_values = sorted(all_values, reverse=True)
-            if len(sorted_values) <= 1:
+            if len(all_values) <= 1:
                 return 1.0, 1
             
-            # Encontra a posição do jogador (1º ao 10º)
+            # Cria lista de tuplas (valor, índice_original) para manter ordem única
+            indexed_values = [(v, i) for i, v in enumerate(all_values)]
+            # Ordena por valor (descendente), depois por índice (ascendente) para quebrar empates
+            sorted_indexed = sorted(indexed_values, key=lambda x: (-x[0], x[1]))
+            
+            # Encontra a posição do jogador (1º ao 10º) usando o índice correto
             try:
-                rank = sorted_values.index(value) + 1  # +1 para 1-indexed
-            except ValueError:
+                # Encontra a posição única baseada na tupla (valor, índice)
+                rank = next(i + 1 for i, (v, idx) in enumerate(sorted_indexed) if idx == player_index)
+            except (StopIteration, ValueError):
                 return 0.5, 5
             
             # 1º = 100%, 2º = 90%, 3º = 80%, ..., 10º = 10%
@@ -580,13 +585,24 @@ class RiotAPI:
         all_cs = all_players_stats.get('all_cs', [cs])
         all_visions = all_players_stats.get('all_visions', [vision])
         
+        # Pega o índice do jogador na lista (encontra pela correspondência exata de todas as métricas)
+        player_index = -1
+        for i, (k, kp, d, g, c, v) in enumerate(zip(all_kdas, all_kps, all_damages, all_golds, all_cs, all_visions)):
+            if k == kda and kp == kill_participation and d == damage and g == gold and c == cs and v == vision:
+                player_index = i
+                break
+        
+        # Se não encontrou, usa o primeiro
+        if player_index == -1:
+            player_index = 0
+        
         # Calcula scores normalizados E posições
-        norm_kda, rank_kda = rank_normalize(kda, all_kdas)
-        norm_kp, rank_kp = rank_normalize(kill_participation, all_kps)
-        norm_damage, rank_damage = rank_normalize(damage, all_damages)
-        norm_gold, rank_gold = rank_normalize(gold, all_golds)
-        norm_cs, rank_cs = rank_normalize(cs, all_cs)
-        norm_vision, rank_vision = rank_normalize(vision, all_visions)
+        norm_kda, rank_kda = rank_normalize(kda, all_kdas, player_index)
+        norm_kp, rank_kp = rank_normalize(kill_participation, all_kps, player_index)
+        norm_damage, rank_damage = rank_normalize(damage, all_damages, player_index)
+        norm_gold, rank_gold = rank_normalize(gold, all_golds, player_index)
+        norm_cs, rank_cs = rank_normalize(cs, all_cs, player_index)
+        norm_vision, rank_vision = rank_normalize(vision, all_visions, player_index)
         
         # PESOS - focado em KDA/Dano/Gold (estilo OP.GG)
         weights = {
