@@ -102,6 +102,10 @@ class Database:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 lol_account_id INTEGER NOT NULL,
                 game_id TEXT NOT NULL,
+                puuid TEXT NOT NULL,
+                summoner_name TEXT,
+                champion_id INTEGER,
+                champion_name TEXT,
                 message_id TEXT,
                 channel_id TEXT,
                 guild_id TEXT,
@@ -144,6 +148,17 @@ class Database:
             cursor.execute('ALTER TABLE live_games_notified ADD COLUMN channel_id TEXT')
             cursor.execute('ALTER TABLE live_games_notified ADD COLUMN guild_id TEXT')
             print("✅ Migração de tracking concluída!")
+
+        # Migração: Adiciona colunas puuid, summoner_name, champion_id, champion_name em live_games_notified
+        try:
+            cursor.execute("SELECT puuid FROM live_games_notified LIMIT 1")
+        except sqlite3.OperationalError:
+            print("🔄 Migrando banco: adicionando colunas de identificação da partida...")
+            cursor.execute('ALTER TABLE live_games_notified ADD COLUMN puuid TEXT')
+            cursor.execute('ALTER TABLE live_games_notified ADD COLUMN summoner_name TEXT')
+            cursor.execute('ALTER TABLE live_games_notified ADD COLUMN champion_id INTEGER')
+            cursor.execute('ALTER TABLE live_games_notified ADD COLUMN champion_name TEXT')
+            print("✅ Migração de identificação concluída!")
         
         # Migração: Adiciona coluna is_remake em matches
         try:
@@ -521,18 +536,19 @@ class Database:
         conn.close()
         return result is not None
     
-    def mark_live_game_notified(self, lol_account_id: int, game_id: str, 
-                                message_id: str = None, channel_id: str = None, 
+    def mark_live_game_notified(self, lol_account_id: int, game_id: str,
+                                puuid: str, summoner_name: str, champion_id: int, champion_name: str,
+                                message_id: str = None, channel_id: str = None,
                                 guild_id: str = None) -> bool:
         """Marca uma live game como notificada e salva IDs da mensagem"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT OR IGNORE INTO live_games_notified 
-                (lol_account_id, game_id, message_id, channel_id, guild_id)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (lol_account_id, game_id, message_id, channel_id, guild_id))
+                INSERT OR IGNORE INTO live_games_notified
+                (lol_account_id, game_id, puuid, summoner_name, champion_id, champion_name, message_id, channel_id, guild_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (lol_account_id, game_id, puuid, summoner_name, champion_id, champion_name, message_id, channel_id, guild_id))
             conn.commit()
             conn.close()
             return True
@@ -568,22 +584,25 @@ class Database:
         # Precisamos buscar por lol_account_id e pelo game_id que contém parte do match_id
         # Ou simplesmente pegar a mais recente do jogador
         cursor.execute('''
-            SELECT message_id, channel_id, guild_id, game_id 
+            SELECT message_id, channel_id, guild_id, game_id, puuid, summoner_name, champion_name
             FROM live_games_notified
             WHERE lol_account_id = ?
             ORDER BY notified_at DESC
             LIMIT 1
         ''', (lol_account_id,))
-        
+
         result = cursor.fetchone()
         conn.close()
-        
+
         if result:
             return {
                 'message_id': result[0],
                 'channel_id': result[1],
                 'guild_id': result[2],
-                'game_id': result[3]
+                'game_id': result[3],
+                'puuid': result[4],
+                'summoner_name': result[5],
+                'champion_name': result[6]
             }
         return None
     
@@ -859,12 +878,12 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT lol_account_id, game_id, message_id, channel_id, guild_id, notified_at
+            SELECT lol_account_id, game_id, message_id, channel_id, guild_id, notified_at, puuid, summoner_name, champion_name
             FROM live_games_notified
             WHERE notified_at > datetime('now', '-' || ? || ' hours')
             ORDER BY notified_at DESC
         ''', (hours,))
-        
+
         live_games = []
         for row in cursor.fetchall():
             live_games.append({
@@ -873,7 +892,10 @@ class Database:
                 'message_id': row[2],
                 'channel_id': row[3],
                 'guild_id': row[4],
-                'notified_at': row[5]
+                'notified_at': row[5],
+                'puuid': row[6],
+                'summoner_name': row[7],
+                'champion_name': row[8]
             })
         
         conn.close()
