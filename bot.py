@@ -1861,10 +1861,17 @@ async def update_live_game_result(game_id: str, match_data: Dict):
         cursor = conn.cursor()
         
         # Debug: Lista todos os game_ids ativos
-        cursor.execute('SELECT game_id, message_id FROM live_games_notified WHERE message_id IS NOT NULL')
+        cursor.execute('SELECT game_id, message_id, puuid FROM live_games_notified WHERE message_id IS NOT NULL')
         all_games = cursor.fetchall()
-        print(f"🔍 [Live Update DEBUG] Games ativos no banco: {[(g[0], g[1]) for g in all_games]}")
+        print(f"🔍 [Live Update DEBUG] Games ativos no banco:")
+        for g in all_games:
+            print(f"   - Game ID: {g[0]}, Message ID: {g[1]}, PUUID: {g[2]}")
         
+        # Busca PUUIDs dos participantes da partida
+        match_puuids = [p['puuid'] for p in match_data['info']['participants']]
+        print(f"🔍 [Live Update] PUUIDs da partida terminada: {match_puuids[:3]}...")
+        
+        # Tenta buscar por game_id primeiro
         cursor.execute('''
             SELECT DISTINCT message_id, channel_id, guild_id, lol_account_id
             FROM live_games_notified
@@ -1873,6 +1880,26 @@ async def update_live_game_result(game_id: str, match_data: Dict):
             LIMIT 1
         ''', (game_id,))
         live_msg = cursor.fetchone()
+        
+        # Se não encontrou por game_id, tenta buscar por PUUID
+        if not live_msg:
+            print(f"⚠️ [Live Update] Não encontrado por game_id {game_id}, tentando por PUUID...")
+            cursor.execute('''
+                SELECT DISTINCT message_id, channel_id, guild_id, lol_account_id, game_id
+                FROM live_games_notified
+                WHERE puuid IN ({})
+                  AND message_id IS NOT NULL
+                ORDER BY notified_at DESC
+                LIMIT 1
+            '''.format(','.join('?' * len(match_puuids))), match_puuids)
+            result = cursor.fetchone()
+            
+            if result:
+                live_msg = result[:4]
+                found_game_id = result[4]
+                print(f"✅ [Live Update] Encontrado por PUUID! Game ID no banco: {found_game_id}")
+                # Atualiza o game_id para usar na remoção posterior
+                game_id = found_game_id
         
         if not live_msg:
             print(f"⚠️ [Live Update] Nenhuma mensagem de live game encontrada para game_id: {game_id}")
@@ -2043,7 +2070,8 @@ async def update_live_game_result(game_id: str, match_data: Dict):
                 'gold_earned': p_gold,
                 'total_minions_killed': p.get('totalMinionsKilled', 0),
                 'neutral_minions_killed': p.get('neutralMinionsKilled', 0),
-                'vision_score': p_vision
+                'vision_score': p_vision,
+                'win': p.get('win', False)
             }
             
             mvp_score, _ = riot.calculate_mvp_score(player_stats, all_players_stats, p_role)

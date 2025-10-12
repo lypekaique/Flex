@@ -379,6 +379,12 @@ class RiotAPI:
             norm_vision * weights['vision']
         ) * 100
         
+        # Bônus para time vitorioso (+5 pontos no MVP score)
+        # Isso dá uma leve vantagem para o time que venceu
+        won = player_stats.get('win', False)
+        if won:
+            score = min(score + 5, 100)  # Adiciona 5 pontos, mas não passa de 100
+        
         # Calcula colocação geral (média ponderada das posições)
         overall_placement = (
             rank_kda * weights['kda'] +
@@ -488,7 +494,8 @@ class RiotAPI:
                     'gold_earned': p.get('goldEarned', 0),
                     'total_minions_killed': p.get('totalMinionsKilled', 0),
                     'neutral_minions_killed': p.get('neutralMinionsKilled', 0),
-                    'vision_score': p.get('visionScore', 0)
+                    'vision_score': p.get('visionScore', 0),
+                    'win': p.get('win', False)
                 }
                 
                 p_score, _ = self.calculate_mvp_score(p_stats, all_players_stats, p_role)
