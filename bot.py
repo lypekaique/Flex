@@ -517,7 +517,7 @@ async def metric_autocomplete(
 @bot.tree.command(name="media", description="📊 Veja estatísticas detalhadas de desempenho no Flex")
 @app_commands.describe(
     campeao="Filtrar por campeão específico (deixe vazio para ver todos)",
-    metrica="Métrica específica para analisar (carry, kda, dano, cs, visao, kp, gold)",
+    metrica="Métrica específica para analisar (mvp, kda, dano, cs, visao, kp, gold)",
     usuario="Ver estatísticas de outro jogador (mencione ou digite o nome)",
     conta="Número da conta (1, 2 ou 3). Deixe vazio para ver todas"
 )
@@ -667,7 +667,7 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
         role_emoji = role_emojis.get(most_played_role, '❓')
         
         # Constrói texto baseado na métrica selecionada
-        if metrica in ['carry', 'mvp'] or not metrica:
+        if metrica in ['mvp'] or not metrica:
             stats_text = f"""
 {emoji} **{rank}**
 📈 MVP Score Médio: **{int(avg_mvp)}/100**
@@ -1162,7 +1162,7 @@ async def tops_flex(interaction: discord.Interaction, quantidade: int = 10):
     quantidade = max(5, min(quantidade, 25))
     
     # Busca ranking
-    ranking = db.get_top_players_by_carry(limit=quantidade, min_games=5)
+    ranking = db.get_top_players_by_mvp(limit=quantidade, min_games=5)
     
     if not ranking:
         await interaction.followup.send(
@@ -1240,7 +1240,7 @@ async def flex_guide(interaction: discord.Interaction):
         description=(
             "**O bot definitivo de tracking para Ranked Flex!**\n\n"
             "Monitore suas partidas, acompanhe seu desempenho em tempo real,\n"
-            "e descubra seu verdadeiro nível de carry com nosso sistema avançado.\n"
+            "e descubra seu verdadeiro nível de performance com nosso sistema avançado.\n"
         ),
         color=discord.Color.from_rgb(200, 155, 255)
     )
