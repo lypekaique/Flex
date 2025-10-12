@@ -1976,7 +1976,7 @@ async def update_live_game_result(game_id: str, match_data: Dict):
             result_emoji = "❌"
             result_text = "DERROTA"
         
-        # Calcula estatísticas do jogador
+        # Calcula estatísticas do jogador principal
         kills = player_data['kills']
         deaths = player_data['deaths']
         assists = player_data['assists']
@@ -1989,7 +1989,7 @@ async def update_live_game_result(game_id: str, match_data: Dict):
         game_duration_min = game_duration // 60
         game_duration_sec = game_duration % 60
         
-        # Cria novo embed mantendo o formato original
+        # Cria novo embed com resultado
         new_embed = discord.Embed(
             title=f"{result_emoji} PARTIDA FINALIZADA - {result_text}!",
             description=original_embed.description,
@@ -1997,25 +1997,95 @@ async def update_live_game_result(game_id: str, match_data: Dict):
             timestamp=datetime.now()
         )
         
-        # Mantém os campos originais
-        for field in original_embed.fields:
-            new_embed.add_field(
-                name=field.name,
-                value=field.value,
-                inline=field.inline
-            )
-        
-        # Adiciona estatísticas finais do jogador
-        stats_text = (
-            f"📊 **KDA:** {kills}/{deaths}/{assists} ({kda_ratio:.2f})\n"
-            f"🗡️ **Dano:** {damage:,}\n"
-            f"🌾 **CS:** {cs}\n"
-            f"⏱️ **Duração:** {game_duration_min}min {game_duration_sec}s"
+        # Adiciona modo de jogo e duração
+        new_embed.add_field(
+            name="🎮 Modo de Jogo",
+            value=f"**{original_embed.fields[0].value if original_embed.fields else 'Ranked Flex'}**",
+            inline=True
         )
         
         new_embed.add_field(
-            name="📈 Estatísticas Finais",
+            name="⏱️ Duração",
+            value=f"**{game_duration_min}:{game_duration_sec:02d}**",
+            inline=True
+        )
+        
+        new_embed.add_field(
+            name="\u200b",  # Campo vazio para quebra de linha
+            value="\u200b",
+            inline=True
+        )
+        
+        # Adiciona estatísticas do jogador principal
+        stats_text = (
+            f"📊 **KDA:** {kills}/{deaths}/{assists} ({kda_ratio:.2f})\n"
+            f"🗡️ **Dano:** {damage:,}\n"
+            f"🌾 **CS:** {cs}"
+        )
+        
+        new_embed.add_field(
+            name=f"📈 Estatísticas - {player_data.get('championName', 'Campeão')}",
             value=stats_text,
+            inline=False
+        )
+        
+        # Separa jogadores por time e adiciona estatísticas de TODOS
+        team_100_players = [p for p in participants if p['teamId'] == 100]
+        team_200_players = [p for p in participants if p['teamId'] == 200]
+        
+        # Ordena por dano causado (maior primeiro)
+        team_100_players.sort(key=lambda p: p.get('totalDamageDealtToChampions', 0), reverse=True)
+        team_200_players.sort(key=lambda p: p.get('totalDamageDealtToChampions', 0), reverse=True)
+        
+        # Time Azul (100)
+        team_100_text = ""
+        team_100_won = team_100_players[0]['win'] if team_100_players else False
+        for p in team_100_players[:5]:
+            p_name = p.get('riotIdGameName', p.get('summonerName', 'Unknown'))
+            p_champion = p.get('championName', 'Unknown')
+            p_kills = p['kills']
+            p_deaths = p['deaths']
+            p_assists = p['assists']
+            p_cs = p.get('totalMinionsKilled', 0) + p.get('neutralMinionsKilled', 0)
+            p_damage = p.get('totalDamageDealtToChampions', 0)
+            p_kda = (p_kills + p_assists) / max(p_deaths, 1)
+            
+            # Destaca o jogador principal
+            if p['puuid'] == player_data['puuid']:
+                p_name = f"**{p_name}**"
+            
+            team_100_text += f"• {p_champion} - {p_name}\n"
+            team_100_text += f"  KDA: {p_kills}/{p_deaths}/{p_assists} ({p_kda:.1f}) | CS: {p_cs} | Dano: {p_damage:,}\n"
+        
+        new_embed.add_field(
+            name=f"🔵 Time Azul {'(Vitória)' if team_100_won else '(Derrota)'}",
+            value=team_100_text.strip() if team_100_text else "Nenhum dado disponível",
+            inline=False
+        )
+        
+        # Time Vermelho (200)
+        team_200_text = ""
+        team_200_won = team_200_players[0]['win'] if team_200_players else False
+        for p in team_200_players[:5]:
+            p_name = p.get('riotIdGameName', p.get('summonerName', 'Unknown'))
+            p_champion = p.get('championName', 'Unknown')
+            p_kills = p['kills']
+            p_deaths = p['deaths']
+            p_assists = p['assists']
+            p_cs = p.get('totalMinionsKilled', 0) + p.get('neutralMinionsKilled', 0)
+            p_damage = p.get('totalDamageDealtToChampions', 0)
+            p_kda = (p_kills + p_assists) / max(p_deaths, 1)
+            
+            # Destaca o jogador principal
+            if p['puuid'] == player_data['puuid']:
+                p_name = f"**{p_name}**"
+            
+            team_200_text += f"• {p_champion} - {p_name}\n"
+            team_200_text += f"  KDA: {p_kills}/{p_deaths}/{p_assists} ({p_kda:.1f}) | CS: {p_cs} | Dano: {p_damage:,}\n"
+        
+        new_embed.add_field(
+            name=f"🔴 Time Vermelho {'(Vitória)' if team_200_won else '(Derrota)'}",
+            value=team_200_text.strip() if team_200_text else "Nenhum dado disponível",
             inline=False
         )
         
@@ -2167,7 +2237,7 @@ async def send_live_game_notification(lol_account_id: int, live_info: Dict):
         
         discord_id, summoner_name, region = account_info
         
-        # Busca todos os servidores onde está o bot
+        # Busca APENAS o primeiro servidor válido onde está o bot (envia apenas UMA vez)
         for guild in bot.guilds:
             # Verifica se o usuário está nesse servidor
             member = guild.get_member(int(discord_id))
@@ -2795,8 +2865,8 @@ async def check_live_games_finished():
                                 else:
                                     print(f"✅ [Live Check] Partida terminada detectada: {match_id} (Carry: {stats['carry_score']}, MVP: {stats.get('mvp_score', 0)})")
                                 
-                                # Envia notificação individual
-                                await send_match_notification(account_id, stats)
+                                # NÃO envia notificação individual - apenas edita a mensagem de live game
+                                # await send_match_notification(account_id, stats)
                                 
                                 # Verifica performance apenas se não for remake
                                 if not stats.get('is_remake', False):
