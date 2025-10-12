@@ -2381,6 +2381,13 @@ async def send_live_game_notification(lol_account_id: int, live_info: Dict):
                 inline=True
             )
             
+            # Campo vazio para quebra de linha (força os times a ficarem lado a lado)
+            embed.add_field(
+                name="\u200b",
+                value="\u200b",
+                inline=True
+            )
+            
             # Composições de time
             team_100 = live_info.get('team_100', [])
             team_200 = live_info.get('team_200', [])
@@ -2534,6 +2541,13 @@ async def send_live_game_notification_grouped(game_id: str, players: list):
         embed.add_field(
             name="⏱️ Tempo de Jogo",
             value=f"**{game_time_display}**",
+            inline=True
+        )
+        
+        # Campo vazio para quebra de linha (força os times a ficarem lado a lado)
+        embed.add_field(
+            name="\u200b",
+            value="\u200b",
             inline=True
         )
         
