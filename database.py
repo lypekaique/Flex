@@ -528,10 +528,25 @@ class Database:
             SELECT id FROM live_games_notified
             WHERE lol_account_id = ? AND game_id = ?
         ''', (lol_account_id, game_id))
-        
+
         result = cursor.fetchone()
         conn.close()
         return result is not None
+
+    def get_live_game_notification_time(self, game_id: str) -> Optional[str]:
+        """Retorna o horário da última notificação para um game_id específico"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT notified_at FROM live_games_notified
+            WHERE game_id = ?
+            ORDER BY notified_at DESC
+            LIMIT 1
+        ''', (game_id,))
+
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else None
     
     def mark_live_game_notified(self, lol_account_id: int, game_id: str,
                                 puuid: str, summoner_name: str, champion_id: int, champion_name: str,
@@ -892,6 +907,9 @@ class Database:
             })
         
         conn.close()
+        print(f"📋 [DB] Encontradas {len(live_games)} live games ativas nas últimas {hours}h")
+        for lg in live_games:
+            print(f"   📋 {lg['game_id']} | {lg['summoner_name']} | {lg['champion_name']}")
         return live_games
     
     def remove_live_game_notification(self, lol_account_id: int, game_id: str) -> bool:
