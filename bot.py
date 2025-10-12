@@ -2438,11 +2438,6 @@ async def send_live_game_notification_grouped(game_id: str, players: list):
             
             players_text += f"{role_emoji} **{info['champion']}** - {m['member'].display_name}\n"
         
-        embed.add_field(
-            name="👥 Jogadores da Partida",
-            value=players_text.strip(),
-            inline=False
-        )
         
         # Composições de time
         team_100 = live_info.get('team_100', [])
