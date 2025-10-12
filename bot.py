@@ -1994,46 +1994,142 @@ async def update_live_game_result(game_id: str, match_data: Dict):
             inline=True
         )
         
-        # Adiciona estatísticas do jogador principal
-        stats_text = (
-            f"📊 **KDA:** {kills}/{deaths}/{assists} ({kda_ratio:.2f})\n"
-            f"🗡️ **Dano:** {damage:,}\n"
-            f"🌾 **CS:** {cs}"
+        # Calcula MVP score de todos os jogadores para determinar colocações únicas
+        all_players_with_scores = []
+        
+        from riot_api import RiotAPI
+        riot = RiotAPI()
+        
+        # Prepara dados globais para cálculo
+        all_kdas = [(pl['kills'] + pl['assists']) / max(pl['deaths'], 1) for pl in participants]
+        all_damages = [pl.get('totalDamageDealtToChampions', 0) for pl in participants]
+        all_golds = [pl.get('goldEarned', 0) for pl in participants]
+        all_cs_list = [pl.get('totalMinionsKilled', 0) + pl.get('neutralMinionsKilled', 0) for pl in participants]
+        all_visions = [pl.get('visionScore', 0) for pl in participants]
+        
+        team_1_kills = sum(pl['kills'] for pl in participants if pl['teamId'] == 100)
+        team_2_kills = sum(pl['kills'] for pl in participants if pl['teamId'] == 200)
+        all_kps = [
+            (pl['kills'] + pl['assists']) / max(team_1_kills if pl['teamId'] == 100 else team_2_kills, 1)
+            for pl in participants
+        ]
+        
+        all_players_stats = {
+            'all_kdas': all_kdas,
+            'all_kps': all_kps,
+            'all_damages': all_damages,
+            'all_golds': all_golds,
+            'all_cs': all_cs_list,
+            'all_visions': all_visions
+        }
+        
+        for p in participants:
+            p_team_id = p['teamId']
+            p_team_kills = sum(
+                pl['kills'] for pl in participants if pl['teamId'] == p_team_id
+            )
+            p_kda = (p['kills'] + p['assists']) / max(p['deaths'], 1)
+            p_kp = (p['kills'] + p['assists']) / max(p_team_kills, 1)
+            p_damage = p.get('totalDamageDealtToChampions', 0)
+            p_gold = p.get('goldEarned', 0)
+            p_cs = p.get('totalMinionsKilled', 0) + p.get('neutralMinionsKilled', 0)
+            p_vision = p.get('visionScore', 0)
+            p_role = p.get('teamPosition', '') or p.get('individualPosition', 'MIDDLE')
+            
+            player_stats = {
+                'kda': p_kda,
+                'kill_participation': p_kp,
+                'total_damage_to_champions': p_damage,
+                'gold_earned': p_gold,
+                'total_minions_killed': p.get('totalMinionsKilled', 0),
+                'neutral_minions_killed': p.get('neutralMinionsKilled', 0),
+                'vision_score': p_vision
+            }
+            
+            mvp_score, _ = riot.calculate_mvp_score(player_stats, all_players_stats, p_role)
+            
+            all_players_with_scores.append({
+                'player': p,
+                'mvp_score': mvp_score,
+                'kda': p_kda,
+                'kp': p_kp * 100,
+                'cs': p_cs,
+                'damage': p_damage,
+                'puuid': p['puuid']
+            })
+        
+        # Ordena por MVP score para determinar colocações únicas
+        # Adiciona índice para garantir desempate total (colocações únicas de 1 a 10)
+        for idx, player_info in enumerate(all_players_with_scores):
+            player_info['original_index'] = idx
+        
+        # Ordena: 1º por MVP score, 2º por dano, 3º por índice original (garante ordem única)
+        all_players_with_scores.sort(key=lambda x: (-x['mvp_score'], -x['damage'], x['original_index']))
+        
+        # Atribui placement único baseado na ordem (sempre 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+        for i, player_info in enumerate(all_players_with_scores, 1):
+            player_info['placement'] = i
+        
+        # MVP da partida (1º lugar)
+        mvp = all_players_with_scores[0]
+        mvp_player = mvp['player']
+        mvp_name = mvp_player.get('riotIdGameName', mvp_player.get('summonerName', 'Unknown'))
+        mvp_champion = mvp_player.get('championName', 'Unknown')
+        mvp_team = "🔵 Time Azul" if mvp_player['teamId'] == 100 else "🔴 Time Vermelho"
+        
+        # Adiciona estatísticas do MVP
+        mvp_stats_text = (
+            f"👑 **{mvp_name}** - {mvp_champion} ({mvp_team})\n"
+            f"📊 **KDA:** {mvp_player['kills']}/{mvp_player['deaths']}/{mvp_player['assists']} ({mvp['kda']:.2f})\n"
+            f"🎯 **MVP Score:** {mvp['mvp_score']}/100 **(1º lugar)**\n"
+            f"🗡️ **Dano:** {mvp['damage']:,}\n"
+            f"🌾 **CS:** {mvp['cs']} | 👁️ **Visão:** {mvp_player.get('visionScore', 0)}"
         )
         
         new_embed.add_field(
-            name=f"📈 Estatísticas - {player_data.get('championName', 'Campeão')}",
-            value=stats_text,
+            name="🏆 MVP DA PARTIDA",
+            value=mvp_stats_text,
             inline=False
         )
         
-        # Separa jogadores por time e adiciona estatísticas de TODOS
-        team_100_players = [p for p in participants if p['teamId'] == 100]
-        team_200_players = [p for p in participants if p['teamId'] == 200]
+        # Separa jogadores por time
+        team_100_players = [p for p in all_players_with_scores if p['player']['teamId'] == 100]
+        team_200_players = [p for p in all_players_with_scores if p['player']['teamId'] == 200]
         
-        # Ordena por dano causado (maior primeiro)
-        team_100_players.sort(key=lambda p: p.get('totalDamageDealtToChampions', 0), reverse=True)
-        team_200_players.sort(key=lambda p: p.get('totalDamageDealtToChampions', 0), reverse=True)
+        # Ordena cada time por dano (como antes)
+        team_100_players.sort(key=lambda p: p['damage'], reverse=True)
+        team_200_players.sort(key=lambda p: p['damage'], reverse=True)
         
         # Time Azul (100)
         team_100_text = ""
-        team_100_won = team_100_players[0]['win'] if team_100_players else False
-        for p in team_100_players[:5]:
+        team_100_won = team_100_players[0]['player']['win'] if team_100_players else False
+        for player_info in team_100_players:
+            p = player_info['player']
             p_name = p.get('riotIdGameName', p.get('summonerName', 'Unknown'))
             p_champion = p.get('championName', 'Unknown')
-            p_kills = p['kills']
-            p_deaths = p['deaths']
-            p_assists = p['assists']
-            p_cs = p.get('totalMinionsKilled', 0) + p.get('neutralMinionsKilled', 0)
-            p_damage = p.get('totalDamageDealtToChampions', 0)
-            p_kda = (p_kills + p_assists) / max(p_deaths, 1)
+            placement = player_info['placement']
             
-            # Destaca o jogador principal
+            # Emoji para colocação
+            if placement == 1:
+                placement_emoji = "👑"
+            elif placement == 2:
+                placement_emoji = "🥇"
+            elif placement == 3:
+                placement_emoji = "🥈"
+            elif placement <= 5:
+                placement_emoji = "🥉"
+            else:
+                placement_emoji = "📊"
+            
+            # Destaca o jogador que estava sendo seguido
             if p['puuid'] == player_data['puuid']:
                 p_name = f"**{p_name}**"
             
-            team_100_text += f"• {p_champion} - {p_name}\n"
-            team_100_text += f"  KDA: {p_kills}/{p_deaths}/{p_assists} ({p_kda:.1f}) | CS: {p_cs} | Dano: {p_damage:,}\n"
+            team_100_text += (
+                f"{placement_emoji} **{placement}º** {p_champion} - {p_name}\n"
+                f"   KDA: {p['kills']}/{p['deaths']}/{p['assists']} ({player_info['kda']:.1f}) | "
+                f"MVP: {player_info['mvp_score']} | Dano: {player_info['damage']:,}\n"
+            )
         
         new_embed.add_field(
             name=f"🔵 Time Azul {'(Vitória)' if team_100_won else '(Derrota)'}",
@@ -2043,23 +2139,34 @@ async def update_live_game_result(game_id: str, match_data: Dict):
         
         # Time Vermelho (200)
         team_200_text = ""
-        team_200_won = team_200_players[0]['win'] if team_200_players else False
-        for p in team_200_players[:5]:
+        team_200_won = team_200_players[0]['player']['win'] if team_200_players else False
+        for player_info in team_200_players:
+            p = player_info['player']
             p_name = p.get('riotIdGameName', p.get('summonerName', 'Unknown'))
             p_champion = p.get('championName', 'Unknown')
-            p_kills = p['kills']
-            p_deaths = p['deaths']
-            p_assists = p['assists']
-            p_cs = p.get('totalMinionsKilled', 0) + p.get('neutralMinionsKilled', 0)
-            p_damage = p.get('totalDamageDealtToChampions', 0)
-            p_kda = (p_kills + p_assists) / max(p_deaths, 1)
+            placement = player_info['placement']
             
-            # Destaca o jogador principal
+            # Emoji para colocação
+            if placement == 1:
+                placement_emoji = "👑"
+            elif placement == 2:
+                placement_emoji = "🥇"
+            elif placement == 3:
+                placement_emoji = "🥈"
+            elif placement <= 5:
+                placement_emoji = "🥉"
+            else:
+                placement_emoji = "📊"
+            
+            # Destaca o jogador que estava sendo seguido
             if p['puuid'] == player_data['puuid']:
                 p_name = f"**{p_name}**"
             
-            team_200_text += f"• {p_champion} - {p_name}\n"
-            team_200_text += f"  KDA: {p_kills}/{p_deaths}/{p_assists} ({p_kda:.1f}) | CS: {p_cs} | Dano: {p_damage:,}\n"
+            team_200_text += (
+                f"{placement_emoji} **{placement}º** {p_champion} - {p_name}\n"
+                f"   KDA: {p['kills']}/{p['deaths']}/{p['assists']} ({player_info['kda']:.1f}) | "
+                f"MVP: {player_info['mvp_score']} | Dano: {player_info['damage']:,}\n"
+            )
         
         new_embed.add_field(
             name=f"🔴 Time Vermelho {'(Vitória)' if team_200_won else '(Derrota)'}",

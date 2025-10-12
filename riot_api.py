@@ -389,7 +389,9 @@ class RiotAPI:
             rank_vision * weights['vision']
         )
         
-        return (int(min(max(score, 0), 100)), int(round(overall_placement)))
+        # Retorna score e placement (placement será corrigido depois com base em todos os scores)
+        # Por enquanto retorna a média ponderada sem arredondar para manter precisão
+        return (int(min(max(score, 0), 100)), overall_placement)
     
     def extract_player_stats(self, match_data: Dict, puuid: str) -> Optional[Dict]:
         """Extrai as estatísticas do jogador específico de uma partida"""
@@ -466,8 +468,40 @@ class RiotAPI:
                 'vision_score': participant.get('visionScore', 0)
             }
             
-            # Calcula o MVP score (retorna tupla: score, placement) passando a role
-            mvp_score, mvp_placement = self.calculate_mvp_score(player_mvp_stats, all_players_stats, role)
+            # Calcula o MVP score inicial (retorna tupla: score, placement temporário)
+            mvp_score, _ = self.calculate_mvp_score(player_mvp_stats, all_players_stats, role)
+            
+            # Calcula scores de TODOS os jogadores para determinar placement único
+            all_player_scores = []
+            for i, p in enumerate(match_data['info']['participants']):
+                p_role = p.get('teamPosition', '') or p.get('individualPosition', 'MIDDLE')
+                p_team_id = p['teamId']
+                p_team_kills = sum(
+                    pl['kills'] for pl in match_data['info']['participants']
+                    if pl['teamId'] == p_team_id
+                )
+                
+                p_stats = {
+                    'kda': (p['kills'] + p['assists']) / max(p['deaths'], 1),
+                    'kill_participation': (p['kills'] + p['assists']) / max(p_team_kills, 1),
+                    'total_damage_to_champions': p.get('totalDamageDealtToChampions', 0),
+                    'gold_earned': p.get('goldEarned', 0),
+                    'total_minions_killed': p.get('totalMinionsKilled', 0),
+                    'neutral_minions_killed': p.get('neutralMinionsKilled', 0),
+                    'vision_score': p.get('visionScore', 0)
+                }
+                
+                p_score, _ = self.calculate_mvp_score(p_stats, all_players_stats, p_role)
+                all_player_scores.append((p_score, i, p['puuid']))
+            
+            # Ordena por score (descendente), depois por índice (para desempate consistente)
+            all_player_scores.sort(key=lambda x: (-x[0], x[1]))
+            
+            # Encontra o placement do jogador atual
+            mvp_placement = next(
+                i + 1 for i, (score, idx, p_puuid) in enumerate(all_player_scores)
+                if p_puuid == puuid
+            )
             
             # Mapeamento de roles para nomes amigáveis
             role_names = {
