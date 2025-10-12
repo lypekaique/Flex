@@ -2140,7 +2140,7 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
             # Cria embed de "vergonha"
             embed = discord.Embed(
                 title="⚠️ ALERTA DE PERFORMANCE BAIXA",
-                description=f"{member.mention} está com dificuldades em **{champion_name}**!",
+                description=f"{member.mention} está Proibido de jogar **{champion_name}**!",
                 color=discord.Color.red()
             )
             
@@ -2171,13 +2171,9 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
             )
             
             embed.add_field(
-                name="💡 Sugestão",
+                name="😄 Regra",
                 value=(
-                    "Considere:\n"
-                    "• Trocar de campeão temporariamente\n"
-                    "• Rever builds e runas\n"
-                    "• Assistir replays das partidas\n"
-                    "• Praticar em Normal antes de voltar ao Ranked"
+                    "• Está proibido de jogar por 2 dias com esse boneco"
                 ),
                 inline=False
             )
