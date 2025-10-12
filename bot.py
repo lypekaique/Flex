@@ -139,19 +139,19 @@ class FlexGuideView(discord.ui.View):
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
     
-    @discord.ui.button(label="🏆 Sistema de Carry Score", style=discord.ButtonStyle.secondary, custom_id="flex_guide:score")
+    @discord.ui.button(label="🏆 Sistema de MVP Score", style=discord.ButtonStyle.secondary, custom_id="flex_guide:score")
     async def score_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = discord.Embed(
-            title="🏆 Sistema de Carry Score",
+            title="🏆 Sistema de MVP Score",
             description="Entenda como funciona o sistema de pontuação:",
             color=discord.Color.gold()
         )
         embed.add_field(
-            name="📈 O que é Carry Score?",
+            name="📈 O que é MVP Score?",
             value=(
-                "É uma pontuação de **0 a 100** que mede o quanto você carregou seu time.\n"
-                "Sistema **PUNITIVO** - apenas performances excepcionais recebem scores altos!\n"
-                "⚠️ **Mais exigente**: você precisa ser consistente para ter boas notas!"
+                "É uma pontuação de **0 a 100** que compara sua performance com **TODOS os 10 jogadores** da partida.\n"
+                "Sistema estilo **OP.GG/U.GG** - baseado na sua posição no ranking da partida!\n"
+                "⚠️ **Justo e balanceado**: pesos ajustados por role (suporte foca em visão/KP, carry em dano/gold)"
             ),
             inline=False
         )
@@ -218,7 +218,7 @@ class FlexGuideView(discord.ui.View):
                 "🟢 Quando você **ganha** → Atualiza para VERDE\n"
                 "🔴 Quando você **perde** → Atualiza para VERMELHO\n\n"
                 "A mesma mensagem é atualizada do início ao fim!\n"
-                "Mostra Carry Score, KDA e links para trackers."
+                "Mostra MVP Score, KDA e links para trackers."
             ),
             inline=False
         )
@@ -498,7 +498,7 @@ async def metric_autocomplete(
 ) -> list[app_commands.Choice[str]]:
     """Auto-complete para métricas disponíveis"""
     metrics = [
-        ('🏆 Carry Score', 'carry'),
+        ('🏆 MVP Score', 'mvp'),
         ('⚔️ KDA', 'kda'),
         ('🗡️ Dano aos Campeões', 'dano'),
         ('🌾 CS (Farm)', 'cs'),
@@ -567,7 +567,7 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
         title_parts.append(f"- {campeao}")
     if metrica and metrica != 'todas':
         metric_names = {
-            'carry': 'Carry Score',
+            'mvp': 'MVP Score',
             'kda': 'KDA',
             'dano': 'Dano',
             'cs': 'CS',
@@ -608,7 +608,7 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
         
         # Calcula estatísticas
         total_matches = len(matches)
-        avg_carry = sum(m['carry_score'] for m in matches) / total_matches
+        avg_mvp = sum(m.get('mvp_score', 0) for m in matches) / total_matches
         wins = sum(1 for m in matches if m['win'])
         win_rate = (wins / total_matches) * 100
         
@@ -633,23 +633,23 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
             role_count[role] = role_count.get(role, 0) + 1
         most_played_role = max(role_count, key=role_count.get) if role_count else "Unknown"
         
-        # Determina emoji baseado no carry score (sistema punitivo)
-        if avg_carry >= 95:
+        # Determina emoji baseado no MVP score
+        if avg_mvp >= 90:
             emoji = "🏆"
             rank = "S+"
-        elif avg_carry >= 80:
+        elif avg_mvp >= 75:
             emoji = "⭐"
             rank = "S"
-        elif avg_carry >= 70:
+        elif avg_mvp >= 60:
             emoji = "💎"
             rank = "A"
-        elif avg_carry >= 60:
+        elif avg_mvp >= 50:
             emoji = "🥈"
             rank = "B"
-        elif avg_carry >= 50:
+        elif avg_mvp >= 40:
             emoji = "📊"
             rank = "C"
-        elif avg_carry >= 20:
+        elif avg_mvp >= 25:
             emoji = "📉"
             rank = "D"
         else:
@@ -667,10 +667,10 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
         role_emoji = role_emojis.get(most_played_role, '❓')
         
         # Constrói texto baseado na métrica selecionada
-        if metrica == 'carry' or not metrica:
+        if metrica in ['carry', 'mvp'] or not metrica:
             stats_text = f"""
 {emoji} **{rank}**
-📈 Carry Score Médio: **{int(avg_carry)}/100**
+📈 MVP Score Médio: **{int(avg_mvp)}/100**
 🎮 Partidas: **{total_matches}** • ✅ WR: **{win_rate:.1f}%**
 ⚔️ KDA: **{avg_kda_calc:.2f}** ({avg_kills:.1f}/{avg_deaths:.1f}/{avg_assists:.1f})
 🎯 Kill Participation: **{avg_kp:.1f}%**
@@ -683,7 +683,7 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
 💀 K/D/A: **{avg_kills:.1f}** / **{avg_deaths:.1f}** / **{avg_assists:.1f}**
 🎯 Kill Participation: **{avg_kp:.1f}%**
 🎮 Partidas: **{total_matches}** • ✅ WR: **{win_rate:.1f}%**
-{emoji} Carry Score: **{int(avg_carry)}/100**
+{emoji} MVP Score: **{int(avg_mvp)}/100**
             """
         elif metrica == 'dano':
             stats_text = f"""
@@ -692,7 +692,7 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
 📊 Dano por Partida: **{int(avg_dano):,}**
 🎮 Partidas: **{total_matches}** • ✅ WR: **{win_rate:.1f}%**
 ⚔️ KDA: **{avg_kda_calc:.2f}**
-{emoji} Carry Score: **{int(avg_carry)}/100**
+{emoji} MVP Score: **{int(avg_mvp)}/100**
             """
         elif metrica == 'cs':
             avg_cspm = avg_cs / avg_game_duration_min if avg_game_duration_min > 0 else 0
@@ -702,7 +702,7 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
 ⏱️ CS por Minuto: **{avg_cspm:.1f}**
 💰 Gold Médio: **{int(avg_gold):,}**
 🎮 Partidas: **{total_matches}** • ✅ WR: **{win_rate:.1f}%**
-{emoji} Carry Score: **{int(avg_carry)}/100**
+{emoji} MVP Score: **{int(avg_mvp)}/100**
             """
         elif metrica == 'visao':
             avg_vision_pm = avg_visao / avg_game_duration_min if avg_game_duration_min > 0 else 0
@@ -712,7 +712,7 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
 ⏱️ Vision Score por Minuto: **{avg_vision_pm:.2f}**
 🎮 Partidas: **{total_matches}** • ✅ WR: **{win_rate:.1f}%**
 ⚔️ KDA: **{avg_kda_calc:.2f}**
-{emoji} Carry Score: **{int(avg_carry)}/100**
+{emoji} MVP Score: **{int(avg_mvp)}/100**
             """
         elif metrica == 'kp':
             stats_text = f"""
@@ -721,7 +721,7 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
 💀 Kills: **{avg_kills:.1f}** • Assists: **{avg_assists:.1f}**
 🎮 Partidas: **{total_matches}** • ✅ WR: **{win_rate:.1f}%**
 ⚔️ KDA: **{avg_kda_calc:.2f}**
-{emoji} Carry Score: **{int(avg_carry)}/100**
+{emoji} MVP Score: **{int(avg_mvp)}/100**
             """
         elif metrica == 'gold':
             stats_text = f"""
@@ -730,12 +730,12 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
 ⏱️ Gold por Minuto (GPM): **{int(avg_gpm)}**
 🌾 CS Médio: **{int(avg_cs)}**
 🎮 Partidas: **{total_matches}** • ✅ WR: **{win_rate:.1f}%**
-{emoji} Carry Score: **{int(avg_carry)}/100**
+{emoji} MVP Score: **{int(avg_mvp)}/100**
             """
         else:  # metrica == 'todas'
             avg_cspm = avg_cs / avg_game_duration_min if avg_game_duration_min > 0 else 0
             stats_text = f"""
-{emoji} **{rank}** - Carry Score: **{int(avg_carry)}/100**
+{emoji} **{rank}** - MVP Score: **{int(avg_mvp)}/100**
 🎮 **{total_matches}** partidas • ✅ **{win_rate:.1f}%** WR
 
 **⚔️ Combate:**
@@ -847,27 +847,28 @@ _Esta partida não conta para estatísticas_
             result = "✅ Vitória" if match['win'] else "❌ Derrota"
             kda_ratio = f"{match['kills']}/{match['deaths']}/{match['assists']}"
             
-            # Emoji do carry score (sistema punitivo)
-            if match['carry_score'] >= 95:
-                carry_emoji = "🏆"
+            # Emoji do MVP score
+            mvp_score = match.get('mvp_score', 0)
+            if mvp_score >= 90:
+                mvp_emoji = "🏆"
                 rank_text = "S+"
-            elif match['carry_score'] >= 80:
-                carry_emoji = "⭐"
+            elif mvp_score >= 75:
+                mvp_emoji = "⭐"
                 rank_text = "S"
-            elif match['carry_score'] >= 70:
-                carry_emoji = "💎"
+            elif mvp_score >= 60:
+                mvp_emoji = "💎"
                 rank_text = "A"
-            elif match['carry_score'] >= 60:
-                carry_emoji = "🥈"
+            elif mvp_score >= 50:
+                mvp_emoji = "🥈"
                 rank_text = "B"
-            elif match['carry_score'] >= 50:
-                carry_emoji = "📊"
+            elif mvp_score >= 40:
+                mvp_emoji = "📊"
                 rank_text = "C"
-            elif match['carry_score'] >= 20:
-                carry_emoji = "📉"
+            elif mvp_score >= 25:
+                mvp_emoji = "📉"
                 rank_text = "D"
             else:
-                carry_emoji = "💀"
+                mvp_emoji = "💀"
                 rank_text = "F"
             
          
@@ -883,7 +884,7 @@ _Esta partida não conta para estatísticas_
             match_info = f"""
 **{match['champion_name']}** {role_emoji} {match['role']} • {result}
 ━━━━━━━━━━━━━━━━━━━━━
-{carry_emoji} **Carry Score: {match['carry_score']}/100** ({rank_text})
+{mvp_emoji} **MVP Score: {mvp_score}/100** ({rank_text})
 ⚔️ KDA: **{kda_ratio}** ({match['kda']:.2f})
 🎯 Kill Participation: **{match['kill_participation']:.0f}%**
 🗡️ Dano: **{match['damage_dealt']:,}**
@@ -908,7 +909,7 @@ async def config_type_autocomplete(
     """Auto-complete para tipos de configuração"""
     types = [
         ('🔔 Alertas - Notificações de performance', 'alertas'),
-        ('📊 Score - Avaliações individuais (Carry + MVP)', 'score'),
+        ('📊 Score - Avaliações individuais (MVP)', 'score'),
         ('💬 Comandos - Canal onde usuários podem usar comandos', 'comandos'),
         ('🔴 Live - Notificações de partidas ao vivo', 'live'),
     ]
@@ -971,7 +972,7 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
             if config['match_channel_id']:
                 embed.add_field(
                     name="📊 Canal de Score",
-                    value=f"<#{config['match_channel_id']}>\nNotificações individuais com Carry Score + MVP Score de cada jogador",
+                    value=f"<#{config['match_channel_id']}>\nNotificações individuais com MVP Score de cada jogador",
                     inline=False
                 )
             else:
@@ -1053,7 +1054,7 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
                 value=(
                     "**Quando a partida termina:**\n"
                     "• ✅/❌ **Resultado** (Vitória/Derrota)\n"
-                    "• 📊 **Carry Score** (avaliação completa)\n"
+                    "• 📊 **MVP Score** (comparado com os 10 jogadores)\n"
                     "• 👑 **MVP Score** (colocação entre 10 jogadores)\n"
                     "• ⚔️ **KDA**, 🗡️ **Dano**, 🌾 **CS**, 👁️ **Vision**\n"
                     "• 🏆 **Campeão** e **Role**\n\n"
@@ -1104,7 +1105,7 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
                     "   - Qual time venceu (Azul/Vermelho)\n"
                     "   - KDA de todos os 10 jogadores\n"
                     "   - CS e Dano de todos\n\n"
-                    "**Notificações individuais** (com Carry/MVP Score) são enviadas\n"
+                    "**Notificações individuais** (com MVP Score) são enviadas\n"git a
                     "no **canal de score** configurado.\n\n"
                     "💡 **Recomendação:** Configure ambos os canais:\n"
                     "• `live` - Para acompanhar partidas em grupo\n"
@@ -1190,7 +1191,6 @@ async def tops_flex(interaction: discord.Interaction, quantidade: int = 10):
         
         # Determina rank baseado no MVP score
         avg_mvp = player['avg_mvp']
-        avg_carry = player['avg_carry']
         
         if avg_mvp >= 90:
             rank_emoji = "👑"
@@ -1214,7 +1214,7 @@ async def tops_flex(interaction: discord.Interaction, quantidade: int = 10):
         
         player_info = f"""
 {position_emoji} {player_name} • {rank_emoji}
-👑 **MVP:** {int(avg_mvp)}/100 | 📊 **Carry:** {int(avg_carry)}/100
+👑 **MVP Score:** {int(avg_mvp)}/100
 🎮 Jogos: **{player['total_games']}** | ✅ WR: **{player['win_rate']:.1f}%**
 ⚔️ KDA: **{player['avg_kda']:.2f}** | 🎯 KP: **{player['avg_kp']:.1f}%**
         """
@@ -1273,7 +1273,7 @@ async def flex_guide(interaction: discord.Interaction):
     )
     
     embed.add_field(
-        name="🏆 **SISTEMA DE CARRY SCORE (PUNITIVO)**",
+        name="🏆 **SISTEMA DE MVP SCORE**",
         value=(
             "**Pontuação de 0 a 100 - Sistema EXIGENTE:**\n"
             "⚔️ **Top/Mid**: Foco em KDA\n"
@@ -1358,7 +1358,7 @@ async def reset_media(
                 "**Isso inclui:**\n"
                 "• Todas as partidas de todos os usuários\n"
                 "• Todo o histórico de estatísticas\n"
-                "• Todos os carry scores registrados\n\n"
+                "• Todos os MVP scores registrados\n\n"
                 "**As contas vinculadas NÃO serão removidas.**\n\n"
                 "⚠️ **ESTA AÇÃO NÃO PODE SER DESFEITA!**"
             ),
@@ -1596,7 +1596,7 @@ async def purge_media(interaction: discord.Interaction):
             "**O que será resetado:**\n"
             "✅ Todas as partidas de todos os usuários\n"
             "✅ Todo o histórico de estatísticas e médias\n"
-            "✅ Todos os carry scores registrados\n"
+            "✅ Todos os MVP scores registrados\n"
             "✅ Todo o ranking\n\n"
             "**O que NÃO será afetado:**\n"
             "❌ Contas vinculadas (permanecem)\n"
@@ -1711,29 +1711,6 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
                 result_emoji = "❌"
                 result_text = "DERROTA"
             
-            # Determina emoji e rank do carry score (sistema punitivo)
-            carry_score = stats['carry_score']
-            if carry_score >= 95:
-                rank_emoji = "🏆"
-                rank_text = "S+"
-            elif carry_score >= 80:
-                rank_emoji = "⭐"
-                rank_text = "S"
-            elif carry_score >= 70:
-                rank_emoji = "💎"
-                rank_text = "A"
-            elif carry_score >= 60:
-                rank_emoji = "🥈"
-                rank_text = "B"
-            elif carry_score >= 50:
-                rank_emoji = "📊"
-                rank_text = "C"
-            elif carry_score >= 20:
-                rank_emoji = "📉"
-                rank_text = "D"
-            else:
-                rank_emoji = "💀"
-                rank_text = "F"
             
             # Emoji por role
             role_emojis = {
@@ -1826,16 +1803,10 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
                 placement_text = f"{mvp_placement}º"
                 
                 embed.add_field(
-                    name="🎯 Performance Scores",
+                    name="🎯 MVP Score",
                     value=(
-                        f"**📊 CARRY SCORE** _(Avaliação Completa)_\n"
-                        f"{rank_emoji} **{carry_score}/100** - Rank **{rank_text}**\n"
-                        f"```\n"
-                        f"{'█' * int(carry_score/5)}{'░' * (20 - int(carry_score/5))}\n"
-                        f"```\n"
-                        f"\n"
                         f"**👑 MVP SCORE** _(vs 10 Jogadores)_\n"
-                        f"{mvp_emoji} **{mvp_score} ({placement_text})**\n"
+                        f"{mvp_emoji} **{mvp_score}/100 ({placement_text})**\n"
                         f"```\n"
                         f"{'█' * int(mvp_score/5)}{'░' * (20 - int(mvp_score/5))}\n"
                         f"```"
@@ -1871,7 +1842,7 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
                 if is_remake:
                     print(f"⚠️ Partida enviada (REMAKE): {summoner_name} - {stats['champion_name']}")
                 else:
-                    print(f"🎮 Partida enviada: {summoner_name} - {stats['champion_name']} (Carry: {carry_score}, MVP: {mvp_score})")
+                    print(f"🎮 Partida enviada: {summoner_name} - {stats['champion_name']} (MVP: {mvp_score}/{mvp_placement}º)")
             except Exception as e:
                 print(f"Erro ao enviar partida: {e}")
     
@@ -2158,7 +2129,6 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
             
             # Calcula média dos MVP Scores
             avg_mvp_score = sum(m.get('mvp_score', 0) for m in matches) / 3
-            avg_carry_score = sum(m['carry_score'] for m in matches) / 3
             
             # Cria embed de "vergonha"
             embed = discord.Embed(
@@ -2172,7 +2142,6 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
                 value=(
                     f"🎮 **3 últimas partidas** com {champion_name}\n"
                     f"👑 MVP Score médio: **{int(avg_mvp_score)}/100**\n"
-                    f"📊 Carry Score médio: **{int(avg_carry_score)}/100**\n"
                     f"⚠️ MVP Score abaixo de 45 nas 3 partidas!"
                 ),
                 inline=False
@@ -2185,7 +2154,6 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
                 mvp_placement = match.get('mvp_placement', 0)
                 matches_text += (
                     f"{result_emoji} MVP: **{match.get('mvp_score', 0)} ({mvp_placement}º)** | "
-                    f"Carry: **{match['carry_score']}** | "
                     f"{match['kills']}/{match['deaths']}/{match['assists']}\n"
                 )
             
@@ -2212,7 +2180,7 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
             # Envia notificação
             try:
                 await channel.send(embed=embed)
-                print(f"⚠️ Notificação enviada: {summoner_name} com {champion_name} (MVP: {avg_mvp_score:.2f}, Carry: {avg_carry_score:.2f})")
+                print(f"⚠️ Notificação enviada: {summoner_name} com {champion_name} (MVP médio: {avg_mvp_score:.2f})")
             except Exception as e:
                 print(f"Erro ao enviar notificação: {e}")
     
@@ -2701,7 +2669,7 @@ async def check_new_matches():
                             if stats.get('is_remake', False):
                                 print(f"⚠️ [Partidas] Remake registrado: {match_id} ({stats['game_duration']}s)")
                             else:
-                                print(f"✅ [Partidas] Nova partida registrada: {match_id} (Score: {stats['carry_score']})")
+                                print(f"✅ [Partidas] Nova partida registrada: {match_id} (MVP: {stats.get('mvp_score', 0)})")
                             
                             # Envia notificação de partida terminada (inclusive para remakes agora)
                             await send_match_notification(account_id, stats)
@@ -2849,7 +2817,7 @@ async def check_live_games_finished():
                             stats = riot_api.extract_player_stats(match_data, puuid)
 
                             if stats:
-                                print(f"📊 [Live Check] Estatísticas extraídas para {puuid}: {stats['champion_name']} - {stats['carry_score']} carry, {stats['mvp_score']} MVP")
+                                print(f"📊 [Live Check] Estatísticas extraídas para {puuid}: {stats['champion_name']} - MVP: {stats['mvp_score']}")
                                 # Atualiza o resultado no live game (apenas uma vez por partida)
                                 if match_id not in processed_matches:
                                     print(f"🔄 [Live Check] Atualizando mensagem de live game para {match_id}")
@@ -2863,7 +2831,7 @@ async def check_live_games_finished():
                                 if stats.get('is_remake', False):
                                     print(f"⚠️ [Live Check] Remake detectado: {match_id} ({stats['game_duration']}s)")
                                 else:
-                                    print(f"✅ [Live Check] Partida terminada detectada: {match_id} (Carry: {stats['carry_score']}, MVP: {stats.get('mvp_score', 0)})")
+                                    print(f"✅ [Live Check] Partida terminada detectada: {match_id} (MVP: {stats.get('mvp_score', 0)})")
                                 
                                 # NÃO envia notificação individual - apenas edita a mensagem de live game
                                 # await send_match_notification(account_id, stats)

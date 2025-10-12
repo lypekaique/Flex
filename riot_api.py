@@ -282,268 +282,11 @@ class RiotAPI:
         
         return normalized
     
-    def calculate_carry_score(self, stats: Dict, team_stats: Dict) -> float:
-        """
-        Calcula o nível de carry do jogador baseado em métricas avançadas.
-        Sistema RIGOROSO - 100 é reservado APENAS para performances EXCEPCIONAIS.
-        Performances medianas recebem scores medianos (50-70),
-        performances boas ficam em 70-85, performances EXCEPCIONAIS alcançam 85-100.
-        
-        Sistema de pesos por role (PRIORIZANDO KDA):
-        - Top/Mid/ADC: KDA + DANO/GOLD - você precisa performar EXCEPCIONALMENTE
-        - Jungle: KDA + KP + Objetivos + Utility - estar presente, pegar objetivos e dar peel/tank
-        - Support: KDA + Visão + Utility - sobreviver, wardear, dar CC/Heal/Shield/Tank
-        
-        Retorna um score de 0 a 100
-        """
-        # Extrai role
-        role = stats.get('teamPosition', 'MIDDLE')
-        if role == '': 
-            role = stats.get('individualPosition', 'MIDDLE')
-        
-        # Dados do jogador
-        kills = stats.get('kills', 0)
-        deaths = stats.get('deaths', 0)
-        assists = stats.get('assists', 0)
-        damage_dealt = stats.get('totalDamageDealtToChampions', 0)
-        gold_earned = max(stats.get('goldEarned', 1), 1)
-        cs = stats.get('totalMinionsKilled', 0) + stats.get('neutralMinionsKilled', 0)
-        vision_score = stats.get('visionScore', 0)
-        # Trata gameDuration que pode estar ausente ou em formatos diferentes
-        game_duration_raw = stats.get('gameDuration', stats.get('game_duration', 1800))
-        game_duration = max(game_duration_raw / 60, 1) if game_duration_raw else 30  # em minutos
-        win = stats.get('win', False)
-        
-        # Objetivos
-        turret_kills = stats.get('turretKills', 0)
-        damage_to_objectives = stats.get('damageDealtToObjectives', 0)
-        damage_to_buildings = stats.get('damageDealtToBuildings', 0)
-        
-        # Visão
-        wards_placed = stats.get('wardsPlaced', 0)
-        wards_killed = stats.get('wardsKilled', 0)
-        
-        # Utility/CC
-        time_ccing = stats.get('timeCCingOthers', 0)
-        total_heal = stats.get('totalHealsOnTeammates', 0)
-        total_shields = stats.get('totalDamageShieldedOnTeammates', 0)
-        damage_taken = stats.get('totalDamageTaken', 0)
-        
-        # Dados do time
-        team_kills = max(team_stats.get('team_kills', kills + assists + 1), 1)
-        
-        # ⏱️ FATOR DE ESCALA BASEADO NO TEMPO
-        # Sistema de multiplicador progressivo moderado:
-        # - 15 minutos: 1.4x o score
-        # - A cada 5 minutos: reduz 0.08x
-        # 
-        # Exemplos:
-        # 15 min: 1.4x | 20 min: 1.32x | 25 min: 1.24x | 30 min: 1.16x
-        # 35 min: 1.08x | 40+ min: 1.0x
-        
-        if game_duration <= 15:
-            # Jogos de até 15 minutos (stomps/remakes)
-            time_scale_factor = 1.4
-        else:
-            # Após 15 minutos, reduz 0.08x a cada 5 minutos
-            minutes_after_15 = game_duration - 15
-            intervals_of_5 = minutes_after_15 / 5.0
-            time_scale_factor = 1.4 - (intervals_of_5 * 0.08)
-            
-            # Garante que o multiplicador não fique abaixo de 1.0x
-            time_scale_factor = max(time_scale_factor, 1.0)  # Mínimo de 1.0x
-        
-        # 🥊 COMBATE - KDA
-        if deaths == 0:
-            kda = (kills + assists) + 3  # Bônus por não morrer
-        else:
-            kda = (kills + assists) / deaths
-        
-        # Kill Participation
-        kill_participation = (kills + assists) / team_kills
-        
-        # Dano por minuto (já normalizado por tempo)
-        dpm = damage_dealt / game_duration
-        
-        # 💰 RECURSOS (já normalizados por tempo)
-        gpm = gold_earned / game_duration
-        cspm = cs / game_duration
-        
-        # 🎯 OBJETIVOS - Sistema diferenciado por role
-        # Jungle: APENAS objetivos épicos (Dragão/Barão/Arauto)
-        # Top: APENAS estruturas/torres (split push)
-        # Mid/ADC/Support: Torres + épicos + estruturas
-        if role == 'JUNGLE':
-            objectives_score = (
-                damage_to_objectives / 500  # APENAS épicos (dragão/barão/arauto)
-            )
-        elif role == 'TOP':
-            objectives_score = (
-                turret_kills * 120 +  # Torres são importantes para top
-                damage_to_buildings / 600  # FOCO em estruturas (split push)
-                # damage_to_objectives épicos não conta muito para top
-            )
-        else:
-            objectives_score = (
-                turret_kills * 120 +  # Torres contam
-                damage_to_objectives / 700 +  # Objetivos épicos também contam
-                damage_to_buildings / 1000  # Estruturas contam menos
-            )
-        
-        # 👀 VISÃO
-        vision_per_min = vision_score / game_duration
-        wards_per_min = (wards_placed + wards_killed) / game_duration
-        
-        # 🛡️ SUSTENTAÇÃO/TEAMPLAY/TANK
-        # TOP: apenas Tank (damage taken)
-        # Support/Jungle: CC + Heal/Shield + Tank
-        if role == 'TOP':
-            utility_score = damage_taken / 2000  # Apenas tankar para TOP
-        else:
-            utility_score = (
-                time_ccing / 8 +  # CC (controle de grupo)
-                (total_heal + total_shields) / 800 +  # Heal/Shield
-                damage_taken / 2000  # Tank (absorver dano)
-            )
-        
-        # NORMALIZAÇÃO RIGOROSA - ranges expandidos para tornar 100 MUITO DIFÍCIL
-        # Performance mediana = score mediano (50%), bom = 70%, EXCEPCIONAL = 100%
-        norm_kda = self.normalize(kda, 0, 12)  # KDA 6 = 50%, KDA 12 = 100% (MUITO DIFÍCIL)
-        norm_kp = self.normalize(kill_participation, 0.15, 0.90)  # 52.5% KP = score mediano
-        norm_dpm = self.normalize(dpm, 80, 1200)  # Range expandido - 640 DPM = 50%, 1200 = 100%
-        norm_gpm = self.normalize(gpm, 180, 550)  # Range expandido - 365 GPM = 50%, 550 = 100%
-        norm_cspm = self.normalize(cspm, 0.5, 10)  # 5.25 CS/min = mediano, 10 CS/min = 100%
-        norm_objectives = self.normalize(objectives_score, 0, 500)  # Mais difícil
-        norm_vision = self.normalize(vision_per_min, 0.1, 2.5)  # Range expandido
-        norm_utility = self.normalize(utility_score, 0, 70)  # Mais difícil
-        
-        # PESOS POR ROLE - VISÃO AGORA É IMPORTANTE PARA TODAS AS ROLES
-        if role == 'UTILITY':  # Support: KDA + VISÃO + DANO + UTILITY
-            weights = {
-                'kda': 0.35,      # KDA muito importante (35%)
-                'kp': 0.15,       # Kill Participation (15%)
-                'dpm': 0.10,      # Dano importante (10% - +5%) ✨
-                'gpm': 0.0,
-                'cspm': 0.0,
-                'objectives': 0.0,
-                'vision': 0.25,   # Visão mantém 25%
-                'utility': 0.15   # Utility (15% - CC/Heal/Shield/Tank - -5%)
-            }
-        elif role == 'JUNGLE':  # Jungle: KDA + CS + OBJETIVOS + UTILITY + VISÃO
-            weights = {
-                'kda': 0.35,      # KDA importante (35%)
-                'kp': 0.10,       # Kill Participation (10% - -5%)
-                'dpm': 0.09,      # Dano importante (9% - +1.5%) ✨
-                'gpm': 0.05,      # Gold balanceado (5%)
-                'cspm': 0.10,     # CS importante (10%)
-                'objectives': 0.15,  # Objetivos importantes (15%)
-                'vision': 0.07,   # Visão importante (7% - +2%) ✨
-                'utility': 0.09   # Utility (9% - Tank/CC/Peel - +1.5%) ✨
-            }
-        elif role == 'BOTTOM':  # ADC: KDA + DANO/GOLD + OBJETIVOS
-            weights = {
-                'kda': 0.35,      # MÁXIMO PESO em KDA
-                'kp': 0.08,
-                'dpm': 0.20,      # Dano balanceado (20% - -3%)
-                'gpm': 0.15,      # MUITO PESO em Gold
-                'cspm': 0.12,     # Farm também importante
-                'objectives': 0.03,  # Objetivos (3% - torres) ✨ NOVO!
-                'vision': 0.07,   # Visão importante (7%)
-                'utility': 0.0
-            }
-        elif role == 'TOP':  # Top: KDA + DANO + TANK
-            weights = {
-                'kda': 0.30,      # KDA importante (30%)
-                'kp': 0.075,      # KP balanceado (7.5%)
-                'dpm': 0.18,      # Dano importante (18%)
-                'gpm': 0.11,      # Gold importante (11%)
-                'cspm': 0.10,     # Farm importante (10%)
-                'objectives': 0.0825,  # Objetivos (8.25% - igual utility)
-                'vision': 0.07,   # Visão importante (7%)
-                'utility': 0.0825 # Utility (8.25% - APENAS Tank) ✨ IGUAL!
-            }
-        else:  # Mid: KDA + FARM + OBJETIVOS
-            weights = {
-                'kda': 0.35,      # KDA importante (35%)
-                'kp': 0.09,       # Kill Participation (9%)
-                'dpm': 0.15,      # Dano balanceado (15% - -5%)
-                'gpm': 0.15,      # Gold importante (15% - +2%)
-                'cspm': 0.13,     # Farm importante (13% - +2%)
-                'objectives': 0.06,  # Objetivos (6% - +1%)
-                'vision': 0.07,   # Visão importante (7%)
-                'utility': 0.0
-            }
-        
-        # CÁLCULO FINAL
-        base_score = (
-            norm_kda * weights['kda'] +
-            norm_kp * weights['kp'] +
-            norm_dpm * weights['dpm'] +
-            norm_gpm * weights['gpm'] +
-            norm_cspm * weights['cspm'] +
-            norm_objectives * weights['objectives'] +
-            norm_vision * weights['vision'] +
-            norm_utility * weights['utility']
-        )
-        
-        # Escala para 0-100 com sistema RIGOROSO
-        # Performances medianas ficam em 50-65, boas em 65-80, EXCEPCIONAIS em 80-100
-        score = (base_score * 75) + 15  # Base de 15 + até 75 pontos = máx 90 base
-        
-        # ⏱️ APLICA FATOR DE ESCALA TEMPORAL (REDUZIDO)
-        # Compensa partidas curtas mas com menos impacto
-        score *= time_scale_factor
-        
-        # Bônus de vitória MENOR
-        if win:
-            score *= 1.04  # Apenas 4% de bônus por vitória (reduzido de 8%)
-            
-            # 🚀 BÔNUS ADICIONAL para SNOWBALL/STOMP (REDUZIDO)
-            if game_duration < 20 and kill_participation >= 0.6:  # Vitória rápida com alta participação
-                score += 4  # +4 pontos (reduzido de 15)
-            elif game_duration < 25 and kill_participation >= 0.75:  # Vitória rápida com MUITO alta participação
-                score += 3  # +3 pontos (reduzido de 5)
-        
-        # PENALIDADES SEVERAS por performance ruim
-        if deaths > 10:  # Morreu MUITO
-            score *= 0.65  # -35% de penalidade
-        elif deaths > 8:  # Morreu muito
-            score *= 0.75  # -25% de penalidade
-        elif deaths > 6:
-            score *= 0.85  # -15% de penalidade
-        
-        if kill_participation < 0.25:  # Participou muito pouco
-            score *= 0.70  # -30% de penalidade
-        elif kill_participation < 0.35:  # Participou pouco
-            score *= 0.80  # -20% de penalidade
-        
-        # Bônus para performances REALMENTE EXCEPCIONAIS (REDUZIDOS)
-        if kda >= 12:  # KDA EXTREMAMENTE excepcional
-            score += 8
-        elif kda >= 10:  # KDA muito excepcional
-            score += 5
-        elif kda >= 8:  # KDA excepcional
-            score += 3
-        
-        if kill_participation >= 0.85:  # Participou de quase tudo
-            score += 4
-        elif kill_participation >= 0.75:
-            score += 2
-        
-        # Bônus por DANO EXCEPCIONAL (novo - importante para Top/Mid/ADC)
-        if dpm >= 1000:  # Dano excepcional
-            score += 5
-        elif dpm >= 850:  # Dano muito alto
-            score += 3
-        elif dpm >= 700:  # Dano alto
-            score += 1
-        
-        return int(min(max(score, 0), 100))  # Garante entre 0 e 100
-    
-    def calculate_mvp_score(self, player_stats: Dict, all_players_stats: Dict) -> tuple:
+    def calculate_mvp_score(self, player_stats: Dict, all_players_stats: Dict, role: str = '') -> tuple:
         """
         Calcula o MVP Score (estilo OP.GG/U.GG)
         Compara o jogador com TODOS os 10 jogadores da partida
+        Ajusta pesos baseado na role do jogador
         Retorna: (score, placement) - ex: (65, 7) = 65 pontos, 7º lugar
         """
         # Normaliza baseado no rank entre 10 jogadores
@@ -604,15 +347,27 @@ class RiotAPI:
         norm_cs, rank_cs = rank_normalize(cs, all_cs, player_index)
         norm_vision, rank_vision = rank_normalize(vision, all_visions, player_index)
         
-        # PESOS - focado em KDA/Dano/Gold (estilo OP.GG)
-        weights = {
-            'kda': 0.35,       # KDA é rei
-            'damage': 0.30,    # Dano muito importante
-            'gold': 0.15,      # Gold importante
-            'kp': 0.10,        # KP importante
-            'cs': 0.05,        # CS menos importante
-            'vision': 0.05     # Vision quase ignorada (realista com sites)
-        }
+        # PESOS por ROLE (estilo OP.GG)
+        # Suporte: mais peso em visão e KP, menos em CS e dano
+        if role.upper() in ['UTILITY', 'SUPPORT']:
+            weights = {
+                'kda': 0.30,       # KDA importante
+                'kp': 0.25,        # KP muito importante para suporte
+                'damage': 0.10,    # Dano menos importante
+                'gold': 0.10,      # Gold menos importante
+                'vision': 0.20,    # Visão MUITO importante para suporte
+                'cs': 0.05         # CS quase irrelevante para suporte
+            }
+        else:
+            # Carries (Top, Mid, ADC, Jungle) - focado em KDA/Dano/Gold
+            weights = {
+                'kda': 0.35,       # KDA é rei
+                'damage': 0.30,    # Dano muito importante
+                'gold': 0.15,      # Gold importante
+                'kp': 0.10,        # KP importante
+                'cs': 0.05,        # CS menos importante
+                'vision': 0.05     # Vision quase ignorada (realista com sites)
+            }
         
         # Calcula score final (0-100)
         score = (
@@ -685,14 +440,6 @@ class RiotAPI:
                 player_kp = (p['kills'] + p['assists']) / max(team_total_kills, 1)
                 all_kps.append(player_kp)
             
-            # Dados do time para cálculo do Carry Score
-            team_stats = {
-                'team_kills': team_kills
-            }
-            
-            # Calcula o carry score com o novo sistema
-            carry_score = self.calculate_carry_score(participant, team_stats)
-            
             # Dados de TODOS os jogadores para cálculo do MVP Score
             all_players_stats = {
                 'all_kdas': all_kdas,
@@ -702,6 +449,11 @@ class RiotAPI:
                 'all_cs': all_cs,
                 'all_visions': all_visions
             }
+            
+            # Extrai role PRIMEIRO (necessária para cálculo do MVP Score)
+            role = participant.get('teamPosition', '')
+            if not role or role == '':
+                role = participant.get('individualPosition', 'MIDDLE')
             
             # Prepara stats do jogador para MVP Score
             player_mvp_stats = {
@@ -714,13 +466,8 @@ class RiotAPI:
                 'vision_score': participant.get('visionScore', 0)
             }
             
-            # Calcula o MVP score (retorna tupla: score, placement)
-            mvp_score, mvp_placement = self.calculate_mvp_score(player_mvp_stats, all_players_stats)
-            
-            # Extrai role
-            role = participant.get('teamPosition', '')
-            if not role or role == '':
-                role = participant.get('individualPosition', 'MIDDLE')
+            # Calcula o MVP score (retorna tupla: score, placement) passando a role
+            mvp_score, mvp_placement = self.calculate_mvp_score(player_mvp_stats, all_players_stats, role)
             
             # Mapeamento de roles para nomes amigáveis
             role_names = {
@@ -756,7 +503,6 @@ class RiotAPI:
                 'vision_score': participant.get('visionScore', 0),
                 'game_duration': game_duration,
                 'win': participant.get('win', False),
-                'carry_score': carry_score,
                 'mvp_score': mvp_score,
                 'mvp_placement': mvp_placement,
                 'kda': round((participant.get('kills', 0) + participant.get('assists', 0)) / max(participant.get('deaths', 1), 1), 2),
