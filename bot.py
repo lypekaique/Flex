@@ -1859,6 +1859,12 @@ async def update_live_game_result(game_id: str, match_data: Dict):
         # Busca se existe mensagem de live game para este match
         conn = db.get_connection()
         cursor = conn.cursor()
+        
+        # Debug: Lista todos os game_ids ativos
+        cursor.execute('SELECT game_id, message_id FROM live_games_notified WHERE message_id IS NOT NULL')
+        all_games = cursor.fetchall()
+        print(f"🔍 [Live Update DEBUG] Games ativos no banco: {[(g[0], g[1]) for g in all_games]}")
+        
         cursor.execute('''
             SELECT DISTINCT message_id, channel_id, guild_id, lol_account_id
             FROM live_games_notified
@@ -1870,6 +1876,7 @@ async def update_live_game_result(game_id: str, match_data: Dict):
         
         if not live_msg:
             print(f"⚠️ [Live Update] Nenhuma mensagem de live game encontrada para game_id: {game_id}")
+            print(f"⚠️ [Live Update] Tipo do game_id buscado: {type(game_id)}")
             conn.close()
             return
         
@@ -2677,8 +2684,8 @@ async def check_new_matches():
                             else:
                                 print(f"✅ [Partidas] Nova partida registrada: {match_id} (MVP: {stats.get('mvp_score', 0)})")
                             
-                            # Envia notificação de partida terminada (inclusive para remakes agora)
-                            await send_match_notification(account_id, stats)
+                            # NÃO envia notificação aqui - o check_live_games_finished já cuida disso
+                            # await send_match_notification(account_id, stats)
                             
                             # Verifica performance apenas se não for remake
                             if not stats.get('is_remake', False):
@@ -2824,14 +2831,15 @@ async def check_live_games_finished():
 
                             if stats:
                                 print(f"📊 [Live Check] Estatísticas extraídas para {puuid}: {stats['champion_name']} - MVP: {stats['mvp_score']}")
+                                
+                                # Salva no banco de dados ANTES de tudo
+                                db.add_match(account_id, stats)
+                                
                                 # Atualiza o resultado no live game (apenas uma vez por partida)
                                 if match_id not in processed_matches:
                                     print(f"🔄 [Live Check] Atualizando mensagem de live game para {match_id}")
                                     await update_live_game_result(game_id, match_data)
                                     processed_matches.add(match_id)
-                                
-                                # Salva no banco de dados
-                                db.add_match(account_id, stats)
                                 
                                 # Log diferente para remakes
                                 if stats.get('is_remake', False):
@@ -2839,8 +2847,9 @@ async def check_live_games_finished():
                                 else:
                                     print(f"✅ [Live Check] Partida terminada detectada: {match_id} (MVP: {stats.get('mvp_score', 0)})")
                                 
-                                # NÃO envia notificação individual - apenas edita a mensagem de live game
-                                # await send_match_notification(account_id, stats)
+                                # Envia notificação individual com estatísticas detalhadas
+                                print(f"📨 [Live Check] Enviando notificação individual de estatísticas para {account_id}")
+                                await send_match_notification(account_id, stats)
                                 
                                 # Verifica performance apenas se não for remake
                                 if not stats.get('is_remake', False):
