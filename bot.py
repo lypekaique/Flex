@@ -1105,7 +1105,7 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
                     "   - Qual time venceu (Azul/Vermelho)\n"
                     "   - KDA de todos os 10 jogadores\n"
                     "   - CS e Dano de todos\n\n"
-                    "**Notificações individuais** (com MVP Score) são enviadas\n"git a
+                    "**Notificações individuais** (com MVP Score) são enviadas\n"
                     "no **canal de score** configurado.\n\n"
                     "💡 **Recomendação:** Configure ambos os canais:\n"
                     "• `live` - Para acompanhar partidas em grupo\n"
