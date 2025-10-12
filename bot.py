@@ -2541,14 +2541,25 @@ async def check_live_games():
                 print(f"❌ [Live Games] Erro ao verificar conta {account_id}: {e}")
                 continue
         
-        # Envia notificações agrupadas
+        # Envia notificações agrupadas (verifica se já foi notificado globalmente)
         for game_id, players in games_map.items():
             try:
+                # Verificação adicional: verifica se QUALQUER jogador desta partida já foi notificado
+                already_notified = False
+                for player in players:
+                    if db.is_live_game_notified(player['account_id'], game_id):
+                        already_notified = True
+                        break
+
+                if already_notified:
+                    print(f"⚠️ [Live Games] Partida {game_id} já foi notificada, pulando...")
+                    continue
+
                 if len(players) > 1:
                     print(f"🎮 [Live Games] {len(players)} jogadores na mesma partida {game_id}")
                     # Múltiplos jogadores na mesma partida - envia UMA notificação
                     message_info = await send_live_game_notification_grouped(game_id, players)
-                    
+
                     # Marca TODOS como notificados com a mesma mensagem
                     if message_info:
                         for player in players:
@@ -2567,7 +2578,7 @@ async def check_live_games():
                     # Apenas 1 jogador - envia notificação individual normal
                     player = players[0]
                     message_info = await send_live_game_notification(player['account_id'], player['live_info'])
-                    
+
                     if message_info:
                         db.mark_live_game_notified(
                             player['account_id'],
