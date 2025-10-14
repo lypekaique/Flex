@@ -547,32 +547,6 @@ class Database:
         result = cursor.fetchone()
         conn.close()
         return result[0] if result else None
-
-    def get_live_game_messages_for_game(self, game_id: str) -> List[Dict]:
-        """Retorna todas as mensagens enviadas para um game_id específico"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT message_id, channel_id, guild_id, puuid, summoner_name
-            FROM live_games_notified
-            WHERE game_id = ? AND message_id IS NOT NULL
-            ORDER BY notified_at DESC
-        ''', (game_id,))
-
-        results = cursor.fetchall()
-        conn.close()
-
-        messages = []
-        for result in results:
-            messages.append({
-                'message_id': result[0],
-                'channel_id': result[1],
-                'guild_id': result[2],
-                'puuid': result[3],
-                'summoner_name': result[4]
-            })
-
-        return messages
     
     def mark_live_game_notified(self, lol_account_id: int, game_id: str,
                                 puuid: str, summoner_name: str, champion_id: int, champion_name: str,
