@@ -1892,351 +1892,361 @@ async def update_live_game_result(game_id: str, match_data: Dict):
         results = cursor.fetchall()
 
         if results:
-            # Usa a primeira mensagem encontrada
-            live_msg = results[0][:4]  # message_id, channel_id, guild_id, lol_account_id
-            found_game_id = results[0][4]  # game_id
+            # Processa TODAS as mensagens encontradas (não apenas a primeira)
             print(f"✅ [Live Update] Encontradas {len(results)} mensagem(ns) relacionada(s) à partida!")
-            print(f"   📍 Usando mensagem: {live_msg[0]}")
-            print(f"   📍 Game ID no banco: {found_game_id}")
-            # Atualiza o game_id para usar na remoção posterior
+            print(f"   📍 Processando todas as mensagens encontradas...")
+
+            # Atualiza o game_id para usar na remoção posterior (usa o primeiro resultado)
+            found_game_id = results[0][4]  # game_id
             game_id = found_game_id
+
+            # Processa cada mensagem individualmente
+            processed_count = 0
+            for result in results:
+                message_id, channel_id, guild_id, lol_account_id = result[:4]
+
+                print(f"🔄 [Live Update] Processando mensagem {message_id} para conta {lol_account_id}...")
+
+                # Busca informações da conta para pegar summoner_name e region
+                cursor.execute('''
+                    SELECT summoner_name, region FROM lol_accounts
+                    WHERE id = ?
+                ''', (lol_account_id,))
+                account_info = cursor.fetchone()
+
+                if not account_info:
+                    print(f"⚠️ [Live Update] Informações da conta {lol_account_id} não encontradas")
+                    continue
+
+                summoner_name, region = account_info
+
+                print(f"✅ [Live Update] Mensagem encontrada - ID: {message_id}, Canal: {channel_id}, Servidor: {guild_id}")
+
+                # Busca o servidor e canal
+                guild = bot.get_guild(int(guild_id))
+                if not guild:
+                    print(f"⚠️ [Live Update] Servidor {guild_id} não encontrado")
+                    continue
+
+                channel = guild.get_channel(int(channel_id))
+                if not channel:
+                    print(f"⚠️ [Live Update] Canal {channel_id} não encontrado")
+                    continue
+
+                try:
+                    message = await channel.fetch_message(int(message_id))
+                except:
+                    print(f"⚠️ [Live Update] Mensagem {message_id} não encontrada")
+                    continue
+
+                # Pega o embed original
+                if not message.embeds:
+                    print(f"⚠️ [Live Update] Mensagem não possui embed")
+                    continue
+
+                original_embed = message.embeds[0]
+
+                # Extrai informações da partida
+                participants = match_data['info']['participants']
+                game_info = match_data['info']
+
+                # Encontra os dados do jogador principal
+                player_data = None
+                for p in participants:
+                    # Compara pelo summonerName (removendo RiotID se tiver)
+                    p_name = p['riotIdGameName'] if 'riotIdGameName' in p else p['summonerName']
+                    summoner_clean = summoner_name.split('#')[0] if '#' in summoner_name else summoner_name
+
+                    if p_name.lower() == summoner_clean.lower():
+                        player_data = p
+                        break
+
+                if not player_data:
+                    print(f"⚠️ [Live Update] Dados do jogador {summoner_name} não encontrados na partida")
+                    continue
+
+                # Verifica se o jogador venceu
+                player_won = player_data['win']
+                player_team = player_data['teamId']
+
+                # Determina a nova cor (verde para vitória, vermelho para derrota)
+                if player_won:
+                    new_color = discord.Color.green()
+                    result_emoji = "✅"
+                    result_text = "VITÓRIA"
+                else:
+                    new_color = discord.Color.red()
+                    result_emoji = "❌"
+                    result_text = "DERROTA"
+
+                # Calcula estatísticas do jogador principal
+                kills = player_data['kills']
+                deaths = player_data['deaths']
+                assists = player_data['assists']
+                kda_ratio = (kills + assists) / max(deaths, 1)
+                cs = player_data.get('totalMinionsKilled', 0) + player_data.get('neutralMinionsKilled', 0)
+                damage = player_data.get('totalDamageDealtToChampions', 0)
+
+                # Duração da partida
+                game_duration = game_info['gameDuration']
+                game_duration_min = game_duration // 60
+                game_duration_sec = game_duration % 60
+
+                # Cria novo embed com resultado
+                new_embed = discord.Embed(
+                    title=f"{result_emoji} PARTIDA FINALIZADA - {result_text}!",
+                    description=original_embed.description,
+                    color=new_color,
+                    timestamp=datetime.now()
+                )
+
+                # Adiciona modo de jogo e duração
+                new_embed.add_field(
+                    name="🎮 Modo de Jogo",
+                    value=f"**{original_embed.fields[0].value if original_embed.fields else 'Ranked Flex'}**",
+                    inline=True
+                )
+
+                new_embed.add_field(
+                    name="⏱️ Duração",
+                    value=f"**{game_duration_min}:{game_duration_sec:02d}**",
+                    inline=True
+                )
+
+                new_embed.add_field(
+                    name="\u200b",  # Campo vazio para quebra de linha
+                    value="\u200b",
+                    inline=True
+                )
+
+                # Calcula MVP score de todos os jogadores para determinar colocações únicas
+                all_players_with_scores = []
+
+                # Usa a instância global da RiotAPI que já foi inicializada com a chave
+                # riot = RiotAPI()  # <- linha removida, estava causando erro
+                # A variável global 'riot_api' já está disponível e inicializada com a chave
+
+                # Prepara dados globais para cálculo
+                all_kdas = [(pl['kills'] + pl['assists']) / max(pl['deaths'], 1) for pl in participants]
+                all_damages = [pl.get('totalDamageDealtToChampions', 0) for pl in participants]
+                all_golds = [pl.get('goldEarned', 0) for pl in participants]
+                all_cs_list = [pl.get('totalMinionsKilled', 0) + pl.get('neutralMinionsKilled', 0) for pl in participants]
+                all_visions = [pl.get('visionScore', 0) for pl in participants]
+
+                team_1_kills = sum(pl['kills'] for pl in participants if pl['teamId'] == 100)
+                team_2_kills = sum(pl['kills'] for pl in participants if pl['teamId'] == 200)
+                all_kps = [
+                    (pl['kills'] + pl['assists']) / max(team_1_kills if pl['teamId'] == 100 else team_2_kills, 1)
+                    for pl in participants
+                ]
+
+                all_players_stats = {
+                    'all_kdas': all_kdas,
+                    'all_kps': all_kps,
+                    'all_damages': all_damages,
+                    'all_golds': all_golds,
+                    'all_cs': all_cs_list,
+                    'all_visions': all_visions
+                }
+
+                for p in participants:
+                    p_team_id = p['teamId']
+                    p_team_kills = sum(
+                        pl['kills'] for pl in participants if pl['teamId'] == p_team_id
+                    )
+                    p_kda = (p['kills'] + p['assists']) / max(p['deaths'], 1)
+                    p_kp = (p['kills'] + p['assists']) / max(p_team_kills, 1)
+                    p_damage = p.get('totalDamageDealtToChampions', 0)
+                    p_gold = p.get('goldEarned', 0)
+                    p_cs = p.get('totalMinionsKilled', 0) + p.get('neutralMinionsKilled', 0)
+                    p_vision = p.get('visionScore', 0)
+                    p_role = p.get('teamPosition', '') or p.get('individualPosition', 'MIDDLE')
+
+                    player_stats = {
+                        'kda': p_kda,
+                        'kill_participation': p_kp,
+                        'total_damage_to_champions': p_damage,
+                        'gold_earned': p_gold,
+                        'total_minions_killed': p.get('totalMinionsKilled', 0),
+                        'neutral_minions_killed': p.get('neutralMinionsKilled', 0),
+                        'vision_score': p_vision,
+                        'win': p.get('win', False)
+                    }
+
+                    mvp_score, _ = riot_api.calculate_mvp_score(player_stats, all_players_stats, p_role)
+
+                    all_players_with_scores.append({
+                        'player': p,
+                        'mvp_score': mvp_score,
+                        'kda': p_kda,
+                        'kp': p_kp * 100,
+                        'cs': p_cs,
+                        'damage': p_damage,
+                        'puuid': p['puuid']
+                    })
+
+                # Ordena por MVP score para determinar colocações únicas
+                # Adiciona índice para garantir desempate total (colocações únicas de 1 a 10)
+                for idx, player_info in enumerate(all_players_with_scores):
+                    player_info['original_index'] = idx
+
+                # Ordena: 1º por MVP score, 2º por dano, 3º por índice original (garante ordem única)
+                all_players_with_scores.sort(key=lambda x: (-x['mvp_score'], -x['damage'], x['original_index']))
+
+                # Atribui placement único baseado na ordem (sempre 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+                for i, player_info in enumerate(all_players_with_scores, 1):
+                    player_info['placement'] = i
+
+                # MVP da partida (1º lugar)
+                mvp = all_players_with_scores[0]
+                mvp_player = mvp['player']
+                mvp_name = mvp_player.get('riotIdGameName', mvp_player.get('summonerName', 'Unknown'))
+                mvp_champion = mvp_player.get('championName', 'Unknown')
+                mvp_team = "🔵 Time Azul" if mvp_player['teamId'] == 100 else "🔴 Time Vermelho"
+
+                # Adiciona estatísticas do MVP
+                mvp_stats_text = (
+                    f"👑 **{mvp_name}** - {mvp_champion} ({mvp_team})\n"
+                    f"📊 **KDA:** {mvp_player['kills']}/{mvp_player['deaths']}/{mvp_player['assists']} ({mvp['kda']:.2f})\n"
+                    f"🎯 **MVP Score:** {mvp['mvp_score']}/100 **(1º lugar)**\n"
+                    f"🗡️ **Dano:** {mvp['damage']:,}\n"
+                    f"🌾 **CS:** {mvp['cs']} | 👁️ **Visão:** {mvp_player.get('visionScore', 0)}"
+                )
+
+                new_embed.add_field(
+                    name="🏆 MVP DA PARTIDA",
+                    value=mvp_stats_text,
+                    inline=False
+                )
+
+                # Separa jogadores por time
+                team_100_players = [p for p in all_players_with_scores if p['player']['teamId'] == 100]
+                team_200_players = [p for p in all_players_with_scores if p['player']['teamId'] == 200]
+
+                # Ordena cada time por dano (como antes)
+                team_100_players.sort(key=lambda p: p['damage'], reverse=True)
+                team_200_players.sort(key=lambda p: p['damage'], reverse=True)
+
+                # Time Azul (100)
+                team_100_text = ""
+                team_100_won = team_100_players[0]['player']['win'] if team_100_players else False
+                for player_info in team_100_players:
+                    p = player_info['player']
+                    p_name = p.get('riotIdGameName', p.get('summonerName', 'Unknown'))
+                    p_champion = p.get('championName', 'Unknown')
+                    placement = player_info['placement']
+
+                    # Emoji para colocação
+                    if placement == 1:
+                        placement_emoji = "👑"
+                    elif placement == 2:
+                        placement_emoji = "🥇"
+                    elif placement == 3:
+                        placement_emoji = "🥈"
+                    elif placement <= 5:
+                        placement_emoji = "🥉"
+                    else:
+                        placement_emoji = "📊"
+
+                    # Destaca o jogador que estava sendo seguido
+                    if p['puuid'] == player_data['puuid']:
+                        p_name = f"**{p_name}**"
+
+                    team_100_text += (
+                        f"{placement_emoji} **{placement}º** {p_champion} - {p_name}\n"
+                        f"   KDA: {p['kills']}/{p['deaths']}/{p['assists']} ({player_info['kda']:.1f}) | "
+                        f"MVP: {player_info['mvp_score']} | Dano: {player_info['damage']:,}\n"
+                    )
+
+                new_embed.add_field(
+                    name=f"🔵 Time Azul {'(Vitória)' if team_100_won else '(Derrota)'}",
+                    value=team_100_text.strip() if team_100_text else "Nenhum dado disponível",
+                    inline=False
+                )
+
+                # Time Vermelho (200)
+                team_200_text = ""
+                team_200_won = team_200_players[0]['player']['win'] if team_200_players else False
+                for player_info in team_200_players:
+                    p = player_info['player']
+                    p_name = p.get('riotIdGameName', p.get('summonerName', 'Unknown'))
+                    p_champion = p.get('championName', 'Unknown')
+                    placement = player_info['placement']
+
+                    # Emoji para colocação
+                    if placement == 1:
+                        placement_emoji = "👑"
+                    elif placement == 2:
+                        placement_emoji = "🥇"
+                    elif placement == 3:
+                        placement_emoji = "🥈"
+                    elif placement <= 5:
+                        placement_emoji = "🥉"
+                    else:
+                        placement_emoji = "📊"
+
+                    # Destaca o jogador que estava sendo seguido
+                    if p['puuid'] == player_data['puuid']:
+                        p_name = f"**{p_name}**"
+
+                    team_200_text += (
+                        f"{placement_emoji} **{placement}º** {p_champion} - {p_name}\n"
+                        f"   KDA: {p['kills']}/{p['deaths']}/{p['assists']} ({player_info['kda']:.1f}) | "
+                        f"MVP: {player_info['mvp_score']} | Dano: {player_info['damage']:,}\n"
+                    )
+
+                new_embed.add_field(
+                    name=f"🔴 Time Vermelho {'(Vitória)' if team_200_won else '(Derrota)'}",
+                    value=team_200_text.strip() if team_200_text else "Nenhum dado disponível",
+                    inline=False
+                )
+
+                # Mantém thumbnail e footer originais se existirem
+                if original_embed.thumbnail:
+                    new_embed.set_thumbnail(url=original_embed.thumbnail.url)
+
+                if original_embed.footer:
+                    new_embed.set_footer(
+                        text=original_embed.footer.text,
+                        icon_url=original_embed.footer.icon_url if original_embed.footer.icon_url else discord.Embed.Empty
+                    )
+
+                # Edita a mensagem de live game
+                print(f"🔄 [Live Update] Editando mensagem {message_id} no canal {channel.name}...")
+                print(f"🔄 [Live Update] Novo título: '{new_embed.title}'")
+                print(f"🔄 [Live Update] Nova cor: {new_embed.color}")
+
+                try:
+                    await message.edit(embed=new_embed)
+                    print(f"✅✅✅ [Live Update] MENSAGEM EDITADA COM SUCESSO! ✅✅✅")
+                    print(f"🏁 [Live Update] Game ID: {game_id} - Resultado: {result_text}")
+                    print(f"🏁 [Live Update] Mensagem ID: {message_id} no servidor: {guild.name}")
+                    processed_count += 1
+                except discord.errors.Forbidden:
+                    print(f"❌ [Live Update] Sem permissão para editar mensagem {message_id}")
+                except discord.errors.NotFound:
+                    print(f"❌ [Live Update] Mensagem {message_id} não encontrada (pode ter sido deletada)")
+                except discord.errors.HTTPException as e:
+                    print(f"❌ [Live Update] Erro HTTP ao editar mensagem: {e}")
+                    print(f"   Status: {e.status}, Código: {e.code}")
+                except Exception as e:
+                    print(f"❌ [Live Update] Erro inesperado ao editar mensagem: {e}")
+                    print(f"   Tipo do erro: {type(e)}")
+                    import traceback
+                    traceback.print_exc()
+
+            # Fecha conexão com banco de dados fora do loop
+            conn.close()
+
+            # Log final para confirmar se a função foi executada completamente
+            print(f"🏁 [Live Update] update_live_game_result FINALIZADA para game_id: {game_id}")
+            print(f"✅ [Live Update] Processadas {processed_count} mensagens para a partida")
+
         else:
             print(f"⚠️ [Live Update] Nenhuma mensagem encontrada para esta partida!")
             print(f"⚠️ [Live Update] PUUIDs buscados: {len(match_puuids)}")
             conn.close()
             return
-        
-        message_id, channel_id, guild_id, lol_account_id = live_msg
-        
-        # Busca informações da conta para pegar summoner_name e region
-        cursor.execute('''
-            SELECT summoner_name, region FROM lol_accounts
-            WHERE id = ?
-        ''', (lol_account_id,))
-        account_info = cursor.fetchone()
-        conn.close()
-        
-        if not account_info:
-            print(f"⚠️ [Live Update] Informações da conta {lol_account_id} não encontradas")
-            return
-        
-        summoner_name, region = account_info
-        print(f"✅ [Live Update] Mensagem encontrada - ID: {message_id}, Canal: {channel_id}, Servidor: {guild_id}")
-
-        # Busca o servidor e canal
-        guild = bot.get_guild(int(guild_id))
-        if not guild:
-            print(f"⚠️ [Live Update] Servidor {guild_id} não encontrado")
-            return
-
-        channel = guild.get_channel(int(channel_id))
-        if not channel:
-            print(f"⚠️ [Live Update] Canal {channel_id} não encontrado")
-            return
-        
-        try:
-            message = await channel.fetch_message(int(message_id))
-        except:
-            print(f"⚠️ [Live Update] Mensagem {message_id} não encontrada")
-            return
-        
-        # Pega o embed original
-        if not message.embeds:
-            print(f"⚠️ [Live Update] Mensagem não possui embed")
-            return
-        
-        original_embed = message.embeds[0]
-        
-        # Extrai informações da partida
-        participants = match_data['info']['participants']
-        game_info = match_data['info']
-        
-        # Encontra os dados do jogador principal
-        player_data = None
-        for p in participants:
-            # Compara pelo summonerName (removendo RiotID se tiver)
-            p_name = p['riotIdGameName'] if 'riotIdGameName' in p else p['summonerName']
-            summoner_clean = summoner_name.split('#')[0] if '#' in summoner_name else summoner_name
-            
-            if p_name.lower() == summoner_clean.lower():
-                player_data = p
-                break
-        
-        if not player_data:
-            print(f"⚠️ [Live Update] Dados do jogador {summoner_name} não encontrados na partida")
-            return
-        
-        # Verifica se o jogador venceu
-        player_won = player_data['win']
-        player_team = player_data['teamId']
-        
-        # Determina a nova cor (verde para vitória, vermelho para derrota)
-        if player_won:
-            new_color = discord.Color.green()
-            result_emoji = "✅"
-            result_text = "VITÓRIA"
-        else:
-            new_color = discord.Color.red()
-            result_emoji = "❌"
-            result_text = "DERROTA"
-        
-        # Calcula estatísticas do jogador principal
-        kills = player_data['kills']
-        deaths = player_data['deaths']
-        assists = player_data['assists']
-        kda_ratio = (kills + assists) / max(deaths, 1)
-        cs = player_data.get('totalMinionsKilled', 0) + player_data.get('neutralMinionsKilled', 0)
-        damage = player_data.get('totalDamageDealtToChampions', 0)
-        
-        # Duração da partida
-        game_duration = game_info['gameDuration']
-        game_duration_min = game_duration // 60
-        game_duration_sec = game_duration % 60
-        
-        # Cria novo embed com resultado
-        new_embed = discord.Embed(
-            title=f"{result_emoji} PARTIDA FINALIZADA - {result_text}!",
-            description=original_embed.description,
-            color=new_color,
-            timestamp=datetime.now()
-        )
-        
-        # Adiciona modo de jogo e duração
-        new_embed.add_field(
-            name="🎮 Modo de Jogo",
-            value=f"**{original_embed.fields[0].value if original_embed.fields else 'Ranked Flex'}**",
-            inline=True
-        )
-        
-        new_embed.add_field(
-            name="⏱️ Duração",
-            value=f"**{game_duration_min}:{game_duration_sec:02d}**",
-            inline=True
-        )
-        
-        new_embed.add_field(
-            name="\u200b",  # Campo vazio para quebra de linha
-            value="\u200b",
-            inline=True
-        )
-        
-        # Calcula MVP score de todos os jogadores para determinar colocações únicas
-        all_players_with_scores = []
-        
-        # Usa a instância global da RiotAPI que já foi inicializada com a chave
-        # riot = RiotAPI()  # <- linha removida, estava causando erro
-        # A variável global 'riot_api' já está disponível e inicializada com a chave
-        
-        # Prepara dados globais para cálculo
-        all_kdas = [(pl['kills'] + pl['assists']) / max(pl['deaths'], 1) for pl in participants]
-        all_damages = [pl.get('totalDamageDealtToChampions', 0) for pl in participants]
-        all_golds = [pl.get('goldEarned', 0) for pl in participants]
-        all_cs_list = [pl.get('totalMinionsKilled', 0) + pl.get('neutralMinionsKilled', 0) for pl in participants]
-        all_visions = [pl.get('visionScore', 0) for pl in participants]
-        
-        team_1_kills = sum(pl['kills'] for pl in participants if pl['teamId'] == 100)
-        team_2_kills = sum(pl['kills'] for pl in participants if pl['teamId'] == 200)
-        all_kps = [
-            (pl['kills'] + pl['assists']) / max(team_1_kills if pl['teamId'] == 100 else team_2_kills, 1)
-            for pl in participants
-        ]
-        
-        all_players_stats = {
-            'all_kdas': all_kdas,
-            'all_kps': all_kps,
-            'all_damages': all_damages,
-            'all_golds': all_golds,
-            'all_cs': all_cs_list,
-            'all_visions': all_visions
-        }
-        
-        for p in participants:
-            p_team_id = p['teamId']
-            p_team_kills = sum(
-                pl['kills'] for pl in participants if pl['teamId'] == p_team_id
-            )
-            p_kda = (p['kills'] + p['assists']) / max(p['deaths'], 1)
-            p_kp = (p['kills'] + p['assists']) / max(p_team_kills, 1)
-            p_damage = p.get('totalDamageDealtToChampions', 0)
-            p_gold = p.get('goldEarned', 0)
-            p_cs = p.get('totalMinionsKilled', 0) + p.get('neutralMinionsKilled', 0)
-            p_vision = p.get('visionScore', 0)
-            p_role = p.get('teamPosition', '') or p.get('individualPosition', 'MIDDLE')
-            
-            player_stats = {
-                'kda': p_kda,
-                'kill_participation': p_kp,
-                'total_damage_to_champions': p_damage,
-                'gold_earned': p_gold,
-                'total_minions_killed': p.get('totalMinionsKilled', 0),
-                'neutral_minions_killed': p.get('neutralMinionsKilled', 0),
-                'vision_score': p_vision,
-                'win': p.get('win', False)
-            }
-            
-            mvp_score, _ = riot_api.calculate_mvp_score(player_stats, all_players_stats, p_role)
-            
-            all_players_with_scores.append({
-                'player': p,
-                'mvp_score': mvp_score,
-                'kda': p_kda,
-                'kp': p_kp * 100,
-                'cs': p_cs,
-                'damage': p_damage,
-                'puuid': p['puuid']
-            })
-        
-        # Ordena por MVP score para determinar colocações únicas
-        # Adiciona índice para garantir desempate total (colocações únicas de 1 a 10)
-        for idx, player_info in enumerate(all_players_with_scores):
-            player_info['original_index'] = idx
-        
-        # Ordena: 1º por MVP score, 2º por dano, 3º por índice original (garante ordem única)
-        all_players_with_scores.sort(key=lambda x: (-x['mvp_score'], -x['damage'], x['original_index']))
-        
-        # Atribui placement único baseado na ordem (sempre 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
-        for i, player_info in enumerate(all_players_with_scores, 1):
-            player_info['placement'] = i
-        
-        # MVP da partida (1º lugar)
-        mvp = all_players_with_scores[0]
-        mvp_player = mvp['player']
-        mvp_name = mvp_player.get('riotIdGameName', mvp_player.get('summonerName', 'Unknown'))
-        mvp_champion = mvp_player.get('championName', 'Unknown')
-        mvp_team = "🔵 Time Azul" if mvp_player['teamId'] == 100 else "🔴 Time Vermelho"
-        
-        # Adiciona estatísticas do MVP
-        mvp_stats_text = (
-            f"👑 **{mvp_name}** - {mvp_champion} ({mvp_team})\n"
-            f"📊 **KDA:** {mvp_player['kills']}/{mvp_player['deaths']}/{mvp_player['assists']} ({mvp['kda']:.2f})\n"
-            f"🎯 **MVP Score:** {mvp['mvp_score']}/100 **(1º lugar)**\n"
-            f"🗡️ **Dano:** {mvp['damage']:,}\n"
-            f"🌾 **CS:** {mvp['cs']} | 👁️ **Visão:** {mvp_player.get('visionScore', 0)}"
-        )
-        
-        new_embed.add_field(
-            name="🏆 MVP DA PARTIDA",
-            value=mvp_stats_text,
-            inline=False
-        )
-        
-        # Separa jogadores por time
-        team_100_players = [p for p in all_players_with_scores if p['player']['teamId'] == 100]
-        team_200_players = [p for p in all_players_with_scores if p['player']['teamId'] == 200]
-        
-        # Ordena cada time por dano (como antes)
-        team_100_players.sort(key=lambda p: p['damage'], reverse=True)
-        team_200_players.sort(key=lambda p: p['damage'], reverse=True)
-        
-        # Time Azul (100)
-        team_100_text = ""
-        team_100_won = team_100_players[0]['player']['win'] if team_100_players else False
-        for player_info in team_100_players:
-            p = player_info['player']
-            p_name = p.get('riotIdGameName', p.get('summonerName', 'Unknown'))
-            p_champion = p.get('championName', 'Unknown')
-            placement = player_info['placement']
-            
-            # Emoji para colocação
-            if placement == 1:
-                placement_emoji = "👑"
-            elif placement == 2:
-                placement_emoji = "🥇"
-            elif placement == 3:
-                placement_emoji = "🥈"
-            elif placement <= 5:
-                placement_emoji = "🥉"
-            else:
-                placement_emoji = "📊"
-            
-            # Destaca o jogador que estava sendo seguido
-            if p['puuid'] == player_data['puuid']:
-                p_name = f"**{p_name}**"
-            
-            team_100_text += (
-                f"{placement_emoji} **{placement}º** {p_champion} - {p_name}\n"
-                f"   KDA: {p['kills']}/{p['deaths']}/{p['assists']} ({player_info['kda']:.1f}) | "
-                f"MVP: {player_info['mvp_score']} | Dano: {player_info['damage']:,}\n"
-            )
-        
-        new_embed.add_field(
-            name=f"🔵 Time Azul {'(Vitória)' if team_100_won else '(Derrota)'}",
-            value=team_100_text.strip() if team_100_text else "Nenhum dado disponível",
-            inline=False
-        )
-        
-        # Time Vermelho (200)
-        team_200_text = ""
-        team_200_won = team_200_players[0]['player']['win'] if team_200_players else False
-        for player_info in team_200_players:
-            p = player_info['player']
-            p_name = p.get('riotIdGameName', p.get('summonerName', 'Unknown'))
-            p_champion = p.get('championName', 'Unknown')
-            placement = player_info['placement']
-            
-            # Emoji para colocação
-            if placement == 1:
-                placement_emoji = "👑"
-            elif placement == 2:
-                placement_emoji = "🥇"
-            elif placement == 3:
-                placement_emoji = "🥈"
-            elif placement <= 5:
-                placement_emoji = "🥉"
-            else:
-                placement_emoji = "📊"
-            
-            # Destaca o jogador que estava sendo seguido
-            if p['puuid'] == player_data['puuid']:
-                p_name = f"**{p_name}**"
-            
-            team_200_text += (
-                f"{placement_emoji} **{placement}º** {p_champion} - {p_name}\n"
-                f"   KDA: {p['kills']}/{p['deaths']}/{p['assists']} ({player_info['kda']:.1f}) | "
-                f"MVP: {player_info['mvp_score']} | Dano: {player_info['damage']:,}\n"
-            )
-        
-        new_embed.add_field(
-            name=f"🔴 Time Vermelho {'(Vitória)' if team_200_won else '(Derrota)'}",
-            value=team_200_text.strip() if team_200_text else "Nenhum dado disponível",
-            inline=False
-        )
-        
-        # Mantém thumbnail e footer originais se existirem
-        if original_embed.thumbnail:
-            new_embed.set_thumbnail(url=original_embed.thumbnail.url)
-        
-        if original_embed.footer:
-            new_embed.set_footer(
-                text=original_embed.footer.text,
-                icon_url=original_embed.footer.icon_url if original_embed.footer.icon_url else discord.Embed.Empty
-            )
-        
-        # Edita a mensagem de live game
-        print(f"🔄 [Live Update] Editando mensagem {message_id} no canal {channel.name}...")
-        print(f"🔄 [Live Update] Novo título: '{new_embed.title}'")
-        print(f"🔄 [Live Update] Nova cor: {new_embed.color}")
-
-        try:
-            await message.edit(embed=new_embed)
-            print(f"✅✅✅ [Live Update] MENSAGEM EDITADA COM SUCESSO! ✅✅✅")
-            print(f"🏁 [Live Update] Game ID: {game_id} - Resultado: {result_text}")
-            print(f"🏁 [Live Update] Mensagem ID: {message_id} no servidor: {guild.name}")
-        except discord.errors.Forbidden:
-            print(f"❌ [Live Update] Sem permissão para editar mensagem {message_id}")
-        except discord.errors.NotFound:
-            print(f"❌ [Live Update] Mensagem {message_id} não encontrada (pode ter sido deletada)")
-        except discord.errors.HTTPException as e:
-            print(f"❌ [Live Update] Erro HTTP ao editar mensagem: {e}")
-            print(f"   Status: {e.status}, Código: {e.code}")
-        except Exception as e:
-            print(f"❌ [Live Update] Erro inesperado ao editar mensagem: {e}")
-            print(f"   Tipo do erro: {type(e)}")
-            import traceback
-            traceback.print_exc()
-
-        # Log final para confirmar se a função foi executada completamente
-        print(f"🏁 [Live Update] update_live_game_result FINALIZADA para game_id: {game_id}")
 
     except Exception as e:
         print(f"❌ [Live Update] Erro geral ao atualizar resultado: {e}")
