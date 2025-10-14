@@ -2042,8 +2042,9 @@ async def update_live_game_result(game_id: str, match_data: Dict):
         # Calcula MVP score de todos os jogadores para determinar colocações únicas
         all_players_with_scores = []
         
-        from riot_api import RiotAPI
-        riot = RiotAPI()
+        # Usa a instância global da RiotAPI que já foi inicializada com a chave
+        # riot = RiotAPI()  # <- linha removida, estava causando erro
+        # A variável global 'riot_api' já está disponível e inicializada com a chave
         
         # Prepara dados globais para cálculo
         all_kdas = [(pl['kills'] + pl['assists']) / max(pl['deaths'], 1) for pl in participants]
@@ -2092,7 +2093,7 @@ async def update_live_game_result(game_id: str, match_data: Dict):
                 'win': p.get('win', False)
             }
             
-            mvp_score, _ = riot.calculate_mvp_score(player_stats, all_players_stats, p_role)
+            mvp_score, _ = riot_api.calculate_mvp_score(player_stats, all_players_stats, p_role)
             
             all_players_with_scores.append({
                 'player': p,

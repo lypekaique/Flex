@@ -1,5 +1,6 @@
 import aiohttp
 import asyncio
+import time
 from typing import Optional, Dict, List
 from datetime import datetime
 
@@ -40,102 +41,138 @@ class RiotAPI:
         self.headers = {
             "X-Riot-Token": api_key
         }
-    
+
+        # Controle de rate limiting
+        self._last_request_time = 0
+        self._request_interval = 1.5  # 1.5 segundos entre requisições (40/min para margem de segurança)
+        self._rate_limit_lock = asyncio.Lock()
+        self._request_count_2min = 0  # Contador de requisições nos últimos 2 minutos
+        self._rate_limit_window_start = time.time()
+        self._max_requests_per_2min = 95  # Fica abaixo do limite de 100 para margem de segurança
+
+    async def _rate_limit_wait(self):
+        """Controla o rate limiting entre requisições"""
+        async with self._rate_limit_lock:
+            current_time = time.time()
+
+            # Reseta contador se passou 2 minutos
+            if current_time - self._rate_limit_window_start > 120:
+                self._request_count_2min = 0
+                self._rate_limit_window_start = current_time
+
+            # Verifica limite de 2 minutos
+            if self._request_count_2min >= self._max_requests_per_2min:
+                sleep_time = 120 - (current_time - self._rate_limit_window_start) + 1
+                print(f"⏳ [Rate Limit] Aguardando {sleep_time:.1f}s para resetar janela de 2 minutos")
+                await asyncio.sleep(sleep_time)
+                self._request_count_2min = 0
+                self._rate_limit_window_start = time.time()
+
+            # Controle de intervalo mínimo entre requisições
+            time_since_last = current_time - self._last_request_time
+            if time_since_last < self._request_interval:
+                await asyncio.sleep(self._request_interval - time_since_last)
+
+            self._last_request_time = time.time()
+            self._request_count_2min += 1
+
+    async def _make_request(self, url: str, params: dict = None) -> Optional[Dict]:
+        """Método auxiliar para fazer requisições com tratamento de erro 429"""
+        max_retries = 3
+        retry_delay = 2
+
+        for attempt in range(max_retries):
+            await self._rate_limit_wait()
+
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, headers=self.headers, params=params) as response:
+                        if response.status == 429:
+                            # Rate limit - aguardar mais tempo
+                            retry_after = int(response.headers.get('Retry-After', 60))
+                            print(f"🚫 [Rate Limit] API retornou 429, aguardando {retry_after}s")
+                            await asyncio.sleep(retry_after)
+                            continue
+
+                        if response.status == 200:
+                            return await response.json()
+                        elif response.status == 404:
+                            return None
+                        else:
+                            print(f"Erro na API Riot: {response.status}")
+                            if attempt < max_retries - 1:
+                                await asyncio.sleep(retry_delay)
+                                retry_delay *= 2  # Backoff exponencial
+                            return None
+
+            except Exception as e:
+                print(f"Erro na requisição: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2
+                return None
+
+        return None
+
     async def get_account_by_riot_id(self, game_name: str, tag_line: str, region: str = 'br1') -> Optional[Dict]:
         """Busca informações da conta pelo Riot ID (nome#tag)"""
         routing = self.ROUTING.get(region, 'americas')
         url = f"https://{routing}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/{game_name}/{tag_line}"
-        
-        async with aiohttp.ClientSession() as session:
-            try:
-                async with session.get(url, headers=self.headers) as response:
-                    if response.status == 200:
-                        return await response.json()
-                    elif response.status == 404:
-                        return None
-                    else:
-                        print(f"Erro na API Riot: {response.status}")
-                        return None
-            except Exception as e:
-                print(f"Erro ao buscar conta: {e}")
-                return None
+
+        return await self._make_request(url)
     
     async def get_summoner_by_puuid(self, puuid: str, region: str = 'br1') -> Optional[Dict]:
         """Busca informações do invocador pelo PUUID"""
         if region not in self.REGIONS:
             return None
-        
+
         url = f"https://{self.REGIONS[region]}/lol/summoner/v4/summoners/by-puuid/{puuid}"
-        
-        async with aiohttp.ClientSession() as session:
-            try:
-                async with session.get(url, headers=self.headers) as response:
-                    if response.status == 200:
-                        return await response.json()
-                    elif response.status == 404:
-                        return None
-                    else:
-                        print(f"Erro na API Riot: {response.status}")
-                        return None
-            except Exception as e:
-                print(f"Erro ao buscar invocador: {e}")
-                return None
+
+        return await self._make_request(url)
     
-    async def get_match_history(self, puuid: str, region: str = 'br1', count: int = 20, 
+    async def get_match_history(self, puuid: str, region: str = 'br1', count: int = 20,
                                 queue: int = 440) -> Optional[List[str]]:
         """Busca histórico de partidas (queue 440 = Ranked Flex)"""
         routing = self.ROUTING.get(region, 'americas')
         url = f"https://{routing}.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids"
-        
+
         # Nota: O parâmetro 'queue' foi removido pois causava erro 400
         # Agora filtramos as partidas pelo queueId após buscar os detalhes
         params = {
             'start': 0,
-            'count': count
+            'count': min(count, 20)  # Limita a 20 para não sobrecarregar
         }
-        
-        async with aiohttp.ClientSession() as session:
-            try:
-                async with session.get(url, headers=self.headers, params=params) as response:
-                    if response.status == 200:
-                        return await response.json()
-                    else:
-                        print(f"Erro ao buscar histórico: {response.status}")
-                        text = await response.text()
-                        print(f"Resposta da API: {text}")
-                        return None
-            except Exception as e:
-                print(f"Erro ao buscar histórico: {e}")
-                return None
+
+        return await self._make_request(url, params)
     
     async def get_match_details(self, match_id: str, region: str = 'br1') -> Optional[Dict]:
         """Busca detalhes de uma partida específica"""
         routing = self.ROUTING.get(region, 'americas')
         url = f"https://{routing}.api.riotgames.com/lol/match/v5/matches/{match_id}"
-        
-        async with aiohttp.ClientSession() as session:
-            try:
-                async with session.get(url, headers=self.headers) as response:
-                    if response.status == 200:
-                        return await response.json()
-                    else:
-                        print(f"Erro ao buscar detalhes da partida: {response.status}")
-                        return None
-            except Exception as e:
-                print(f"Erro ao buscar detalhes da partida: {e}")
-                return None
+
+        return await self._make_request(url)
     
     async def get_active_game(self, puuid: str, region: str = 'br1') -> Optional[Dict]:
         """Busca informações de partida em andamento (Spectator API)"""
         if region not in self.REGIONS:
             return None
-        
+
         # Spectator V5 usa PUUID diretamente
         url = f"https://{self.REGIONS[region]}/lol/spectator/v5/active-games/by-summoner/{puuid}"
-        
-        async with aiohttp.ClientSession() as session:
-            try:
+
+        # Usa o método _make_request mas com tratamento especial para erro 404
+        await self._rate_limit_wait()
+
+        try:
+            async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=self.headers) as response:
+                    if response.status == 429:
+                        # Rate limit - aguardar mais tempo
+                        retry_after = int(response.headers.get('Retry-After', 60))
+                        print(f"🚫 [Rate Limit] API retornou 429, aguardando {retry_after}s")
+                        await asyncio.sleep(retry_after)
+                        return None
+
                     if response.status == 200:
                         return await response.json()
                     elif response.status == 404:
@@ -150,9 +187,9 @@ class RiotAPI:
                             print(f"Resposta da API: {text[:200]}")
                             self._last_spectator_error = datetime.now()
                         return None
-            except Exception as e:
-                print(f"Erro ao buscar partida ativa: {e}")
-                return None
+        except Exception as e:
+            print(f"Erro ao buscar partida ativa: {e}")
+            return None
     
     def extract_live_game_info(self, game_data: Dict, puuid: str) -> Optional[Dict]:
         """Extrai informações relevantes de uma partida ao vivo"""
