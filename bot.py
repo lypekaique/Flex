@@ -1878,10 +1878,10 @@ async def update_live_game_result(game_id: str, match_data: Dict):
         for i, p in enumerate(match_puuids[:3]):
             print(f"   {i+1}. {p[:30]}...")
         
-        # Tenta buscar por game_id primeiro (tenta ambos string e int)
+        # Tenta buscar por game_id primeiro - busca APENAS a primeira mensagem única
         print(f"🔍 [Live Update] Buscando por game_id: '{game_id_str}'")
         cursor.execute('''
-            SELECT message_id, channel_id, guild_id, lol_account_id
+            SELECT DISTINCT message_id, channel_id, guild_id, lol_account_id
             FROM live_games_notified
             WHERE game_id = ?
               AND message_id IS NOT NULL
