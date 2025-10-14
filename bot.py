@@ -1856,6 +1856,11 @@ async def update_live_game_result(game_id: str, match_data: Dict):
     """
     try:
         print(f"🔍 [Live Update] Buscando mensagem de live game para game_id: {game_id}")
+        print(f"   📍 Tipo do game_id: {type(game_id)}")
+        
+        # Converte game_id para string para garantir comparação correta
+        game_id_str = str(game_id)
+        
         # Busca se existe mensagem de live game para este match
         conn = db.get_connection()
         cursor = conn.cursor()
@@ -1863,43 +1868,53 @@ async def update_live_game_result(game_id: str, match_data: Dict):
         # Debug: Lista todos os game_ids ativos
         cursor.execute('SELECT game_id, message_id, puuid FROM live_games_notified WHERE message_id IS NOT NULL')
         all_games = cursor.fetchall()
-        print(f"🔍 [Live Update DEBUG] Games ativos no banco:")
+        print(f"🔍 [Live Update DEBUG] Games ativos no banco ({len(all_games)} encontrados):")
         for g in all_games:
-            print(f"   - Game ID: {g[0]}, Message ID: {g[1]}, PUUID: {g[2]}")
+            print(f"   - Game ID: {g[0]} (tipo: {type(g[0])}), Message ID: {g[1]}, PUUID: {g[2][:20]}...")
         
         # Busca PUUIDs dos participantes da partida
         match_puuids = [p['puuid'] for p in match_data['info']['participants']]
-        print(f"🔍 [Live Update] PUUIDs da partida terminada: {match_puuids[:3]}...")
+        print(f"🔍 [Live Update] PUUIDs da partida terminada ({len(match_puuids)} jogadores):")
+        for i, p in enumerate(match_puuids[:3]):
+            print(f"   {i+1}. {p[:30]}...")
         
-        # Tenta buscar por game_id primeiro
+        # Tenta buscar por game_id primeiro (tenta ambos string e int)
+        print(f"🔍 [Live Update] Buscando por game_id: '{game_id_str}'")
         cursor.execute('''
             SELECT DISTINCT message_id, channel_id, guild_id, lol_account_id
             FROM live_games_notified
-            WHERE game_id = ?
+            WHERE (game_id = ? OR game_id = ?)
               AND message_id IS NOT NULL
             LIMIT 1
-        ''', (game_id,))
+        ''', (game_id_str, game_id))
         live_msg = cursor.fetchone()
         
-        # Se não encontrou por game_id, tenta buscar por PUUID
+        # Se não encontrou por game_id, tenta buscar por PUUID (método mais confiável)
         if not live_msg:
-            print(f"⚠️ [Live Update] Não encontrado por game_id {game_id}, tentando por PUUID...")
-            cursor.execute('''
-                SELECT DISTINCT message_id, channel_id, guild_id, lol_account_id, game_id
+            print(f"⚠️ [Live Update] Não encontrado por game_id, tentando por PUUID...")
+            placeholders = ','.join('?' * len(match_puuids))
+            query = f'''
+                SELECT DISTINCT message_id, channel_id, guild_id, lol_account_id, game_id, puuid
                 FROM live_games_notified
-                WHERE puuid IN ({})
+                WHERE puuid IN ({placeholders})
                   AND message_id IS NOT NULL
                 ORDER BY notified_at DESC
                 LIMIT 1
-            '''.format(','.join('?' * len(match_puuids))), match_puuids)
+            '''
+            cursor.execute(query, match_puuids)
             result = cursor.fetchone()
             
             if result:
                 live_msg = result[:4]
                 found_game_id = result[4]
-                print(f"✅ [Live Update] Encontrado por PUUID! Game ID no banco: {found_game_id}")
+                found_puuid = result[5]
+                print(f"✅ [Live Update] Encontrado por PUUID!")
+                print(f"   📍 Game ID no banco: {found_game_id}")
+                print(f"   📍 PUUID: {found_puuid[:30]}...")
                 # Atualiza o game_id para usar na remoção posterior
                 game_id = found_game_id
+        else:
+            print(f"✅ [Live Update] Encontrado por game_id!")
         
         if not live_msg:
             print(f"⚠️ [Live Update] Nenhuma mensagem de live game encontrada para game_id: {game_id}")
@@ -2213,11 +2228,23 @@ async def update_live_game_result(game_id: str, match_data: Dict):
             )
         
         # Edita a mensagem de live game
-        await message.edit(embed=new_embed)
-        print(f"🏁 [Live Update] Mensagem de live game atualizada com sucesso para game_id: {game_id} - {result_text}")
+        print(f"🔄 [Live Update] Editando mensagem {message_id} no canal {channel.name}...")
+        try:
+            await message.edit(embed=new_embed)
+            print(f"✅✅✅ [Live Update] MENSAGEM EDITADA COM SUCESSO! ✅✅✅")
+            print(f"🏁 [Live Update] Game ID: {game_id} - Resultado: {result_text}")
+            print(f"🏁 [Live Update] Mensagem ID: {message_id} no servidor: {guild.name}")
+        except discord.errors.Forbidden:
+            print(f"❌ [Live Update] Sem permissão para editar mensagem {message_id}")
+        except discord.errors.NotFound:
+            print(f"❌ [Live Update] Mensagem {message_id} não encontrada (pode ter sido deletada)")
+        except Exception as e:
+            print(f"❌ [Live Update] Erro ao editar mensagem: {e}")
+            import traceback
+            traceback.print_exc()
         
     except Exception as e:
-        print(f"Erro ao atualizar resultado do live game: {e}")
+        print(f"❌ [Live Update] Erro geral ao atualizar resultado: {e}")
         import traceback
         traceback.print_exc()
 
@@ -3085,8 +3112,13 @@ async def check_live_games_finished():
 
                                 # Atualiza o resultado no live game (apenas uma vez por partida)
                                 if match_id not in processed_matches:
-                                    print(f"🔄 [Live Check] Atualizando mensagem de live game para {match_id}")
+                                    print(f"🔄🔄🔄 [Live Check] CHAMANDO update_live_game_result 🔄🔄🔄")
+                                    print(f"   📍 game_id: {game_id} (tipo: {type(game_id)})")
+                                    print(f"   📍 match_id: {match_id}")
+                                    print(f"   📍 account_id: {account_id}")
+                                    print(f"   📍 puuid: {puuid}")
                                     await update_live_game_result(game_id, match_data)
+                                    print(f"✅ [Live Check] update_live_game_result CONCLUÍDA")
                                     processed_matches.add(match_id)
 
                                 # Log diferente para remakes
