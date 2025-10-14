@@ -3108,9 +3108,18 @@ async def check_live_games_finished():
 
                                 # Salva no banco de dados ANTES de tudo
                                 print(f"💾 [Live Check] Salvando partida no banco de dados...")
-                                db.add_match(account_id, stats)
+                                save_result = db.add_match(account_id, stats)
+                                if save_result:
+                                    print(f"✅ [Live Check] Partida salva no banco com sucesso!")
+                                else:
+                                    print(f"⚠️ [Live Check] Falha ao salvar partida no banco (pode já existir)")
 
                                 # Atualiza o resultado no live game (apenas uma vez por partida)
+                                print(f"🔍 [Live Check] Verificando se deve chamar update_live_game_result...")
+                                print(f"   📍 match_id atual: {match_id}")
+                                print(f"   📍 processed_matches: {processed_matches}")
+                                print(f"   📍 match_id not in processed_matches: {match_id not in processed_matches}")
+                                
                                 if match_id not in processed_matches:
                                     print(f"🔄🔄🔄 [Live Check] CHAMANDO update_live_game_result 🔄🔄🔄")
                                     print(f"   📍 game_id: {game_id} (tipo: {type(game_id)})")
@@ -3120,6 +3129,9 @@ async def check_live_games_finished():
                                     await update_live_game_result(game_id, match_data)
                                     print(f"✅ [Live Check] update_live_game_result CONCLUÍDA")
                                     processed_matches.add(match_id)
+                                    print(f"✅ [Live Check] Match ID {match_id} adicionado a processed_matches")
+                                else:
+                                    print(f"⏭️ [Live Check] Match ID {match_id} já foi processado, pulando update_live_game_result")
 
                                 # Log diferente para remakes
                                 if stats.get('is_remake', False):

@@ -268,7 +268,7 @@ class Database:
                     kills, deaths, assists, damage_dealt, damage_taken,
                     gold_earned, cs, vision_score, game_duration, win,
                     mvp_score, mvp_placement, kda, kill_participation, played_at, is_remake
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 lol_account_id,
                 match_data['match_id'],
