@@ -3038,6 +3038,9 @@ async def check_live_games_finished():
                     conn.close()
 
                     if not account_data:
+                        # Remove live game se conta não existe mais
+                        print(f"🗑️ [Live Check] Removendo live game {game_id} (conta {account_id} não encontrada)")
+                        db.remove_live_game_notification(account_id, game_id)
                         continue
 
                     puuid, region = account_data
@@ -3048,6 +3051,9 @@ async def check_live_games_finished():
 
                     if not match_ids:
                         print(f"⚠️ [Live Check] Nenhum histórico encontrado para {puuid}")
+                        # Remove da lista para evitar loop infinito
+                        print(f"🗑️ [Live Check] Removendo live game {game_id} da lista (sem histórico)")
+                        db.remove_live_game_notification(account_id, game_id)
                         continue
 
                     print(f"🔍 [Live Check] Partidas encontradas: {match_ids}")
@@ -3057,21 +3063,24 @@ async def check_live_games_finished():
                     for mid in match_ids[:2]:  # Verifica apenas 2 partidas por conta
                         # Busca detalhes da partida para verificar se terminou recentemente
                         match_data = await riot_api.get_match_details(mid, region)
-                    if match_data:
-                        game_end_timestamp = match_data.get('info', {}).get('gameEndTimestamp')
-                        if game_end_timestamp:
-                            from datetime import datetime, timedelta
-                            game_end = datetime.fromtimestamp(game_end_timestamp / 1000)
-                            now = datetime.now()
+                        if match_data:
+                            game_end_timestamp = match_data.get('info', {}).get('gameEndTimestamp')
+                            if game_end_timestamp:
+                                from datetime import datetime, timedelta
+                                game_end = datetime.fromtimestamp(game_end_timestamp / 1000)
+                                now = datetime.now()
 
-                            # Se terminou há menos de 15 minutos, pode ser nossa partida
-                            if (now - game_end) < timedelta(minutes=15):
-                                match_id = mid
-                                print(f"🔍 [Live Check] Candidato encontrado: {match_id} (terminou há {(now - game_end).seconds // 60} minutos)")
-                                break
+                                # Se terminou há menos de 15 minutos, pode ser nossa partida
+                                if (now - game_end) < timedelta(minutes=15):
+                                    match_id = mid
+                                    print(f"🔍 [Live Check] Candidato encontrado: {match_id} (terminou há {(now - game_end).seconds // 60} minutos)")
+                                    break
 
                     if not match_id:
                         print(f"⚠️ [Live Check] Nenhuma partida recente encontrada para {puuid}")
+                        # Remove da lista para evitar loop infinito
+                        print(f"🗑️ [Live Check] Removendo live game {game_id} da lista (sem partida recente)")
+                        db.remove_live_game_notification(account_id, game_id)
                         continue
 
                     print(f"🔍 [Live Check] Verificando partida {match_id} para live game {game_id}")
@@ -3112,8 +3121,10 @@ async def check_live_games_finished():
                         queue_id = match_data.get('info', {}).get('queueId', 0)
                         print(f"🔍 [Live Check] Queue ID da partida: {queue_id}")
                         if queue_id != 440:
-                            # Não é Ranked Flex, pula
+                            # Não é Ranked Flex, pula e remove para evitar loop
                             print(f"⚠️ [Live Check] Partida {match_id} não é Ranked Flex (queueId: {queue_id})")
+                            print(f"🗑️ [Live Check] Removendo live game {game_id} da lista (não é Ranked Flex)")
+                            db.remove_live_game_notification(account_id, game_id)
                             continue
 
                         # Verifica se é a partida do live game (o game_id da spectator API é diferente do match_id)
