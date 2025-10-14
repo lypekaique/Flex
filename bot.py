@@ -2675,86 +2675,103 @@ async def send_live_game_notification_grouped(game_id: str, players: list):
         print(f"Erro ao processar notificação agrupada: {e}")
         return None
 
-@tasks.loop(seconds=180)
+@tasks.loop(seconds=300)  # Mudou de 180 para 300 segundos (5 minutos)
 async def check_live_games():
-    """Task que verifica se jogadores estão em partidas ao vivo a cada 3 minutos (180 segundos)"""
+    """Task que verifica se jogadores estão em partidas ao vivo a cada 5 minutos"""
     try:
         print("🔄 [Live Games] Verificando partidas ao vivo...")
-        
+
         # Limpa notificações antigas (mais de 6 horas)
         db.cleanup_old_live_game_notifications(hours=6)
 
         # Conta quantas notificações ativas existem
         active_count = len(db.get_active_live_games(hours=1))
         print(f"📊 [Live Games] {active_count} notificações ativas na última hora")
-        
+
         # Busca todas as contas vinculadas
         conn = db.get_connection()
         cursor = conn.cursor()
         cursor.execute('SELECT id, puuid, region, discord_id, summoner_name FROM lol_accounts')
         accounts = cursor.fetchall()
         conn.close()
-        
+
         if not accounts:
             print("⚠️ [Live Games] Nenhuma conta vinculada para verificar")
             return
-        
+
         print(f"📊 [Live Games] Verificando {len(accounts)} conta(s)...")
-        
+
+        # Processa em lotes menores para evitar rate limit
+        batch_size = 3  # Processa apenas 3 contas por vez
+        total_processed = 0
+
         # Agrupa jogadores por partida (game_id) e evita processamento duplicado
         games_map = {}  # game_id -> [(account_id, puuid, region, discord_id, summoner_name, live_info)]
         processed_game_ids = set()  # Para evitar processamento duplicado na mesma execução
 
-        for account_id, puuid, region, discord_id, summoner_name in accounts:
-            try:
-                # Busca se está em partida ativa
-                game_data = await riot_api.get_active_game(puuid, region)
+        for i in range(0, len(accounts), batch_size):
+            batch = accounts[i:i + batch_size]
+            print(f"🔄 [Live Games] Processando lote {i//batch_size + 1}/{(len(accounts)-1)//batch_size + 1} ({len(batch)} contas)")
 
-                if game_data:
-                    game_id = str(game_data.get('gameId'))
+            for account_id, puuid, region, discord_id, summoner_name in batch:
+                try:
+                    # Busca se está em partida ativa
+                    game_data = await riot_api.get_active_game(puuid, region)
 
-                    # Verificação GLOBAL: se esta partida foi notificada recentemente (últimos 5 minutos), pula TUDO
-                    last_notification = db.get_live_game_notification_time(game_id)
-                    if last_notification:
-                        from datetime import datetime, timedelta
-                        try:
-                            notification_time = datetime.fromisoformat(last_notification.replace('Z', '+00:00'))
-                            now = datetime.now(notification_time.tzinfo) if notification_time.tzinfo else datetime.now()
-                            if (now - notification_time) < timedelta(minutes=5):
-                                print(f"⚠️ [Live Games] Partida {game_id} foi notificada há {(now - notification_time).seconds // 60} minutos, pulando...")
-                                continue
-                        except Exception as e:
-                            print(f"⚠️ [Live Games] Erro ao processar timestamp: {e}")
+                    if game_data:
+                        game_id = str(game_data.get('gameId'))
 
-                    # Verifica se já foi notificado
-                    if not db.is_live_game_notified(account_id, game_id):
-                        # Extrai informações
-                        live_info = riot_api.extract_live_game_info(game_data, puuid)
+                        # Verificação GLOBAL: se esta partida foi notificada recentemente (últimos 5 minutos), pula TUDO
+                        last_notification = db.get_live_game_notification_time(game_id)
+                        if last_notification:
+                            from datetime import datetime, timedelta
+                            try:
+                                notification_time = datetime.fromisoformat(last_notification.replace('Z', '+00:00'))
+                                now = datetime.now(notification_time.tzinfo) if notification_time.tzinfo else datetime.now()
+                                if (now - notification_time) < timedelta(minutes=5):
+                                    print(f"⚠️ [Live Games] Partida {game_id} foi notificada há {(now - notification_time).seconds // 60} minutos, pulando...")
+                                    continue
+                            except Exception as e:
+                                print(f"⚠️ [Live Games] Erro ao processar timestamp: {e}")
 
-                        if live_info:
-                            # Agrupa por game_id
-                            if game_id not in games_map:
-                                games_map[game_id] = []
+                        # Verifica se já foi notificado
+                        if not db.is_live_game_notified(account_id, game_id):
+                            # Extrai informações
+                            live_info = riot_api.extract_live_game_info(game_data, puuid)
 
-                            games_map[game_id].append({
-                                'account_id': account_id,
-                                'puuid': puuid,
-                                'region': region,
-                                'discord_id': discord_id,
-                                'summoner_name': summoner_name,
-                                'live_info': live_info
-                            })
-                            print(f"✅ [Live Games] Conta {account_id} ({summoner_name}) adicionada à partida {game_id}")
-                    else:
-                        print(f"⚠️ [Live Games] Conta {account_id} já notificada para partida {game_id}")
+                            if live_info:
+                                # Agrupa por game_id
+                                if game_id not in games_map:
+                                    games_map[game_id] = []
 
-                # Delay entre verificações de contas
-                await asyncio.sleep(1.5)
-                
-            except Exception as e:
-                print(f"❌ [Live Games] Erro ao verificar conta {account_id}: {e}")
-                continue
-        
+                                games_map[game_id].append({
+                                    'account_id': account_id,
+                                    'puuid': puuid,
+                                    'region': region,
+                                    'discord_id': discord_id,
+                                    'summoner_name': summoner_name,
+                                    'live_info': live_info
+                                })
+                                print(f"✅ [Live Games] Conta {account_id} ({summoner_name}) adicionada à partida {game_id}")
+                        else:
+                            print(f"⚠️ [Live Games] Conta {account_id} já notificada para partida {game_id}")
+
+                    # Delay entre verificações de contas
+                    await asyncio.sleep(1.5)
+
+                except Exception as e:
+                    print(f"❌ [Live Games] Erro ao verificar conta {account_id}: {e}")
+                    continue
+
+                # Delay menor entre contas do mesmo lote
+                if len(batch) > 1:
+                    await asyncio.sleep(0.5)
+
+        # Delay maior entre lotes
+        if i + batch_size < len(accounts):
+            print(f"⏳ [Live Games] Aguardando 3 segundos antes do próximo lote...")
+            await asyncio.sleep(3)
+
         # Log resumo de detecções
         if games_map:
             print(f"\n📋 [Live Games] Resumo de detecções:")
@@ -2868,58 +2885,65 @@ async def check_live_games_error(error):
     traceback.print_exc()
     # Task loop automaticamente reinicia após erro
 
-@tasks.loop(minutes=5)
+@tasks.loop(minutes=10)  # Mudou de 5 para 10 minutos
 async def check_new_matches():
-    """Task que verifica novas partidas a cada 5 minutos"""
+    """Task que verifica novas partidas a cada 10 minutos - OTIMIZADA"""
     try:
         print("🔄 [Partidas] Verificando novas partidas...")
-        
+
         # Busca todas as contas vinculadas
         conn = db.get_connection()
         cursor = conn.cursor()
         cursor.execute('SELECT id, puuid, region FROM lol_accounts')
         accounts = cursor.fetchall()
         conn.close()
-        
+
         if not accounts:
             print("⚠️ [Partidas] Nenhuma conta vinculada para verificar")
             return
-        
+
         print(f"📊 [Partidas] Verificando {len(accounts)} conta(s)...")
         new_matches_count = 0
-        
-        for account_id, puuid, region in accounts:
-            try:
-                # Busca últimas partidas
-                match_ids = await riot_api.get_match_history(puuid, region, count=5)
-                
-                if not match_ids:
-                    continue
-                
-                # Verifica se são partidas novas
-                last_match = db.get_last_match_id(account_id)
-                
-                for match_id in match_ids:
-                    # Se já foi registrada, para
-                    if match_id == last_match:
-                        break
-                    
-                    # Busca detalhes da partida
-                    match_data = await riot_api.get_match_details(match_id, region)
-                    
-                    if match_data:
-                        # Verifica se é Ranked Flex (queueId 440)
-                        queue_id = match_data.get('info', {}).get('queueId', 0)
-                        if queue_id != 440:
-                            # Não é Ranked Flex, pula essa partida
-                            continue
-                        
-                        # Extrai estatísticas do jogador
-                        stats = riot_api.extract_player_stats(match_data, puuid)
-                        
-                        if stats:
-                            # Salva no banco de dados
-                            db.add_match(account_id, stats)
+
+        # Processa em lotes menores para evitar rate limit
+        batch_size = 2  # Processa apenas 2 contas por vez
+
+        for i in range(0, len(accounts), batch_size):
+            batch = accounts[i:i + batch_size]
+            print(f"🔄 [Partidas] Processando lote {i//batch_size + 1}/{(len(accounts)-1)//batch_size + 1} ({len(batch)} contas)")
+
+            for account_id, puuid, region in batch:
+                try:
+                    # Busca apenas 2 partidas recentes (era 5)
+                    match_ids = await riot_api.get_match_history(puuid, region, count=2)
+
+                    if not match_ids:
+                        continue
+
+                    # Verifica se são partidas novas
+                    last_match = db.get_last_match_id(account_id)
+
+                    for match_id in match_ids[:1]:  # Verifica apenas 1 partida por conta
+                        # Se já foi registrada, para
+                        if match_id == last_match:
+                            break
+
+                        # Busca detalhes da partida
+                        match_data = await riot_api.get_match_details(match_id, region)
+
+                        if match_data:
+                            # Verifica se é Ranked Flex (queueId 440)
+                            queue_id = match_data.get('info', {}).get('queueId', 0)
+                            if queue_id != 440:
+                                # Não é Ranked Flex, pula essa partida
+                                continue
+
+                            # Extrai estatísticas do jogador
+                            stats = riot_api.extract_player_stats(match_data, puuid)
+
+                            if stats:
+                                # Salva no banco de dados
+                                db.add_match(account_id, stats)
                             new_matches_count += 1
                             
                             # Log diferente para remakes
@@ -2937,13 +2961,19 @@ async def check_new_matches():
                     
                     # Delay para não sobrecarregar a API
                     await asyncio.sleep(1)
-                
-                await asyncio.sleep(2)
-            
-            except Exception as e:
-                print(f"❌ [Partidas] Erro ao verificar conta {account_id}: {e}")
-                continue
-        
+
+                    # Delay entre verificações de partidas
+                    await asyncio.sleep(2)
+
+                except Exception as e:
+                    print(f"❌ [Partidas] Erro ao verificar conta {account_id}: {e}")
+                    continue
+
+            # Delay maior entre lotes
+            if i + batch_size < len(accounts):
+                print(f"⏳ [Partidas] Aguardando 4 segundos antes do próximo lote...")
+                await asyncio.sleep(4)
+
         if new_matches_count > 0:
             print(f"🎮 [Partidas] {new_matches_count} nova(s) partida(s) encontrada(s)")
         else:
@@ -2969,57 +2999,64 @@ async def check_new_matches_error(error):
     traceback.print_exc()
     # Task loop automaticamente reinicia após erro
 
-@tasks.loop(seconds=60)
+@tasks.loop(seconds=120)  # Mudou de 60 para 120 segundos (2 minutos)
 async def check_live_games_finished():
-    """Task que verifica a cada 60 segundos se jogos ao vivo já terminaram"""
+    """Task que verifica a cada 2 minutos se jogos ao vivo já terminaram - OTIMIZADA"""
     try:
         # Busca todas as live games notificadas recentemente (últimas 2 horas)
         live_games = db.get_active_live_games(hours=2)
-        
+
         if not live_games:
             return
-        
+
         print(f"🔄 [Live Check] Verificando {len(live_games)} partida(s) ao vivo...")
 
         # Debug: mostra informações das live games encontradas
         for lg in live_games:
             print(f"   📋 Live Game: {lg['game_id']} | Conta: {lg['lol_account_id']} | PUUID: {lg['puuid']}")
 
+        # Processa em lotes menores para evitar rate limit
+        batch_size = 2  # Processa apenas 2 contas por vez
+
         # Agrupa por match_id para processar uma vez por partida
         processed_matches = set()
-        
-        for live_game in live_games:
-            account_id = live_game['lol_account_id']
-            game_id = live_game['game_id']
-            
-            try:
-                # Busca informações da conta
-                conn = db.get_connection()
-                cursor = conn.cursor()
-                cursor.execute('SELECT puuid, region FROM lol_accounts WHERE id = ?', (account_id,))
-                account_data = cursor.fetchone()
-                conn.close()
-                
-                if not account_data:
-                    continue
-                
-                puuid, region = account_data
-                
-                # Busca últimas 5 partidas (para ter mais opções de comparação)
-                print(f"🔍 [Live Check] Buscando histórico para PUUID {puuid} na região {region}")
-                match_ids = await riot_api.get_match_history(puuid, region, count=5)
 
-                if not match_ids:
-                    print(f"⚠️ [Live Check] Nenhum histórico encontrado para {puuid}")
-                    continue
+        for i in range(0, len(live_games), batch_size):
+            batch = live_games[i:i + batch_size]
+            print(f"🔄 [Live Check] Processando lote {i//batch_size + 1}/{(len(live_games)-1)//batch_size + 1} ({len(batch)} jogos)")
 
-                print(f"🔍 [Live Check] Partidas encontradas: {match_ids}")
+            for live_game in batch:
+                account_id = live_game['lol_account_id']
+                game_id = live_game['game_id']
 
-                # Busca a partida que pode ser a live game (verifica as últimas 5)
-                match_id = None
-                for mid in match_ids:
-                    # Busca detalhes da partida para verificar se terminou recentemente
-                    match_data = await riot_api.get_match_details(mid, region)
+                try:
+                    # Busca informações da conta
+                    conn = db.get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute('SELECT puuid, region FROM lol_accounts WHERE id = ?', (account_id,))
+                    account_data = cursor.fetchone()
+                    conn.close()
+
+                    if not account_data:
+                        continue
+
+                    puuid, region = account_data
+
+                    # Busca apenas 3 partidas recentes (era 5)
+                    print(f"🔍 [Live Check] Buscando histórico para PUUID {puuid} na região {region}")
+                    match_ids = await riot_api.get_match_history(puuid, region, count=3)
+
+                    if not match_ids:
+                        print(f"⚠️ [Live Check] Nenhum histórico encontrado para {puuid}")
+                        continue
+
+                    print(f"🔍 [Live Check] Partidas encontradas: {match_ids}")
+
+                    # Busca a partida que pode ser a live game (verifica as últimas 3)
+                    match_id = None
+                    for mid in match_ids[:2]:  # Verifica apenas 2 partidas por conta
+                        # Busca detalhes da partida para verificar se terminou recentemente
+                        match_data = await riot_api.get_match_details(mid, region)
                     if match_data:
                         game_end_timestamp = match_data.get('info', {}).get('gameEndTimestamp')
                         if game_end_timestamp:
@@ -3033,148 +3070,153 @@ async def check_live_games_finished():
                                 print(f"🔍 [Live Check] Candidato encontrado: {match_id} (terminou há {(now - game_end).seconds // 60} minutos)")
                                 break
 
-                if not match_id:
-                    print(f"⚠️ [Live Check] Nenhuma partida recente encontrada para {puuid}")
-                    continue
-
-                print(f"🔍 [Live Check] Verificando partida {match_id} para live game {game_id}")
-
-                # Busca informações da live game para comparar com a partida terminada
-                live_game_info = db.get_live_game_message(account_id, match_id)
-                if live_game_info:
-                    print(f"🔍 [Live Check] Comparando live game {game_id} com partida terminada {match_id}")
-                    print(f"   PUUID live: {live_game_info['puuid']} | PUUID partida: {puuid}")
-
-                    # Se os PUUIDs batem, é a mesma partida
-                    if live_game_info['puuid'] == puuid:
-                        print(f"✅ [Live Check] PUUID corresponde - é a mesma partida!")
-                    else:
-                        print(f"⚠️ [Live Check] PUUID diferente - pode ser outra partida")
-                        # Continua verificando mesmo assim, pois pode ser a mesma partida com PUUID diferente
-                else:
-                    print(f"⚠️ [Live Check] Nenhuma informação de live game encontrada para conta {account_id}")
-
-                # Verifica se já está registrada no banco
-                last_match_id = db.get_last_match_id(account_id)
-                print(f"🔍 [Live Check] Última partida registrada: {last_match_id} | Nova partida: {match_id}")
-
-                if last_match_id == match_id:
-                    print(f"✅ [Live Check] Partida {match_id} já processada, removendo live game {game_id}")
-                    # Já foi processada, pode remover da lista de live games
-                    db.remove_live_game_notification(account_id, game_id)
-                    continue
-
-                print(f"🔍 [Live Check] Partida {match_id} ainda não processada, continuando verificação...")
-
-                # Busca detalhes da partida
-                print(f"🔍 [Live Check] Buscando detalhes da partida {match_id}...")
-                match_data = await riot_api.get_match_details(match_id, region)
-
-                if match_data:
-                    # Verifica se é Ranked Flex (queueId 440)
-                    queue_id = match_data.get('info', {}).get('queueId', 0)
-                    print(f"🔍 [Live Check] Queue ID da partida: {queue_id}")
-                    if queue_id != 440:
-                        # Não é Ranked Flex, pula
-                        print(f"⚠️ [Live Check] Partida {match_id} não é Ranked Flex (queueId: {queue_id})")
+                    if not match_id:
+                        print(f"⚠️ [Live Check] Nenhuma partida recente encontrada para {puuid}")
                         continue
-                    
-                    # Verifica se é a partida do live game (o game_id da spectator API é diferente do match_id)
-                    # Então verificamos se a partida terminou recentemente (menos de 10 minutos)
-                    game_end_timestamp = match_data.get('info', {}).get('gameEndTimestamp')
-                    if game_end_timestamp:
-                        from datetime import datetime, timedelta
-                        game_end = datetime.fromtimestamp(game_end_timestamp / 1000)
-                        now = datetime.now()
-                        minutes_ago = (now - game_end).seconds // 60
 
-                        print(f"⏱️ [Live Check] Partida terminou em: {game_end} (há {minutes_ago} minutos)")
+                    print(f"🔍 [Live Check] Verificando partida {match_id} para live game {game_id}")
 
-                        # Se terminou há menos de 10 minutos, processamos
-                        if (now - game_end) < timedelta(minutes=10):
-                            print(f"⏱️ [Live Check] Partida terminou recentemente (há {minutes_ago} minutos), iniciando processamento...")
+                    # Busca informações da live game para comparar com a partida terminada
+                    live_game_info = db.get_live_game_message(account_id, match_id)
+                    if live_game_info:
+                        print(f"🔍 [Live Check] Comparando live game {game_id} com partida terminada {match_id}")
+                        print(f"   PUUID live: {live_game_info['puuid']} | PUUID partida: {puuid}")
 
-                            # Verificação adicional: comparar campeão da live game com o da partida terminada
-                            champion_match = True
-                            if live_game_info and live_game_info['champion_name']:
-                                participant_champion = None
-                                for participant in match_data['info']['participants']:
-                                    if participant['puuid'] == puuid:
-                                        participant_champion = participant.get('championName', 'Unknown')
-                                        break
+                        # Se os PUUIDs batem, é a mesma partida
+                        if live_game_info['puuid'] == puuid:
+                            print(f"✅ [Live Check] PUUID corresponde - é a mesma partida!")
+                        else:
+                            print(f"⚠️ [Live Check] PUUID diferente - pode ser outra partida")
+                            # Continua verificando mesmo assim, pois pode ser a mesma partida com PUUID diferente
+                    else:
+                        print(f"⚠️ [Live Check] Nenhuma informação de live game encontrada para conta {account_id}")
 
-                                if participant_champion:
-                                    print(f"🏆 [Live Check] Campeão live: {live_game_info['champion_name']} | Campeão partida: {participant_champion}")
-                                    if live_game_info['champion_name'] != participant_champion:
-                                        print(f"⚠️ [Live Check] Campeões diferentes - pode não ser a mesma partida")
-                                        champion_match = False
-                                        # Continua mesmo assim, pois pode haver erro na comparação
+                    # Verifica se já está registrada no banco
+                    last_match_id = db.get_last_match_id(account_id)
+                    print(f"🔍 [Live Check] Última partida registrada: {last_match_id} | Nova partida: {match_id}")
 
-                            if champion_match:
-                                print(f"✅ [Live Check] Verificação de campeão passou ou foi ignorada")
-                            print(f"🏁 [Live Check] Partida {match_id} terminou recentemente, iniciando processamento...")
-                            # Extrai estatísticas do jogador
-                            print(f"📊 [Live Check] Extraindo estatísticas para {puuid}...")
-                            stats = riot_api.extract_player_stats(match_data, puuid)
+                    if last_match_id == match_id:
+                        print(f"✅ [Live Check] Partida {match_id} já processada, removendo live game {game_id}")
+                        # Já foi processada, pode remover da lista de live games
+                        db.remove_live_game_notification(account_id, game_id)
+                        continue
 
-                            if stats:
-                                print(f"📊 [Live Check] Estatísticas extraídas para {puuid}: {stats['champion_name']} - MVP: {stats['mvp_score']}")
+                    print(f"🔍 [Live Check] Partida {match_id} ainda não processada, continuando verificação...")
 
-                                # Salva no banco de dados ANTES de tudo
-                                print(f"💾 [Live Check] Salvando partida no banco de dados...")
-                                save_result = db.add_match(account_id, stats)
-                                if save_result:
-                                    print(f"✅ [Live Check] Partida salva no banco com sucesso!")
+                    # Busca detalhes da partida
+                    print(f"🔍 [Live Check] Buscando detalhes da partida {match_id}...")
+                    match_data = await riot_api.get_match_details(match_id, region)
+
+                    if match_data:
+                        # Verifica se é Ranked Flex (queueId 440)
+                        queue_id = match_data.get('info', {}).get('queueId', 0)
+                        print(f"🔍 [Live Check] Queue ID da partida: {queue_id}")
+                        if queue_id != 440:
+                            # Não é Ranked Flex, pula
+                            print(f"⚠️ [Live Check] Partida {match_id} não é Ranked Flex (queueId: {queue_id})")
+                            continue
+
+                        # Verifica se é a partida do live game (o game_id da spectator API é diferente do match_id)
+                        # Então verificamos se a partida terminou recentemente (menos de 10 minutos)
+                        game_end_timestamp = match_data.get('info', {}).get('gameEndTimestamp')
+                        if game_end_timestamp:
+                            from datetime import datetime, timedelta
+                            game_end = datetime.fromtimestamp(game_end_timestamp / 1000)
+                            now = datetime.now()
+                            minutes_ago = (now - game_end).seconds // 60
+
+                            print(f"⏱️ [Live Check] Partida terminou em: {game_end} (há {minutes_ago} minutos)")
+
+                            # Se terminou há menos de 10 minutos, processamos
+                            if (now - game_end) < timedelta(minutes=10):
+                                print(f"⏱️ [Live Check] Partida terminou recentemente (há {minutes_ago} minutos), iniciando processamento...")
+
+                                # Verificação adicional: comparar campeão da live game com o da partida terminada
+                                champion_match = True
+                                if live_game_info and live_game_info['champion_name']:
+                                    participant_champion = None
+                                    for participant in match_data['info']['participants']:
+                                        if participant['puuid'] == puuid:
+                                            participant_champion = participant.get('championName', 'Unknown')
+                                            break
+
+                                    if participant_champion:
+                                        print(f"🏆 [Live Check] Campeão live: {live_game_info['champion_name']} | Campeão partida: {participant_champion}")
+                                        if live_game_info['champion_name'] != participant_champion:
+                                            print(f"⚠️ [Live Check] Campeões diferentes - pode não ser a mesma partida")
+                                            champion_match = False
+                                            # Continua mesmo assim, pois pode haver erro na comparação
+
+                                if champion_match:
+                                    print(f"✅ [Live Check] Verificação de campeão passou ou foi ignorada")
+                                print(f"🏁 [Live Check] Partida {match_id} terminou recentemente, iniciando processamento...")
+                                # Extrai estatísticas do jogador
+                                print(f"📊 [Live Check] Extraindo estatísticas para {puuid}...")
+                                stats = riot_api.extract_player_stats(match_data, puuid)
+
+                                if stats:
+                                    print(f"📊 [Live Check] Estatísticas extraídas para {puuid}: {stats['champion_name']} - MVP: {stats['mvp_score']}")
+
+                                    # Salva no banco de dados ANTES de tudo
+                                    print(f"💾 [Live Check] Salvando partida no banco de dados...")
+                                    save_result = db.add_match(account_id, stats)
+                                    if save_result:
+                                        print(f"✅ [Live Check] Partida salva no banco com sucesso!")
+                                    else:
+                                        print(f"⚠️ [Live Check] Falha ao salvar partida no banco (pode já existir)")
+
+                                    # Atualiza o resultado no live game (apenas uma vez por partida)
+                                    print(f"🔍 [Live Check] Verificando se deve chamar update_live_game_result...")
+                                    print(f"   📍 match_id atual: {match_id}")
+                                    print(f"   📍 processed_matches: {processed_matches}")
+                                    print(f"   📍 match_id not in processed_matches: {match_id not in processed_matches}")
+
+                                    if match_id not in processed_matches:
+                                        print(f"🔄🔄🔄 [Live Check] CHAMANDO update_live_game_result 🔄🔄🔄")
+                                        print(f"   📍 game_id: {game_id} (tipo: {type(game_id)})")
+                                        print(f"   📍 match_id: {match_id}")
+                                        print(f"   📍 account_id: {account_id}")
+                                        print(f"   📍 puuid: {puuid}")
+                                        await update_live_game_result(game_id, match_data)
+                                        print(f"✅ [Live Check] update_live_game_result CONCLUÍDA")
+                                        processed_matches.add(match_id)
+                                        print(f"✅ [Live Check] Match ID {match_id} adicionado a processed_matches")
+                                    else:
+                                        print(f"⏭️ [Live Check] Match ID {match_id} já foi processado, pulando update_live_game_result")
+
+                                    # Log diferente para remakes
+                                    if stats.get('is_remake', False):
+                                        print(f"⚠️ [Live Check] Remake detectado: {match_id} ({stats['game_duration']}s)")
+                                    else:
+                                        print(f"✅ [Live Check] Partida terminada detectada: {match_id} (MVP: {stats.get('mvp_score', 0)})")
+
+                                    # Envia notificação individual com estatísticas detalhadas
+                                    print(f"📨 [Live Check] Enviando notificação individual de estatísticas para {account_id}")
+                                    await send_match_notification(account_id, stats)
+
+                                    # Verifica performance apenas se não for remake
+                                    if not stats.get('is_remake', False):
+                                        print(f"📊 [Live Check] Verificando performance do campeão...")
+                                        await check_champion_performance(account_id, stats['champion_name'])
+
+                                    # Remove da lista de live games
+                                    print(f"🗑️ [Live Check] Removendo live game {game_id} da lista")
+                                    db.remove_live_game_notification(account_id, game_id)
                                 else:
-                                    print(f"⚠️ [Live Check] Falha ao salvar partida no banco (pode já existir)")
+                                    print(f"❌ [Live Check] Falha ao extrair estatísticas para {puuid}")
 
-                                # Atualiza o resultado no live game (apenas uma vez por partida)
-                                print(f"🔍 [Live Check] Verificando se deve chamar update_live_game_result...")
-                                print(f"   📍 match_id atual: {match_id}")
-                                print(f"   📍 processed_matches: {processed_matches}")
-                                print(f"   📍 match_id not in processed_matches: {match_id not in processed_matches}")
-                                
-                                if match_id not in processed_matches:
-                                    print(f"🔄🔄🔄 [Live Check] CHAMANDO update_live_game_result 🔄🔄🔄")
-                                    print(f"   📍 game_id: {game_id} (tipo: {type(game_id)})")
-                                    print(f"   📍 match_id: {match_id}")
-                                    print(f"   📍 account_id: {account_id}")
-                                    print(f"   📍 puuid: {puuid}")
-                                    await update_live_game_result(game_id, match_data)
-                                    print(f"✅ [Live Check] update_live_game_result CONCLUÍDA")
-                                    processed_matches.add(match_id)
-                                    print(f"✅ [Live Check] Match ID {match_id} adicionado a processed_matches")
-                                else:
-                                    print(f"⏭️ [Live Check] Match ID {match_id} já foi processado, pulando update_live_game_result")
+                                # Pequeno delay entre contas
+                                await asyncio.sleep(0.3)
 
-                                # Log diferente para remakes
-                                if stats.get('is_remake', False):
-                                    print(f"⚠️ [Live Check] Remake detectado: {match_id} ({stats['game_duration']}s)")
-                                else:
-                                    print(f"✅ [Live Check] Partida terminada detectada: {match_id} (MVP: {stats.get('mvp_score', 0)})")
+                except Exception as e:
+                    print(f"❌ [Live Check] Erro ao verificar live game {game_id} (conta {account_id}): {e}")
+                    continue
 
-                                # Envia notificação individual com estatísticas detalhadas
-                                print(f"📨 [Live Check] Enviando notificação individual de estatísticas para {account_id}")
-                                await send_match_notification(account_id, stats)
+            # Delay maior entre lotes
+        if i + batch_size < len(live_games):
+            print(f"⏳ [Live Check] Aguardando 3 segundos antes do próximo lote...")
+            await asyncio.sleep(3)
 
-                                # Verifica performance apenas se não for remake
-                                if not stats.get('is_remake', False):
-                                    print(f"📊 [Live Check] Verificando performance do campeão...")
-                                    await check_champion_performance(account_id, stats['champion_name'])
-
-                                # Remove da lista de live games
-                                print(f"🗑️ [Live Check] Removendo live game {game_id} da lista")
-                                db.remove_live_game_notification(account_id, game_id)
-                            else:
-                                print(f"❌ [Live Check] Falha ao extrair estatísticas para {puuid}")
-                
-                # Pequeno delay entre contas
-                await asyncio.sleep(0.3)
-                
-            except Exception as e:
-                print(f"❌ [Live Check] Erro ao verificar partida {game_id}: {e}")
-                continue
-    
     except Exception as e:
         print(f"❌ [Live Check] Erro geral: {e}")
 
