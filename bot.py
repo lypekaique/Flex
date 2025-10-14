@@ -1881,12 +1881,13 @@ async def update_live_game_result(game_id: str, match_data: Dict):
         # Tenta buscar por game_id primeiro (tenta ambos string e int)
         print(f"🔍 [Live Update] Buscando por game_id: '{game_id_str}'")
         cursor.execute('''
-            SELECT DISTINCT message_id, channel_id, guild_id, lol_account_id
+            SELECT message_id, channel_id, guild_id, lol_account_id
             FROM live_games_notified
-            WHERE (game_id = ? OR game_id = ?)
+            WHERE game_id = ?
               AND message_id IS NOT NULL
+            ORDER BY notified_at DESC
             LIMIT 1
-        ''', (game_id_str, game_id))
+        ''', (game_id_str,))
         live_msg = cursor.fetchone()
         
         # Se não encontrou por game_id, tenta buscar por PUUID (método mais confiável)
@@ -1894,7 +1895,7 @@ async def update_live_game_result(game_id: str, match_data: Dict):
             print(f"⚠️ [Live Update] Não encontrado por game_id, tentando por PUUID...")
             placeholders = ','.join('?' * len(match_puuids))
             query = f'''
-                SELECT DISTINCT message_id, channel_id, guild_id, lol_account_id, game_id, puuid
+                SELECT message_id, channel_id, guild_id, lol_account_id, game_id, puuid
                 FROM live_games_notified
                 WHERE puuid IN ({placeholders})
                   AND message_id IS NOT NULL
@@ -1903,7 +1904,7 @@ async def update_live_game_result(game_id: str, match_data: Dict):
             '''
             cursor.execute(query, match_puuids)
             result = cursor.fetchone()
-            
+
             if result:
                 live_msg = result[:4]
                 found_game_id = result[4]
@@ -1913,6 +1914,8 @@ async def update_live_game_result(game_id: str, match_data: Dict):
                 print(f"   📍 PUUID: {found_puuid[:30]}...")
                 # Atualiza o game_id para usar na remoção posterior
                 game_id = found_game_id
+            else:
+                print(f"⚠️ [Live Update] Não encontrado por PUUID também!")
         else:
             print(f"✅ [Live Update] Encontrado por game_id!")
         
@@ -2229,6 +2232,9 @@ async def update_live_game_result(game_id: str, match_data: Dict):
         
         # Edita a mensagem de live game
         print(f"🔄 [Live Update] Editando mensagem {message_id} no canal {channel.name}...")
+        print(f"🔄 [Live Update] Novo título: '{new_embed.title}'")
+        print(f"🔄 [Live Update] Nova cor: {new_embed.color}")
+
         try:
             await message.edit(embed=new_embed)
             print(f"✅✅✅ [Live Update] MENSAGEM EDITADA COM SUCESSO! ✅✅✅")
@@ -2238,11 +2244,18 @@ async def update_live_game_result(game_id: str, match_data: Dict):
             print(f"❌ [Live Update] Sem permissão para editar mensagem {message_id}")
         except discord.errors.NotFound:
             print(f"❌ [Live Update] Mensagem {message_id} não encontrada (pode ter sido deletada)")
+        except discord.errors.HTTPException as e:
+            print(f"❌ [Live Update] Erro HTTP ao editar mensagem: {e}")
+            print(f"   Status: {e.status}, Código: {e.code}")
         except Exception as e:
-            print(f"❌ [Live Update] Erro ao editar mensagem: {e}")
+            print(f"❌ [Live Update] Erro inesperado ao editar mensagem: {e}")
+            print(f"   Tipo do erro: {type(e)}")
             import traceback
             traceback.print_exc()
-        
+
+        # Log final para confirmar se a função foi executada completamente
+        print(f"🏁 [Live Update] update_live_game_result FINALIZADA para game_id: {game_id}")
+
     except Exception as e:
         print(f"❌ [Live Update] Erro geral ao atualizar resultado: {e}")
         import traceback
