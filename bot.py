@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 import os
+import time
 from dotenv import load_dotenv
 from database import Database
 from riot_api import RiotAPI
@@ -2681,6 +2682,23 @@ async def check_live_games():
     try:
         print("🔄 [Live Games] Verificando partidas ao vivo...")
 
+        # Verifica se já está executando para evitar múltiplas execuções
+        if hasattr(check_live_games, '_is_running') and check_live_games._is_running:
+            print("⚠️ [Live Games] Já está executando, pulando esta execução")
+            return
+
+        check_live_games._is_running = True
+
+        # Verifica se esta tarefa já foi executada recentemente (últimos 5 minutos)
+        # para evitar execuções simultâneas
+        current_time = time.time()
+        if hasattr(check_live_games, '_last_execution') and (current_time - check_live_games._last_execution) < 300:
+            print("⚠️ [Live Games] Executada recentemente, pulando esta execução")
+            check_live_games._is_running = False
+            return
+
+        check_live_games._last_execution = current_time
+
         # Limpa notificações antigas (mais de 6 horas)
         db.cleanup_old_live_game_notifications(hours=6)
 
@@ -2825,11 +2843,33 @@ async def check_live_games():
 
                 if len(players) > 1:
                     print(f"🎮 [Live Games] {len(players)} jogadores na mesma partida {game_id}")
+                    print(f"📋 [Live Games] Jogadores: {[p['summoner_name'] for p in players]}")
+
+                    # Verifica se já existe uma mensagem enviada para esta partida
+                    existing_messages = db.get_live_game_messages_for_game(game_id)
+                    if existing_messages:
+                        print(f"⚠️ [Live Games] Já existe mensagem para partida {game_id}, pulando...")
+                        # Marca apenas os jogadores que ainda não foram marcados
+                        for player in players:
+                            db.mark_live_game_notified(
+                                player['account_id'],
+                                game_id,
+                                player['puuid'],
+                                player['summoner_name'],
+                                player['live_info']['championId'],
+                                player['live_info']['champion'],
+                                existing_messages[0]['message_id'],
+                                existing_messages[0]['channel_id'],
+                                existing_messages[0]['guild_id']
+                            )
+                        continue
+
                     # Múltiplos jogadores na mesma partida - envia UMA notificação
                     message_info = await send_live_game_notification_grouped(game_id, players)
 
                     # Marca TODOS como notificados com a mesma mensagem
                     if message_info:
+                        print(f"✅ [Live Games] Mensagem agrupada enviada para {len(players)} jogadores")
                         for player in players:
                             db.mark_live_game_notified(
                                 player['account_id'],
@@ -2842,12 +2882,34 @@ async def check_live_games():
                                 message_info.get('channel_id'),
                                 message_info.get('guild_id')
                             )
+                    else:
+                        print(f"❌ [Live Games] Falha ao enviar mensagem agrupada")
                 else:
                     # Apenas 1 jogador - envia notificação individual normal
                     player = players[0]
+                    print(f"👤 [Live Games] Apenas 1 jogador: {player['summoner_name']}")
+
+                    # Verifica se já existe uma mensagem enviada para esta partida
+                    existing_messages = db.get_live_game_messages_for_game(game_id)
+                    if existing_messages:
+                        print(f"⚠️ [Live Games] Já existe mensagem para partida {game_id}, pulando...")
+                        db.mark_live_game_notified(
+                            player['account_id'],
+                            game_id,
+                            player['puuid'],
+                            player['summoner_name'],
+                            player['live_info']['championId'],
+                            player['live_info']['champion'],
+                            existing_messages[0]['message_id'],
+                            existing_messages[0]['channel_id'],
+                            existing_messages[0]['guild_id']
+                        )
+                        continue
+
                     message_info = await send_live_game_notification(player['account_id'], player['live_info'])
 
                     if message_info:
+                        print(f"✅ [Live Games] Mensagem individual enviada")
                         db.mark_live_game_notified(
                             player['account_id'],
                             game_id,
@@ -2859,16 +2921,24 @@ async def check_live_games():
                             message_info.get('channel_id'),
                             message_info.get('guild_id')
                         )
+                    else:
+                        print(f"❌ [Live Games] Falha ao enviar mensagem individual")
             except Exception as e:
                 print(f"❌ [Live Games] Erro ao enviar notificação para game {game_id}: {e}")
                 continue
         
         print("✅ [Live Games] Verificação concluída")
-    
+
+        # Reseta o flag para permitir próxima execução
+        check_live_games._is_running = False
+
     except Exception as e:
         print(f"❌ [Live Games] Erro geral ao verificar live games: {e}")
         import traceback
         traceback.print_exc()
+        # Reseta o flag mesmo em caso de erro
+        if hasattr(check_live_games, '_is_running'):
+            check_live_games._is_running = False
 
 @check_live_games.before_loop
 async def before_check_live_games():
