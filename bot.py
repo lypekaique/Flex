@@ -56,6 +56,20 @@ async def check_command_channel(interaction: discord.Interaction) -> bool:
     
     return True
 
+# Função auxiliar para obter o nome do modo de jogo
+def get_game_mode_name(queue_id: int) -> str:
+    """
+    Retorna o nome do modo de jogo baseado no queueId.
+    """
+    if queue_id == 440:
+        return "Ranked Flex"
+    elif queue_id == 0:
+        return "Personalizada"
+    elif queue_id == 420:
+        return "Ranked Solo/Duo"
+    else:
+        return "Outro Modo"
+
 # View com botões persistentes para o comando /flex
 class FlexGuideView(discord.ui.View):
     def __init__(self):
@@ -89,7 +103,7 @@ class FlexGuideView(discord.ui.View):
         )
         embed.add_field(
             name="3️⃣ Pronto!",
-            value="O bot começará a monitorar suas partidas de **Ranked Flex** automaticamente! 🎉",
+            value="O bot começará a monitorar suas partidas de **Ranked Flex** e **Personalizadas** automaticamente! 🎉",
             inline=False
         )
         embed.set_footer(text="Você pode vincular até 3 contas!")
@@ -132,7 +146,7 @@ class FlexGuideView(discord.ui.View):
             value=(
                 "• Todos os comandos tem **auto-complete**\n"
                 "• Use a barra `/` para ver todos comandos\n"
-                "• Estatísticas são apenas de **Ranked Flex**\n"
+                "• Estatísticas são de **Ranked Flex** e **Personalizadas**\n"
                 "• Configure o canal de comandos primeiro!"
             ),
             inline=False
@@ -390,16 +404,18 @@ async def logar(interaction: discord.Interaction, riot_id: str, regiao: str = DE
                 # Busca última partida sem processar (só para marcar como vista)
                 match_ids = await riot_api.get_match_history(account['puuid'], regiao, count=5)
                 if match_ids and len(match_ids) > 0:
-                    # Procura a primeira partida de Ranked Flex
+                    # Procura a primeira partida de Ranked Flex ou Personalizada
                     for match_id in match_ids:
                         match_data = await riot_api.get_match_details(match_id, regiao)
                         if match_data:
-                            # Verifica se é Ranked Flex (queueId 440)
+                            # Verifica se é Ranked Flex (queueId 440) ou Personalizada (queueId 0)
                             queue_id = match_data.get('info', {}).get('queueId', 0)
-                            if queue_id == 440:
+                            if queue_id in [440, 0]:
                                 # Extrai stats mas NÃO envia notificações
                                 stats = riot_api.extract_player_stats(match_data, account['puuid'])
                                 if stats:
+                                    # Adiciona o queue_id aos stats
+                                    stats['queue_id'] = queue_id
                                     # Salva silenciosamente para marcar como última partida vista
                                     db.add_match(new_account['id'], stats)
                                     print(f"✅ Última partida marcada para {game_name}#{tag_line} (sem notificar histórico)")
@@ -424,7 +440,7 @@ async def logar(interaction: discord.Interaction, riot_id: str, regiao: str = DE
             inline=True
         )
         
-        embed.set_footer(text="O bot começará a monitorar apenas suas PRÓXIMAS partidas de Flex!")
+        embed.set_footer(text="O bot começará a monitorar suas PRÓXIMAS partidas de Flex e Personalizadas!")
         await interaction.followup.send(embed=embed, ephemeral=True)
     else:
         await interaction.followup.send(f"❌ {message}", ephemeral=True)
@@ -514,7 +530,7 @@ async def metric_autocomplete(
         if current.lower() in name.lower() or current.lower() in value.lower()
     ]
 
-@bot.tree.command(name="media", description="📊 Veja estatísticas detalhadas de desempenho no Flex")
+@bot.tree.command(name="media", description="📊 Veja estatísticas detalhadas de desempenho no Flex e Personalizadas")
 @app_commands.describe(
     campeao="Filtrar por campeão específico (deixe vazio para ver todos)",
     metrica="Métrica específica para analisar (mvp, kda, dano, cs, visao, kp, gold)",
@@ -595,7 +611,7 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
             matches = db.get_monthly_matches(account['id'], year, month, include_remakes=False)
         
         if not matches:
-            msg = f"Nenhuma partida de Flex"
+            msg = f"Nenhuma partida de Flex ou Personalizada"
             if campeao:
                 msg += f" com **{campeao}**"
             msg += " registrada este mês."
@@ -762,7 +778,7 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
             inline=False
         )
     
-    footer_text = "Apenas partidas de Ranked Flex são contabilizadas"
+    footer_text = "Partidas de Ranked Flex e Personalizadas são contabilizadas"
     if campeao:
         footer_text += f" • Filtrado por {campeao}"
     embed.set_footer(text=footer_text)
@@ -811,7 +827,7 @@ async def historico(interaction: discord.Interaction, conta: int = 1, quantidade
     
     embed = discord.Embed(
         title=f"📜 Histórico - {account['summoner_name']}",
-        description=f"**{len(matches)} partidas mais recentes de Ranked Flex**\n_ _",
+        description=f"**{len(matches)} partidas mais recentes de Ranked Flex e Personalizadas**\n_ _",
         color=discord.Color.purple()
     )
     
@@ -898,7 +914,7 @@ _Esta partida não conta para estatísticas_
             inline=False
         )
     
-    embed.set_footer(text=f"📊 Apenas Ranked Flex • Região: {account['region'].upper()}")
+    embed.set_footer(text=f"📊 Ranked Flex e Personalizadas • Região: {account['region'].upper()}")
     await interaction.followup.send(embed=embed)
 
 # Auto-complete para tipo de configuração
@@ -1146,7 +1162,7 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
     embed.set_footer(text="Use /configurar para ver todas as configurações")
     await interaction.followup.send(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="tops_flex", description="🏆 Veja o ranking dos melhores jogadores de Flex do mês")
+@bot.tree.command(name="tops_flex", description="🏆 Veja o ranking dos melhores jogadores de Flex e Personalizadas do mês")
 @app_commands.describe(
     quantidade="Quantidade de jogadores no ranking (padrão: 10)"
 )
@@ -1167,7 +1183,7 @@ async def tops_flex(interaction: discord.Interaction, quantidade: int = 10):
     if not ranking:
         await interaction.followup.send(
             "❌ Ainda não há jogadores suficientes no ranking.\n"
-            "**Mínimo:** 5 partidas de Flex no mês."
+            "**Mínimo:** 5 partidas de Flex ou Personalizadas no mês."
         )
         return
     
@@ -1225,7 +1241,7 @@ async def tops_flex(interaction: discord.Interaction, quantidade: int = 10):
             inline=False
         )
     
-    embed.set_footer(text="Apenas Ranked Flex • Atualizado em tempo real")
+    embed.set_footer(text="Ranked Flex e Personalizadas • Atualizado em tempo real")
     await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="flex", description="🎯 Guia completo do bot com botões interativos")
@@ -1238,7 +1254,7 @@ async def flex_guide(interaction: discord.Interaction):
     embed = discord.Embed(
         title="🎮 Flex dos Crias",
         description=(
-            "**O bot definitivo de tracking para Ranked Flex!**\n\n"
+            "**O bot definitivo de tracking para Ranked Flex e Personalizadas!**\n\n"
             "Monitore suas partidas, acompanhe seu desempenho em tempo real,\n"
             "e descubra seu verdadeiro nível de performance com nosso sistema avançado.\n"
         ),
@@ -1745,7 +1761,7 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
                 embed.add_field(
                     name="⚠️ Partida Cancelada",
                     value=(
-                        f"**Modo:** Ranked Flex\n"
+                        f"**Modo:** {'Ranked Flex' if stats.get('queue_id', 440) == 440 else 'Personalizada'}\n"
                         f"**Invocador:** {summoner_name}\n"
                         f"**Campeão:** {stats['champion_name']}\n"
                         f"**Role:** {role_emoji} {stats['role']}\n"
@@ -1761,7 +1777,7 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
                     title=f"{result_emoji} {result_text}",
                     description=(
                         f"# {stats['champion_name']} {role_emoji}\n"
-                        f"{member.mention} terminou uma partida de **Ranked Flex**!"
+                        f"{member.mention} terminou uma partida de **{'Ranked Flex' if stats.get('queue_id', 440) == 440 else 'Personalizada'}**!"
                     ),
                     color=color,
                     timestamp=datetime.fromisoformat(stats['played_at'])
@@ -1832,7 +1848,7 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
             embed.set_thumbnail(url=member.display_avatar.url)
             
             embed.set_footer(
-                text=f"Ranked Flex • {summoner_name}",
+                text=f"{'Ranked Flex' if stats.get('queue_id', 440) == 440 else 'Personalizada'} • {summoner_name}",
                 icon_url="https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-shared-components/global/default/ranked-emblem-flex.png"
             )
             
@@ -1949,6 +1965,7 @@ async def update_live_game_result(game_id: str, match_data: Dict):
                 # Extrai informações da partida
                 participants = match_data['info']['participants']
                 game_info = match_data['info']
+                queue_id = match_data.get('info', {}).get('queueId', 0)
 
                 # Encontra os dados do jogador principal
                 player_data = None
@@ -2003,7 +2020,7 @@ async def update_live_game_result(game_id: str, match_data: Dict):
                 # Adiciona modo de jogo e duração
                 new_embed.add_field(
                     name="🎮 Modo de Jogo",
-                    value=f"**{original_embed.fields[0].value if original_embed.fields else 'Ranked Flex'}**",
+                    value=f"**{get_game_mode_name(queue_id)}**",
                     inline=True
                 )
 
@@ -2398,6 +2415,8 @@ async def send_live_game_notification(lol_account_id: int, live_info: Dict):
             queue_id = live_info.get('queueId', 0)
             if queue_id == 440:  # Ranked Flex
                 color = discord.Color.gold()
+            elif queue_id == 0:  # Personalizada
+                color = discord.Color.green()
             elif queue_id == 420:  # Ranked Solo/Duo
                 color = discord.Color.purple()
             else:
@@ -2566,6 +2585,8 @@ async def send_live_game_notification_grouped(game_id: str, players: list):
         queue_id = live_info.get('queueId', 0)
         if queue_id == 440:  # Ranked Flex
             color = discord.Color.gold()
+        elif queue_id == 0:  # Personalizada
+            color = discord.Color.green()
         elif queue_id == 420:  # Ranked Solo/Duo
             color = discord.Color.purple()
         else:
@@ -2899,16 +2920,18 @@ async def check_new_matches():
                     match_data = await riot_api.get_match_details(match_id, region)
                     
                     if match_data:
-                        # Verifica se é Ranked Flex (queueId 440)
+                        # Verifica se é Ranked Flex (queueId 440) ou Personalizada (queueId 0)
                         queue_id = match_data.get('info', {}).get('queueId', 0)
-                        if queue_id != 440:
-                            # Não é Ranked Flex, pula essa partida
+                        if queue_id not in [440, 0]:
+                            # Não é Ranked Flex nem Personalizada, pula essa partida
                             continue
                         
                         # Extrai estatísticas do jogador
                         stats = riot_api.extract_player_stats(match_data, puuid)
-                        
+
                         if stats:
+                            # Adiciona o queue_id aos stats
+                            stats['queue_id'] = queue_id
                             # Salva no banco de dados
                             db.add_match(account_id, stats)
                             new_matches_count += 1
@@ -3062,12 +3085,12 @@ async def check_live_games_finished():
                 match_data = await riot_api.get_match_details(match_id, region)
 
                 if match_data:
-                    # Verifica se é Ranked Flex (queueId 440)
+                    # Verifica se é Ranked Flex (queueId 440) ou Personalizada (queueId 0)
                     queue_id = match_data.get('info', {}).get('queueId', 0)
                     print(f"🔍 [Live Check] Queue ID da partida: {queue_id}")
-                    if queue_id != 440:
-                        # Não é Ranked Flex, pula
-                        print(f"⚠️ [Live Check] Partida {match_id} não é Ranked Flex (queueId: {queue_id})")
+                    if queue_id not in [440, 0]:
+                        # Não é Ranked Flex nem Personalizada, pula
+                        print(f"⚠️ [Live Check] Partida {match_id} não é Ranked Flex nem Personalizada (queueId: {queue_id})")
                         continue
                     
                     # Verifica se é a partida do live game (o game_id da spectator API é diferente do match_id)
@@ -3109,6 +3132,8 @@ async def check_live_games_finished():
                             stats = riot_api.extract_player_stats(match_data, puuid)
 
                             if stats:
+                                # Adiciona o queue_id aos stats
+                                stats['queue_id'] = queue_id
                                 print(f"📊 [Live Check] Estatísticas extraídas para {puuid}: {stats['champion_name']} - MVP: {stats['mvp_score']}")
 
                                 # Salva no banco de dados ANTES de tudo
