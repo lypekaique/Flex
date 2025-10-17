@@ -50,6 +50,9 @@ class RiotAPI:
         self._rate_limit_window_start = time.time()
         self._max_requests_per_2min = 95  # Fica abaixo do limite de 100 para margem de segurança
 
+        # Controle de chave da API
+        self._api_key_invalid = False
+
     async def _rate_limit_wait(self):
         """Controla o rate limiting entre requisições"""
         async with self._rate_limit_lock:
@@ -154,6 +157,10 @@ class RiotAPI:
     
     async def get_active_game(self, puuid: str, region: str = 'br1') -> Optional[Dict]:
         """Busca informações de partida em andamento (Spectator API)"""
+        # Verifica se a chave da API está inválida
+        if self._api_key_invalid:
+            return None
+
         if region not in self.REGIONS:
             return None
 
@@ -177,6 +184,18 @@ class RiotAPI:
                         return await response.json()
                     elif response.status == 404:
                         # Jogador não está em partida (normal, não é erro)
+                        return None
+                    elif response.status == 403:
+                        # Chave da API inválida ou expirada
+                        print("🚨 [CRÍTICO] Chave da API Riot inválida ou expirada!")
+                        print("🚨 A chave da API precisa ser renovada no arquivo .env")
+                        print(f"🚨 Status: {response.status}")
+                        text = await response.text()
+                        print(f"🚨 Resposta da API: {text}")
+                        print("🚨 Todas as funcionalidades relacionadas à Riot ficarão indisponíveis até a chave ser atualizada")
+
+                        # Marca que a chave está inválida para evitar novas tentativas
+                        self._api_key_invalid = True
                         return None
                     else:
                         # Apenas mostra erro uma vez por minuto para não spammar logs
