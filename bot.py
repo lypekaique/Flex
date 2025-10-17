@@ -1892,18 +1892,33 @@ async def update_live_game_result(game_id: str, match_data: Dict):
         results = cursor.fetchall()
 
         if results:
-            # Processa TODAS as mensagens encontradas (não apenas a primeira)
-            print(f"✅ [Live Update] Encontradas {len(results)} mensagem(ns) relacionada(s) à partida!")
-            print(f"   📍 Processando todas as mensagens encontradas...")
+            # Agrupa por message_id para evitar editar a mesma mensagem múltiplas vezes
+            unique_messages = {}
+            for result in results:
+                message_id, channel_id, guild_id, lol_account_id, game_id_result = result
+                if message_id not in unique_messages:
+                    unique_messages[message_id] = {
+                        'message_id': message_id,
+                        'channel_id': channel_id,
+                        'guild_id': guild_id,
+                        'lol_account_id': lol_account_id,
+                        'game_id': game_id_result
+                    }
+
+            print(f"✅ [Live Update] Encontradas {len(results)} entradas, mas apenas {len(unique_messages)} mensagens únicas!")
+            print(f"   📍 Processando mensagens únicas para evitar duplicatas...")
 
             # Atualiza o game_id para usar na remoção posterior (usa o primeiro resultado)
-            found_game_id = results[0][4]  # game_id
-            game_id = found_game_id
+            first_result = next(iter(unique_messages.values()))
+            game_id = first_result['game_id']
 
-            # Processa cada mensagem individualmente
+            # Processa cada mensagem única apenas uma vez
             processed_count = 0
-            for result in results:
-                message_id, channel_id, guild_id, lol_account_id = result[:4]
+            for message_info in unique_messages.values():
+                message_id = message_info['message_id']
+                channel_id = message_info['channel_id']
+                guild_id = message_info['guild_id']
+                lol_account_id = message_info['lol_account_id']
 
                 print(f"🔄 [Live Update] Processando mensagem {message_id} para conta {lol_account_id}...")
 
@@ -2535,10 +2550,10 @@ async def send_live_game_notification_grouped(game_id: str, players: list):
                 if member:
                     members_in_guild.append(member)
             
-            # Se tem pelo menos 2 jogadores nesse servidor, usa ele
-            if len(members_in_guild) >= 2:
+            # Se tem pelo menos 1 jogador nesse servidor, usa ele (mesmo com apenas 1 jogador)
+            if len(members_in_guild) >= 1:
                 target_guild = guild
-                
+
                 # Busca canal configurado (prioriza live games, depois partidas como fallback)
                 channel_id = db.get_live_game_channel(str(guild.id))
                 if not channel_id:
@@ -2778,7 +2793,7 @@ async def check_live_games():
                     processed_game_ids.add(game_id)  # Marca como processada mesmo assim
                     continue
 
-                # Verificação adicional: verifica se esta partida foi notificada recentemente (últimos 5 minutos)
+                # Verificação adicional: verifica se a partida foi notificada recentemente (últimos 5 minutos)
                 last_notification = db.get_live_game_notification_time(game_id)
                 if last_notification:
                     from datetime import datetime, timedelta
