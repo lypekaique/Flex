@@ -3292,6 +3292,80 @@ async def check_live_games_finished_error(error):
     import traceback
     traceback.print_exc()
 
+# Comando para mostrar estatísticas da API
+@bot.tree.command(name="apistats", description="📊 Mostra estatísticas de uso da API Riot")
+async def apistats(interaction: discord.Interaction):
+    """Mostra estatísticas de uso da API Riot"""
+    # Verifica permissão de canal
+    if not await check_command_channel(interaction):
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    stats = riot_api.get_stats()
+
+    embed = discord.Embed(
+        title="📊 Estatísticas da API Riot",
+        description="Uso da API desde o último reset",
+        color=discord.Color.blue()
+    )
+
+    embed.add_field(
+        name="📈 Requisições Totais",
+        value=f"{stats['requests_total']} requests",
+        inline=True
+    )
+
+    embed.add_field(
+        name="💾 Cache Hits",
+        value=f"{stats['cache_hits']} ({stats['cache_hit_rate']:.1f}%)",
+        inline=True
+    )
+
+    embed.add_field(
+        name="🚦 Rate Limit Hits",
+        value=f"{stats['rate_limit_hits']} vezes",
+        inline=True
+    )
+
+    embed.add_field(
+        name="🗂️ Cache Size",
+        value=f"{stats['cache_size']} itens",
+        inline=False
+    )
+
+    if stats['requests_total'] > 0:
+        eficiencia = ((stats['cache_hits'] / stats['requests_total']) * 100)
+        embed.add_field(
+            name="⚡ Eficiência",
+            value=f"{eficiencia:.1f}% das requisições evitadas",
+            inline=False
+        )
+
+    embed.set_footer(text="Use /clearcache para limpar o cache")
+
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+# Comando para limpar cache
+@bot.tree.command(name="clearcache", description="🗑️ Limpa o cache da API Riot")
+async def clearcache(interaction: discord.Interaction):
+    """Limpa o cache de respostas da API"""
+    # Verifica permissão de canal
+    if not await check_command_channel(interaction):
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    riot_api.clear_cache()
+
+    embed = discord.Embed(
+        title="🗑️ Cache Limpo",
+        description="Cache de respostas da API Riot foi limpo com sucesso!",
+        color=discord.Color.green()
+    )
+
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
 # Tratamento de erros
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
