@@ -183,14 +183,6 @@ class Database:
             cursor.execute('ALTER TABLE matches ADD COLUMN mvp_placement INTEGER DEFAULT 0')
             print("✅ Migração mvp_placement concluída!")
         
-        # Migração: Adiciona coluna is_corrupted em lol_accounts
-        try:
-            cursor.execute("SELECT is_corrupted FROM lol_accounts LIMIT 1")
-        except sqlite3.OperationalError:
-            print("🔄 Migrando banco: adicionando coluna is_corrupted...")
-            cursor.execute('ALTER TABLE lol_accounts ADD COLUMN is_corrupted BOOLEAN DEFAULT 0')
-            print("✅ Migração is_corrupted concluída!")
-        
         conn.commit()
         conn.close()
     
@@ -980,38 +972,4 @@ class Database:
         
         conn.close()
         return accounts
-    
-    def mark_account_corrupted(self, account_id: int) -> bool:
-        """Marca uma conta como corrompida (PUUID inválido)"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                UPDATE lol_accounts
-                SET is_corrupted = 1
-                WHERE id = ?
-            ''', (account_id,))
-            conn.commit()
-            conn.close()
-            return True
-        except Exception as e:
-            print(f"❌ [DATABASE] Erro ao marcar conta como corrompida: {e}")
-            return False
-    
-    def clear_account_corrupted_flag(self, account_id: int) -> bool:
-        """Remove a flag de corrompido de uma conta"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                UPDATE lol_accounts
-                SET is_corrupted = 0
-                WHERE id = ?
-            ''', (account_id,))
-            conn.commit()
-            conn.close()
-            return True
-        except Exception as e:
-            print(f"❌ [DATABASE] Erro ao limpar flag de corrompido: {e}")
-            return False
 

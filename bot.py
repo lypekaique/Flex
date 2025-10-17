@@ -17,14 +17,6 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 RIOT_API_KEY = os.getenv('RIOT_API_KEY')
 DEFAULT_REGION = os.getenv('DEFAULT_REGION', 'br1')
 
-# Debug: Verifica se as variáveis foram carregadas
-print("=" * 80)
-print("🔧 Verificando variáveis de ambiente...")
-print(f"✅ DISCORD_TOKEN: {'Configurado' if TOKEN else '❌ NÃO ENCONTRADO'}")
-print(f"✅ RIOT_API_KEY: {'Configurado (' + RIOT_API_KEY[:20] + '...)' if RIOT_API_KEY else '❌ NÃO ENCONTRADO'}")
-print(f"✅ DEFAULT_REGION: {DEFAULT_REGION}")
-print("=" * 80)
-
 # Inicializa bot e banco de dados
 intents = discord.Intents.default()
 intents.message_content = True
@@ -248,14 +240,6 @@ async def on_ready():
     print(f'ID: {bot.user.id}')
     print('------')
     
-    # Testa a chave da API Riot
-    print("🔍 Testando chave da API Riot...")
-    api_valid = await riot_api.test_api_key()
-    if not api_valid:
-        print("⚠️ BOT INICIARÁ, MAS FUNCIONALIDADES DA RIOT NÃO FUNCIONARÃO!")
-        print("⚠️ Atualize RIOT_API_KEY e reinicie o bot")
-    print('------')
-    
     # Registra Views persistentes
     bot.add_view(FlexGuideView())
     print('✅ Views persistentes registradas')
@@ -382,16 +366,6 @@ async def logar(interaction: discord.Interaction, riot_id: str, regiao: str = DE
     
     # Adiciona conta ao banco de dados
     discord_id = str(interaction.user.id)
-    
-    # Verifica se a conta já existe e está marcada como corrompida
-    existing_accounts = db.get_user_accounts(discord_id)
-    for acc in existing_accounts:
-        if acc['puuid'] == account['puuid']:
-            # Conta já existe, vamos atualizar o PUUID e limpar flag de corrompido
-            print(f"✅ Conta {game_name}#{tag_line} já existe, atualizando dados...")
-            db.update_account_puuid(acc['id'], account['puuid'], summoner_id, account_id)
-            db.clear_account_corrupted_flag(acc['id'])
-    
     success, message = db.add_lol_account(
         discord_id=discord_id,
         summoner_name=f"{game_name}#{tag_line}",
@@ -1172,59 +1146,6 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
     embed.set_footer(text="Use /configurar para ver todas as configurações")
     await interaction.followup.send(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="testar_api", description="🔧 [ADMIN] Testa se a chave da API Riot está funcionando")
-@app_commands.checks.has_permissions(administrator=True)
-async def testar_api(interaction: discord.Interaction):
-    """[ADMIN] Testa se a chave da API Riot está funcionando corretamente"""
-    await interaction.response.defer(ephemeral=True)
-
-    try:
-        # Testa a chave da API
-        is_valid = await riot_api.test_api_key()
-
-        if is_valid:
-            embed = discord.Embed(
-                title="✅ Chave da API Riot",
-                description="A chave da API está funcionando corretamente!",
-                color=discord.Color.green()
-            )
-            embed.add_field(
-                name="🔧 Status",
-                value="✅ **Chave válida e funcionando**",
-                inline=False
-            )
-        else:
-            embed = discord.Embed(
-                title="❌ Chave da API Riot",
-                description="A chave da API não está funcionando.",
-                color=discord.Color.red()
-            )
-            embed.add_field(
-                name="🔧 Status",
-                value="❌ **Chave inválida ou com problemas**",
-                inline=False
-            )
-            embed.add_field(
-                name="💡 Como resolver",
-                value=(
-                    "1. Verifique se a chave está correta no arquivo `.env`\n"
-                    "2. Gere uma nova chave em: https://developer.riotgames.com/\n"
-                    "3. Certifique-se de que a chave começa com 'RGAPI-'"
-                ),
-                inline=False
-            )
-
-        embed.set_footer(text="Use /flex para ver o guia completo")
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-    except Exception as e:
-        error_embed = discord.Embed(
-            title="❌ Erro ao testar API",
-            description=f"Ocorreu um erro ao testar a chave da API: `{e}`",
-            color=discord.Color.red()
-        )
-        await interaction.followup.send(embed=error_embed, ephemeral=True)
-
 @bot.tree.command(name="tops_flex", description="🏆 Veja o ranking dos melhores jogadores de Flex do mês")
 @app_commands.describe(
     quantidade="Quantidade de jogadores no ranking (padrão: 10)"
@@ -1971,33 +1892,18 @@ async def update_live_game_result(game_id: str, match_data: Dict):
         results = cursor.fetchall()
 
         if results:
-            # Agrupa por message_id para evitar editar a mesma mensagem múltiplas vezes
-            unique_messages = {}
-            for result in results:
-                message_id, channel_id, guild_id, lol_account_id, game_id_result = result
-                if message_id not in unique_messages:
-                    unique_messages[message_id] = {
-                        'message_id': message_id,
-                        'channel_id': channel_id,
-                        'guild_id': guild_id,
-                        'lol_account_id': lol_account_id,
-                        'game_id': game_id_result
-                    }
-
-            print(f"✅ [Live Update] Encontradas {len(results)} entradas, mas apenas {len(unique_messages)} mensagens únicas!")
-            print(f"   📍 Processando mensagens únicas para evitar duplicatas...")
+            # Processa TODAS as mensagens encontradas (não apenas a primeira)
+            print(f"✅ [Live Update] Encontradas {len(results)} mensagem(ns) relacionada(s) à partida!")
+            print(f"   📍 Processando todas as mensagens encontradas...")
 
             # Atualiza o game_id para usar na remoção posterior (usa o primeiro resultado)
-            first_result = next(iter(unique_messages.values()))
-            game_id = first_result['game_id']
+            found_game_id = results[0][4]  # game_id
+            game_id = found_game_id
 
-            # Processa cada mensagem única apenas uma vez
+            # Processa cada mensagem individualmente
             processed_count = 0
-            for message_info in unique_messages.values():
-                message_id = message_info['message_id']
-                channel_id = message_info['channel_id']
-                guild_id = message_info['guild_id']
-                lol_account_id = message_info['lol_account_id']
+            for result in results:
+                message_id, channel_id, guild_id, lol_account_id = result[:4]
 
                 print(f"🔄 [Live Update] Processando mensagem {message_id} para conta {lol_account_id}...")
 
@@ -2629,10 +2535,10 @@ async def send_live_game_notification_grouped(game_id: str, players: list):
                 if member:
                     members_in_guild.append(member)
             
-            # Se tem pelo menos 1 jogador nesse servidor, usa ele (mesmo com apenas 1 jogador)
-            if len(members_in_guild) >= 1:
+            # Se tem pelo menos 2 jogadores nesse servidor, usa ele
+            if len(members_in_guild) >= 2:
                 target_guild = guild
-
+                
                 # Busca canal configurado (prioriza live games, depois partidas como fallback)
                 channel_id = db.get_live_game_channel(str(guild.id))
                 if not channel_id:
@@ -2773,10 +2679,10 @@ async def check_live_games():
         active_count = len(db.get_active_live_games(hours=1))
         print(f"📊 [Live Games] {active_count} notificações ativas na última hora")
         
-        # Busca todas as contas vinculadas (exclui contas corrompidas)
+        # Busca todas as contas vinculadas
         conn = db.get_connection()
         cursor = conn.cursor()
-        cursor.execute('SELECT id, puuid, region, discord_id, summoner_name FROM lol_accounts WHERE is_corrupted = 0 OR is_corrupted IS NULL')
+        cursor.execute('SELECT id, puuid, region, discord_id, summoner_name FROM lol_accounts')
         accounts = cursor.fetchall()
         conn.close()
         
@@ -2792,11 +2698,6 @@ async def check_live_games():
 
         for account_id, puuid, region, discord_id, summoner_name in accounts:
             try:
-                # Valida PUUID antes de fazer requisição
-                if not puuid or len(puuid) < 10:
-                    print(f"⚠️ [Live Games] PUUID inválido para conta {account_id}: {puuid}")
-                    continue
-                
                 # Busca se está em partida ativa
                 game_data = await riot_api.get_active_game(puuid, region)
 
@@ -2877,7 +2778,7 @@ async def check_live_games():
                     processed_game_ids.add(game_id)  # Marca como processada mesmo assim
                     continue
 
-                # Verificação adicional: verifica se a partida foi notificada recentemente (últimos 5 minutos)
+                # Verificação adicional: verifica se esta partida foi notificada recentemente (últimos 5 minutos)
                 last_notification = db.get_live_game_notification_time(game_id)
                 if last_notification:
                     from datetime import datetime, timedelta
@@ -2964,10 +2865,10 @@ async def check_new_matches():
     try:
         print("🔄 [Partidas] Verificando novas partidas...")
         
-        # Busca todas as contas vinculadas (exclui contas corrompidas)
+        # Busca todas as contas vinculadas
         conn = db.get_connection()
         cursor = conn.cursor()
-        cursor.execute('SELECT id, puuid, region FROM lol_accounts WHERE is_corrupted = 0 OR is_corrupted IS NULL')
+        cursor.execute('SELECT id, puuid, region FROM lol_accounts')
         accounts = cursor.fetchall()
         conn.close()
         
@@ -2980,11 +2881,6 @@ async def check_new_matches():
         
         for account_id, puuid, region in accounts:
             try:
-                # Valida PUUID antes de fazer requisição
-                if not puuid or len(puuid) < 10:
-                    print(f"⚠️ [Partidas] PUUID inválido para conta {account_id}: {puuid}")
-                    continue
-                
                 # Busca últimas partidas
                 match_ids = await riot_api.get_match_history(puuid, region, count=5)
                 
@@ -3099,11 +2995,6 @@ async def check_live_games_finished():
                     continue
                 
                 puuid, region = account_data
-                
-                # Valida PUUID antes de fazer requisição
-                if not puuid or len(puuid) < 10:
-                    print(f"⚠️ [Live Check] PUUID inválido para conta {account_id}: {puuid}")
-                    continue
                 
                 # Busca últimas 5 partidas (para ter mais opções de comparação)
                 print(f"🔍 [Live Check] Buscando histórico para PUUID {puuid} na região {region}")
@@ -3291,80 +3182,6 @@ async def check_live_games_finished_error(error):
     print(f"❌ [Live Check] Erro crítico: {error}")
     import traceback
     traceback.print_exc()
-
-# Comando para mostrar estatísticas da API
-@bot.tree.command(name="apistats", description="📊 Mostra estatísticas de uso da API Riot")
-async def apistats(interaction: discord.Interaction):
-    """Mostra estatísticas de uso da API Riot"""
-    # Verifica permissão de canal
-    if not await check_command_channel(interaction):
-        return
-
-    await interaction.response.defer(ephemeral=True)
-
-    stats = riot_api.get_stats()
-
-    embed = discord.Embed(
-        title="📊 Estatísticas da API Riot",
-        description="Uso da API desde o último reset",
-        color=discord.Color.blue()
-    )
-
-    embed.add_field(
-        name="📈 Requisições Totais",
-        value=f"{stats['requests_total']} requests",
-        inline=True
-    )
-
-    embed.add_field(
-        name="💾 Cache Hits",
-        value=f"{stats['cache_hits']} ({stats['cache_hit_rate']:.1f}%)",
-        inline=True
-    )
-
-    embed.add_field(
-        name="🚦 Rate Limit Hits",
-        value=f"{stats['rate_limit_hits']} vezes",
-        inline=True
-    )
-
-    embed.add_field(
-        name="🗂️ Cache Size",
-        value=f"{stats['cache_size']} itens",
-        inline=False
-    )
-
-    if stats['requests_total'] > 0:
-        eficiencia = ((stats['cache_hits'] / stats['requests_total']) * 100)
-        embed.add_field(
-            name="⚡ Eficiência",
-            value=f"{eficiencia:.1f}% das requisições evitadas",
-            inline=False
-        )
-
-    embed.set_footer(text="Use /clearcache para limpar o cache")
-
-    await interaction.followup.send(embed=embed, ephemeral=True)
-
-# Comando para limpar cache
-@bot.tree.command(name="clearcache", description="🗑️ Limpa o cache da API Riot")
-async def clearcache(interaction: discord.Interaction):
-    """Limpa o cache de respostas da API"""
-    # Verifica permissão de canal
-    if not await check_command_channel(interaction):
-        return
-
-    await interaction.response.defer(ephemeral=True)
-
-    riot_api.clear_cache()
-
-    embed = discord.Embed(
-        title="🗑️ Cache Limpo",
-        description="Cache de respostas da API Riot foi limpo com sucesso!",
-        color=discord.Color.green()
-    )
-
-    await interaction.followup.send(embed=embed, ephemeral=True)
 
 # Tratamento de erros
 @bot.tree.error

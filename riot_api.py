@@ -3,7 +3,6 @@ import asyncio
 import time
 from typing import Optional, Dict, List
 from datetime import datetime
-from urllib.parse import quote
 
 class RiotAPI:
     """Cliente para interagir com a API da Riot Games"""
@@ -43,77 +42,16 @@ class RiotAPI:
             "X-Riot-Token": api_key
         }
 
-        # Controle de rate limiting aprimorado
+        # Controle de rate limiting
         self._last_request_time = 0
-        self._request_interval = 1.2  # 1.2 segundos (50/min, abaixo do limite de 60/min)
+        self._request_interval = 1.5  # 1.5 segundos entre requisições (40/min para margem de segurança)
         self._rate_limit_lock = asyncio.Lock()
         self._request_count_2min = 0  # Contador de requisições nos últimos 2 minutos
         self._rate_limit_window_start = time.time()
         self._max_requests_per_2min = 95  # Fica abaixo do limite de 100 para margem de segurança
 
-        # Cache para evitar requisições desnecessárias
-        self._cache = {}
-        self._cache_ttl = 300  # 5 minutos de cache
-
-        # Prioridades de requisição
-        self._high_priority_endpoints = [
-            '/lol/spectator/v5/active-games',
-            '/lol/match/v5/matches/by-puuid'
-        ]
-
-        # Controle de chave da API
-        self._api_key_invalid = False
-
-        # Estatísticas de uso
-        self._stats_requests_total = 0
-        self._stats_cache_hits = 0
-        self._stats_rate_limit_hits = 0
-
-    def _is_high_priority_endpoint(self, url: str) -> bool:
-        """Verifica se o endpoint é de alta prioridade"""
-        for endpoint in self._high_priority_endpoints:
-            if endpoint in url:
-                return True
-        return False
-
-    def _get_cache_key(self, url: str, params: dict = None) -> str:
-        """Gera chave de cache para a requisição"""
-        params_str = str(sorted(params.items())) if params else ""
-        return f"{url}:{params_str}"
-
-    def _get_cached_response(self, cache_key: str) -> Optional[Dict]:
-        """Busca resposta no cache"""
-        if cache_key in self._cache:
-            timestamp, data = self._cache[cache_key]
-            if time.time() - timestamp < self._cache_ttl:
-                print(f"📋 [Cache] Usando resposta cacheada para {cache_key[:50]}...")
-                return data
-            else:
-                del self._cache[cache_key]
-        return None
-
-    def _set_cached_response(self, cache_key: str, data: Dict):
-        """Armazena resposta no cache"""
-        self._cache[cache_key] = (time.time(), data)
-
-    def clear_cache(self):
-        """Limpa o cache de respostas"""
-        cache_size = len(self._cache)
-        self._cache.clear()
-        print(f"🗑️ [Cache] Limpados {cache_size} itens do cache")
-
-    def get_stats(self) -> Dict:
-        """Retorna estatísticas de uso da API"""
-        return {
-            'requests_total': self._stats_requests_total,
-            'cache_hits': self._stats_cache_hits,
-            'cache_hit_rate': (self._stats_cache_hits / max(self._stats_requests_total, 1)) * 100,
-            'rate_limit_hits': self._stats_rate_limit_hits,
-            'cache_size': len(self._cache)
-        }
-
-    async def _rate_limit_wait(self, url: str = "", priority_boost: bool = False):
-        """Controla o rate limiting entre requisições com distribuição inteligente"""
+    async def _rate_limit_wait(self):
+        """Controla o rate limiting entre requisições"""
         async with self._rate_limit_lock:
             current_time = time.time()
 
@@ -121,54 +59,30 @@ class RiotAPI:
             if current_time - self._rate_limit_window_start > 120:
                 self._request_count_2min = 0
                 self._rate_limit_window_start = current_time
-                print(f"🔄 [Rate Limit] Janela de 2 minutos resetada")
 
             # Verifica limite de 2 minutos
             if self._request_count_2min >= self._max_requests_per_2min:
-                self._stats_rate_limit_hits += 1
                 sleep_time = 120 - (current_time - self._rate_limit_window_start) + 1
                 print(f"⏳ [Rate Limit] Aguardando {sleep_time:.1f}s para resetar janela de 2 minutos")
                 await asyncio.sleep(sleep_time)
                 self._request_count_2min = 0
                 self._rate_limit_window_start = time.time()
 
-            # Ajusta intervalo baseado na prioridade e distribuição
-            is_high_priority = self._is_high_priority_endpoint(url) or priority_boost
-
-            # Para endpoints de alta prioridade, usa intervalo menor
-            if is_high_priority:
-                dynamic_interval = max(0.8, self._request_interval - 0.2)  # 0.8-1.0s
-            else:
-                dynamic_interval = self._request_interval  # 1.2s normal
-
             # Controle de intervalo mínimo entre requisições
             time_since_last = current_time - self._last_request_time
-            if time_since_last < dynamic_interval:
-                sleep_time = dynamic_interval - time_since_last
-                if sleep_time > 0.1:  # Só mostra se for significativo
-                    print(f"⏱️ [Rate Limit] Aguardando {sleep_time:.2f}s (prioridade: {'alta' if is_high_priority else 'normal'})")
-                await asyncio.sleep(sleep_time)
+            if time_since_last < self._request_interval:
+                await asyncio.sleep(self._request_interval - time_since_last)
 
             self._last_request_time = time.time()
             self._request_count_2min += 1
 
     async def _make_request(self, url: str, params: dict = None) -> Optional[Dict]:
-        """Método auxiliar para fazer requisições com tratamento de erro 429 e cache"""
-        # Verifica cache primeiro (exceto para endpoints que mudam frequentemente)
-        if not any(endpoint in url for endpoint in ['/lol/spectator/v5/active-games']):
-            cache_key = self._get_cache_key(url, params)
-            cached_response = self._get_cached_response(cache_key)
-            if cached_response:
-                self._stats_cache_hits += 1
-                return cached_response
-
-        self._stats_requests_total += 1
-
+        """Método auxiliar para fazer requisições com tratamento de erro 429"""
         max_retries = 3
         retry_delay = 2
 
         for attempt in range(max_retries):
-            await self._rate_limit_wait(url)
+            await self._rate_limit_wait()
 
             try:
                 async with aiohttp.ClientSession() as session:
@@ -181,87 +95,15 @@ class RiotAPI:
                             continue
 
                         if response.status == 200:
-                            data = await response.json()
-                            # Armazena no cache para próximas requisições
-                            if not any(endpoint in url for endpoint in ['/lol/spectator/v5/active-games']):
-                                cache_key = self._get_cache_key(url, params)
-                                self._set_cached_response(cache_key, data)
-                            return data
+                            return await response.json()
                         elif response.status == 404:
-                            # Para algumas APIs (como spectator), 404 significa "não encontrado" (normal)
-                            # Para outras APIs, 404 significa "não encontrado" (erro)
-                            # Vamos retornar None para ambos os casos
-                            return None
-                        elif response.status == 400:
-                            # Bad Request - parâmetros inválidos, não adianta tentar novamente
-                            text = await response.text()
-                            print(f"❌ [BAD REQUEST] Erro 400 na API Riot")
-                            print(f"🔗 URL: {url}")
-                            print(f"📋 Params: {params}")
-                            print(f"📄 Resposta: {text[:500]}")
-
-                            # Detecta erro específico de PUUID corrompido
-                            if "Exception decrypting" in text:
-                                print(f"⚠️ PUUID CORROMPIDO detectado!")
-                                print(f"💡 Solução: Use /logar novamente para revincular a conta")
-                            elif "Bad Request" in text and "Exception" in text:
-                                print(f"⚠️ Problema nos parâmetros da requisição")
-                                print(f"💡 Verifique se PUUID e região estão corretos")
-                            else:
-                                print(f"⚠️ Não tentaremos novamente pois erro 400 indica problema nos parâmetros")
-                            return None  # Não tenta novamente
-                        elif response.status == 401:
-                            # Chave da API não autorizada
-                            print("🚨 [CRÍTICO] Chave da API Riot não autorizada!")
-                            print("🚨 Verifique se a chave está correta no Railway (RIOT_API_KEY)")
-                            print("🚨 Certifique-se de que copiou a chave completa (começa com 'RGAPI-')")
-                            print(f"🚨 Status: {response.status}")
-                            self._api_key_invalid = True
-                            return None
-                        elif response.status == 403:
-                            # Chave da API inválida ou expirada
-                            text = await response.text()
-                            print("=" * 80)
-                            print("🚨 [CRÍTICO] CHAVE DA API RIOT EXPIRADA OU INVÁLIDA!")
-                            print("=" * 80)
-                            print("⏰ Chaves de desenvolvimento expiram a cada 24 horas")
-                            print()
-                            print("🔍 Diagnóstico:")
-                            print(f"   Chave atual: {self.api_key[:20]}...")
-                            print(f"   URL testada: {url}")
-                            print(f"   Status da resposta: {response.status}")
-                            print(f"   Resposta da API: {text[:200]}")
-                            print()
-                            print("📝 Como resolver:")
-                            print("   1. Acesse: https://developer.riotgames.com/")
-                            print("   2. Faça login com sua conta Riot")
-                            print("   3. Copie a nova 'Development API Key'")
-                            print("   4. Atualize a variável RIOT_API_KEY no Railway")
-                            print("   5. Reinicie o deployment no Railway")
-                            print()
-                            print("💡 A chave começa com 'RGAPI-' e tem ~80 caracteres")
-                            print("=" * 80)
-                            self._api_key_invalid = True
                             return None
                         else:
-                            # Erros não tratados especificamente
-                            text = await response.text()
-                            print(f"❌ Erro não tratado na API Riot: {response.status}")
-                            print(f"🔗 URL: {url}")
-                            print(f"📋 Params: {params}")
-                            print(f"📄 Resposta: {text[:300]}")
-
-                            # Para erros 5xx (servidor), tenta novamente
-                            if 500 <= response.status < 600:
-                                print(f"⚠️ Erro do servidor ({response.status}), tentando novamente...")
-                                if attempt < max_retries - 1:
-                                    await asyncio.sleep(retry_delay)
-                                    retry_delay *= 2  # Backoff exponencial
-                                    continue
-                            else:
-                                # Para outros erros, não tenta novamente
-                                print(f"⚠️ Erro {response.status} - não tentando novamente")
-                                return None
+                            print(f"Erro na API Riot: {response.status}")
+                            if attempt < max_retries - 1:
+                                await asyncio.sleep(retry_delay)
+                                retry_delay *= 2  # Backoff exponencial
+                            return None
 
             except Exception as e:
                 print(f"Erro na requisição: {e}")
@@ -275,42 +117,24 @@ class RiotAPI:
     async def get_account_by_riot_id(self, game_name: str, tag_line: str, region: str = 'br1') -> Optional[Dict]:
         """Busca informações da conta pelo Riot ID (nome#tag)"""
         routing = self.ROUTING.get(region, 'americas')
-        # URL encode o game_name e tag_line para lidar com caracteres especiais
-        encoded_game_name = quote(game_name, safe='')
-        encoded_tag_line = quote(tag_line, safe='')
-        url = f"https://{routing}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/{encoded_game_name}/{encoded_tag_line}"
+        url = f"https://{routing}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/{game_name}/{tag_line}"
 
         return await self._make_request(url)
     
     async def get_summoner_by_puuid(self, puuid: str, region: str = 'br1') -> Optional[Dict]:
         """Busca informações do invocador pelo PUUID"""
         if region not in self.REGIONS:
-            print(f"⚠️ Região inválida: {region}")
-            return None
-        
-        # Valida PUUID
-        if not puuid or len(puuid) < 10:
-            print(f"⚠️ PUUID inválido: {puuid}")
             return None
 
-        # URL encode o PUUID para lidar com caracteres especiais
-        encoded_puuid = quote(puuid, safe='')
-        url = f"https://{self.REGIONS[region]}/lol/summoner/v4/summoners/by-puuid/{encoded_puuid}"
+        url = f"https://{self.REGIONS[region]}/lol/summoner/v4/summoners/by-puuid/{puuid}"
 
         return await self._make_request(url)
     
     async def get_match_history(self, puuid: str, region: str = 'br1', count: int = 20,
                                 queue: int = 440) -> Optional[List[str]]:
         """Busca histórico de partidas (queue 440 = Ranked Flex)"""
-        # Valida PUUID
-        if not puuid or len(puuid) < 10:
-            print(f"⚠️ PUUID inválido: {puuid}")
-            return None
-        
         routing = self.ROUTING.get(region, 'americas')
-        # URL encode o PUUID para lidar com caracteres especiais
-        encoded_puuid = quote(puuid, safe='')
-        url = f"https://{routing}.api.riotgames.com/lol/match/v5/matches/by-puuid/{encoded_puuid}/ids"
+        url = f"https://{routing}.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids"
 
         # Nota: O parâmetro 'queue' foi removido pois causava erro 400
         # Agora filtramos as partidas pelo queueId após buscar os detalhes
@@ -330,27 +154,42 @@ class RiotAPI:
     
     async def get_active_game(self, puuid: str, region: str = 'br1') -> Optional[Dict]:
         """Busca informações de partida em andamento (Spectator API)"""
-        # Verifica se a chave da API está inválida
-        if self._api_key_invalid:
-            return None
-
         if region not in self.REGIONS:
-            print(f"⚠️ Região inválida: {region}")
-            return None
-
-        # Valida PUUID
-        if not puuid or len(puuid) < 10:
-            print(f"⚠️ PUUID inválido para active game: {puuid}")
             return None
 
         # Spectator V5 usa PUUID diretamente
-        # URL encode o PUUID para lidar com caracteres especiais
-        encoded_puuid = quote(puuid, safe='')
-        url = f"https://{self.REGIONS[region]}/lol/spectator/v5/active-games/by-summoner/{encoded_puuid}"
+        url = f"https://{self.REGIONS[region]}/lol/spectator/v5/active-games/by-summoner/{puuid}"
 
-        # Prioridade alta para live games
-        await self._rate_limit_wait(url, priority_boost=True)
-        return await self._make_request(url)
+        # Usa o método _make_request mas com tratamento especial para erro 404
+        await self._rate_limit_wait()
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=self.headers) as response:
+                    if response.status == 429:
+                        # Rate limit - aguardar mais tempo
+                        retry_after = int(response.headers.get('Retry-After', 60))
+                        print(f"🚫 [Rate Limit] API retornou 429, aguardando {retry_after}s")
+                        await asyncio.sleep(retry_after)
+                        return None
+
+                    if response.status == 200:
+                        return await response.json()
+                    elif response.status == 404:
+                        # Jogador não está em partida (normal, não é erro)
+                        return None
+                    else:
+                        # Apenas mostra erro uma vez por minuto para não spammar logs
+                        if not hasattr(self, '_last_spectator_error') or \
+                           (datetime.now() - self._last_spectator_error).seconds > 60:
+                            print(f"Erro ao buscar partida ativa: {response.status}")
+                            text = await response.text()
+                            print(f"Resposta da API: {text[:200]}")
+                            self._last_spectator_error = datetime.now()
+                        return None
+        except Exception as e:
+            print(f"Erro ao buscar partida ativa: {e}")
+            return None
     
     def extract_live_game_info(self, game_data: Dict, puuid: str) -> Optional[Dict]:
         """Extrai informações relevantes de uma partida ao vivo"""
@@ -480,56 +319,6 @@ class RiotAPI:
         
         return normalized
     
-    async def test_api_key(self) -> bool:
-        """Testa se a chave da API está funcionando"""
-        try:
-            print("🔍 Testando chave da API Riot...")
-            print(f"   Chave sendo usada: {self.api_key[:20]}...")
-
-            # Usa uma região comum e uma requisição simples para testar
-            test_url = "https://br1.api.riotgames.com/lol/summoner/v4/summoners/by-name/FakeSummoner"
-
-            await self._rate_limit_wait()
-
-            async with aiohttp.ClientSession() as session:
-                async with session.get(test_url, headers=self.headers) as response:
-                    print(f"   Status da resposta: {response.status}")
-
-                    if response.status == 200:
-                        print("✅ Chave da API Riot funcionando corretamente!")
-                        return True
-                    elif response.status == 404:
-                        # 404 é esperado para um summoner fake, significa que a chave funciona
-                        print("✅ Chave da API Riot funcionando corretamente!")
-                        return True
-                    elif response.status == 401:
-                        text = await response.text()
-                        print("=" * 80)
-                        print("❌ Chave da API Riot não autorizada (erro 401)")
-                        print(f"   Resposta da API: {text[:200]}")
-                        print("💡 Verifique se a chave está correta no Railway (RIOT_API_KEY)")
-                        print("=" * 80)
-                        return False
-                    elif response.status == 403:
-                        text = await response.text()
-                        print("=" * 80)
-                        print("❌ Chave da API Riot inválida/expirada (erro 403)")
-                        print(f"   Resposta da API: {text[:200]}")
-                        print("⏰ Chaves de desenvolvimento expiram a cada 24 horas")
-                        print()
-                        print("💡 Gere uma nova chave em: https://developer.riotgames.com/")
-                        print("=" * 80)
-                        return False
-                    else:
-                        text = await response.text()
-                        print(f"⚠️ Erro inesperado ao testar chave da API: {response.status}")
-                        print(f"   Resposta da API: {text[:200]}")
-                        return False
-        except Exception as e:
-            print(f"❌ Erro ao testar chave da API: {e}")
-            print(f"   Tipo do erro: {type(e).__name__}")
-            return False
-
     def calculate_mvp_score(self, player_stats: Dict, all_players_stats: Dict, role: str = '') -> tuple:
         """
         Calcula o MVP Score (estilo OP.GG/U.GG)
