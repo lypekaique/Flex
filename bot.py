@@ -2766,6 +2766,11 @@ async def check_live_games():
 
         for account_id, puuid, region, discord_id, summoner_name in accounts:
             try:
+                # Valida PUUID antes de fazer requisição
+                if not puuid or len(puuid) < 10:
+                    print(f"⚠️ [Live Games] PUUID inválido para conta {account_id}: {puuid}")
+                    continue
+                
                 # Busca se está em partida ativa
                 game_data = await riot_api.get_active_game(puuid, region)
 
@@ -2949,6 +2954,11 @@ async def check_new_matches():
         
         for account_id, puuid, region in accounts:
             try:
+                # Valida PUUID antes de fazer requisição
+                if not puuid or len(puuid) < 10:
+                    print(f"⚠️ [Partidas] PUUID inválido para conta {account_id}: {puuid}")
+                    continue
+                
                 # Busca últimas partidas
                 match_ids = await riot_api.get_match_history(puuid, region, count=5)
                 
@@ -3063,6 +3073,11 @@ async def check_live_games_finished():
                     continue
                 
                 puuid, region = account_data
+                
+                # Valida PUUID antes de fazer requisição
+                if not puuid or len(puuid) < 10:
+                    print(f"⚠️ [Live Check] PUUID inválido para conta {account_id}: {puuid}")
+                    continue
                 
                 # Busca últimas 5 partidas (para ter mais opções de comparação)
                 print(f"🔍 [Live Check] Buscando histórico para PUUID {puuid} na região {region}")

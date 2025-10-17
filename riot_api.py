@@ -101,6 +101,15 @@ class RiotAPI:
                             return await response.json()
                         elif response.status == 404:
                             return None
+                        elif response.status == 400:
+                            # Bad Request - parâmetros inválidos, não adianta tentar novamente
+                            print(f"❌ [BAD REQUEST] Erro 400 na API Riot")
+                            print(f"🔗 URL: {url}")
+                            print(f"📋 Params: {params}")
+                            text = await response.text()
+                            print(f"📄 Resposta: {text[:500]}")
+                            print(f"⚠️ Não tentaremos novamente pois erro 400 indica problema nos parâmetros")
+                            return None  # Não tenta novamente
                         elif response.status == 401:
                             # Chave da API não autorizada
                             print("🚨 [CRÍTICO] Chave da API Riot não autorizada!")
@@ -117,7 +126,11 @@ class RiotAPI:
                             self._api_key_invalid = True
                             return None
                         else:
-                            print(f"Erro na API Riot: {response.status}")
+                            print(f"❌ Erro na API Riot: {response.status}")
+                            print(f"🔗 URL: {url}")
+                            print(f"📋 Params: {params}")
+                            text = await response.text()
+                            print(f"📄 Resposta: {text[:300]}")
                             if attempt < max_retries - 1:
                                 await asyncio.sleep(retry_delay)
                                 retry_delay *= 2  # Backoff exponencial
@@ -142,6 +155,12 @@ class RiotAPI:
     async def get_summoner_by_puuid(self, puuid: str, region: str = 'br1') -> Optional[Dict]:
         """Busca informações do invocador pelo PUUID"""
         if region not in self.REGIONS:
+            print(f"⚠️ Região inválida: {region}")
+            return None
+        
+        # Valida PUUID
+        if not puuid or len(puuid) < 10:
+            print(f"⚠️ PUUID inválido: {puuid}")
             return None
 
         url = f"https://{self.REGIONS[region]}/lol/summoner/v4/summoners/by-puuid/{puuid}"
@@ -151,6 +170,11 @@ class RiotAPI:
     async def get_match_history(self, puuid: str, region: str = 'br1', count: int = 20,
                                 queue: int = 440) -> Optional[List[str]]:
         """Busca histórico de partidas (queue 440 = Ranked Flex)"""
+        # Valida PUUID
+        if not puuid or len(puuid) < 10:
+            print(f"⚠️ PUUID inválido: {puuid}")
+            return None
+        
         routing = self.ROUTING.get(region, 'americas')
         url = f"https://{routing}.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids"
 
@@ -177,6 +201,12 @@ class RiotAPI:
             return None
 
         if region not in self.REGIONS:
+            print(f"⚠️ Região inválida: {region}")
+            return None
+        
+        # Valida PUUID
+        if not puuid or len(puuid) < 10:
+            print(f"⚠️ PUUID inválido para active game: {puuid}")
             return None
 
         # Spectator V5 usa PUUID diretamente
@@ -199,6 +229,14 @@ class RiotAPI:
                         return await response.json()
                     elif response.status == 404:
                         # Jogador não está em partida (normal, não é erro)
+                        return None
+                    elif response.status == 400:
+                        # Bad Request - PUUID inválido ou outro problema
+                        print(f"❌ [BAD REQUEST] Erro 400 ao buscar partida ativa")
+                        print(f"🔗 URL: {url}")
+                        text = await response.text()
+                        print(f"📄 Resposta: {text[:500]}")
+                        print(f"⚠️ PUUID: {puuid}")
                         return None
                     elif response.status == 401:
                         # Chave da API não autorizada (incorreta ou mal formatada)
