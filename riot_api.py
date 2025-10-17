@@ -101,6 +101,21 @@ class RiotAPI:
                             return await response.json()
                         elif response.status == 404:
                             return None
+                        elif response.status == 401:
+                            # Chave da API não autorizada
+                            print("🚨 [CRÍTICO] Chave da API Riot não autorizada!")
+                            print("🚨 Verifique se a chave está correta no arquivo .env")
+                            print("🚨 Certifique-se de que copiou a chave completa (começa com 'RGAPI-')")
+                            print(f"🚨 Status: {response.status}")
+                            self._api_key_invalid = True
+                            return None
+                        elif response.status == 403:
+                            # Chave da API inválida ou expirada
+                            print("🚨 [CRÍTICO] Chave da API Riot inválida ou expirada!")
+                            print("🚨 A chave da API precisa ser renovada no arquivo .env")
+                            print(f"🚨 Status: {response.status}")
+                            self._api_key_invalid = True
+                            return None
                         else:
                             print(f"Erro na API Riot: {response.status}")
                             if attempt < max_retries - 1:
@@ -184,6 +199,19 @@ class RiotAPI:
                         return await response.json()
                     elif response.status == 404:
                         # Jogador não está em partida (normal, não é erro)
+                        return None
+                    elif response.status == 401:
+                        # Chave da API não autorizada (incorreta ou mal formatada)
+                        print("🚨 [CRÍTICO] Chave da API Riot não autorizada!")
+                        print("🚨 Verifique se a chave está correta no arquivo .env")
+                        print("🚨 Certifique-se de que copiou a chave completa (começa com 'RGAPI-')")
+                        print(f"🚨 Status: {response.status}")
+                        text = await response.text()
+                        print(f"🚨 Resposta da API: {text}")
+                        print("🚨 Todas as funcionalidades relacionadas à Riot ficarão indisponíveis até a chave ser corrigida")
+
+                        # Marca que a chave está inválida para evitar novas tentativas
+                        self._api_key_invalid = True
                         return None
                     elif response.status == 403:
                         # Chave da API inválida ou expirada
@@ -338,6 +366,34 @@ class RiotAPI:
         
         return normalized
     
+    async def test_api_key(self) -> bool:
+        """Testa se a chave da API está funcionando"""
+        try:
+            # Usa uma região comum e uma requisição simples para testar
+            test_url = "https://br1.api.riotgames.com/lol/summoner/v4/summoners/by-name/FakeSummoner"
+
+            await self._rate_limit_wait()
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(test_url, headers=self.headers) as response:
+                    if response.status == 200:
+                        print("✅ Chave da API Riot funcionando corretamente!")
+                        return True
+                    elif response.status == 401:
+                        print("❌ Chave da API Riot não autorizada (erro 401)")
+                        print("💡 Verifique se a chave está correta no arquivo .env")
+                        return False
+                    elif response.status == 403:
+                        print("❌ Chave da API Riot inválida/expirada (erro 403)")
+                        print("💡 Gere uma nova chave em: https://developer.riotgames.com/")
+                        return False
+                    else:
+                        print(f"⚠️ Erro inesperado ao testar chave da API: {response.status}")
+                        return False
+        except Exception as e:
+            print(f"❌ Erro ao testar chave da API: {e}")
+            return False
+
     def calculate_mvp_score(self, player_stats: Dict, all_players_stats: Dict, role: str = '') -> tuple:
         """
         Calcula o MVP Score (estilo OP.GG/U.GG)

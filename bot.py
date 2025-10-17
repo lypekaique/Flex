@@ -1146,6 +1146,59 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
     embed.set_footer(text="Use /configurar para ver todas as configurações")
     await interaction.followup.send(embed=embed, ephemeral=True)
 
+@bot.tree.command(name="testar_api", description="🔧 [ADMIN] Testa se a chave da API Riot está funcionando")
+@app_commands.checks.has_permissions(administrator=True)
+async def testar_api(interaction: discord.Interaction):
+    """[ADMIN] Testa se a chave da API Riot está funcionando corretamente"""
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        # Testa a chave da API
+        is_valid = await riot_api.test_api_key()
+
+        if is_valid:
+            embed = discord.Embed(
+                title="✅ Chave da API Riot",
+                description="A chave da API está funcionando corretamente!",
+                color=discord.Color.green()
+            )
+            embed.add_field(
+                name="🔧 Status",
+                value="✅ **Chave válida e funcionando**",
+                inline=False
+            )
+        else:
+            embed = discord.Embed(
+                title="❌ Chave da API Riot",
+                description="A chave da API não está funcionando.",
+                color=discord.Color.red()
+            )
+            embed.add_field(
+                name="🔧 Status",
+                value="❌ **Chave inválida ou com problemas**",
+                inline=False
+            )
+            embed.add_field(
+                name="💡 Como resolver",
+                value=(
+                    "1. Verifique se a chave está correta no arquivo `.env`\n"
+                    "2. Gere uma nova chave em: https://developer.riotgames.com/\n"
+                    "3. Certifique-se de que a chave começa com 'RGAPI-'"
+                ),
+                inline=False
+            )
+
+        embed.set_footer(text="Use /flex para ver o guia completo")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    except Exception as e:
+        error_embed = discord.Embed(
+            title="❌ Erro ao testar API",
+            description=f"Ocorreu um erro ao testar a chave da API: `{e}`",
+            color=discord.Color.red()
+        )
+        await interaction.followup.send(embed=error_embed, ephemeral=True)
+
 @bot.tree.command(name="tops_flex", description="🏆 Veja o ranking dos melhores jogadores de Flex do mês")
 @app_commands.describe(
     quantidade="Quantidade de jogadores no ranking (padrão: 10)"
