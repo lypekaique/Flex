@@ -17,6 +17,14 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 RIOT_API_KEY = os.getenv('RIOT_API_KEY')
 DEFAULT_REGION = os.getenv('DEFAULT_REGION', 'br1')
 
+# Debug: Verifica se as variáveis foram carregadas
+print("=" * 80)
+print("🔧 Verificando variáveis de ambiente...")
+print(f"✅ DISCORD_TOKEN: {'Configurado' if TOKEN else '❌ NÃO ENCONTRADO'}")
+print(f"✅ RIOT_API_KEY: {'Configurado (' + RIOT_API_KEY[:20] + '...)' if RIOT_API_KEY else '❌ NÃO ENCONTRADO'}")
+print(f"✅ DEFAULT_REGION: {DEFAULT_REGION}")
+print("=" * 80)
+
 # Inicializa bot e banco de dados
 intents = discord.Intents.default()
 intents.message_content = True
@@ -238,6 +246,14 @@ class FlexGuideView(discord.ui.View):
 async def on_ready():
     print(f'Bot {bot.user} está online!')
     print(f'ID: {bot.user.id}')
+    print('------')
+    
+    # Testa a chave da API Riot
+    print("🔍 Testando chave da API Riot...")
+    api_valid = await riot_api.test_api_key()
+    if not api_valid:
+        print("⚠️ BOT INICIARÁ, MAS FUNCIONALIDADES DA RIOT NÃO FUNCIONARÃO!")
+        print("⚠️ Atualize RIOT_API_KEY e reinicie o bot")
     print('------')
     
     # Registra Views persistentes

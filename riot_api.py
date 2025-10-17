@@ -127,9 +127,22 @@ class RiotAPI:
                             return None
                         elif response.status == 403:
                             # Chave da API inválida ou expirada
-                            print("🚨 [CRÍTICO] Chave da API Riot inválida ou expirada!")
-                            print("🚨 A chave da API precisa ser renovada no arquivo .env")
-                            print(f"🚨 Status: {response.status}")
+                            print("=" * 80)
+                            print("🚨 [CRÍTICO] CHAVE DA API RIOT EXPIRADA OU INVÁLIDA!")
+                            print("=" * 80)
+                            print("⏰ Chaves de desenvolvimento expiram a cada 24 horas")
+                            print()
+                            print("📝 Como resolver:")
+                            print("   1. Acesse: https://developer.riotgames.com/")
+                            print("   2. Faça login com sua conta Riot")
+                            print("   3. Copie a nova 'Development API Key'")
+                            print("   4. Abra o arquivo .env no seu projeto")
+                            print("   5. Substitua a chave antiga pela nova:")
+                            print("      RIOT_API_KEY=RGAPI-sua-nova-chave-aqui")
+                            print("   6. Reinicie o bot")
+                            print()
+                            print("💡 A chave começa com 'RGAPI-' e tem ~80 caracteres")
+                            print("=" * 80)
                             self._api_key_invalid = True
                             return None
                         else:
@@ -274,13 +287,23 @@ class RiotAPI:
                         return None
                     elif response.status == 403:
                         # Chave da API inválida ou expirada
-                        print("🚨 [CRÍTICO] Chave da API Riot inválida ou expirada!")
-                        print("🚨 A chave da API precisa ser renovada no arquivo .env")
-                        print(f"🚨 Status: {response.status}")
-                        text = await response.text()
-                        print(f"🚨 Resposta da API: {text}")
-                        print("🚨 Todas as funcionalidades relacionadas à Riot ficarão indisponíveis até a chave ser atualizada")
-
+                        print("=" * 80)
+                        print("🚨 [CRÍTICO] CHAVE DA API RIOT EXPIRADA OU INVÁLIDA!")
+                        print("=" * 80)
+                        print("⏰ Chaves de desenvolvimento expiram a cada 24 horas")
+                        print()
+                        print("📝 Como resolver:")
+                        print("   1. Acesse: https://developer.riotgames.com/")
+                        print("   2. Faça login com sua conta Riot")
+                        print("   3. Copie a nova 'Development API Key'")
+                        print("   4. Abra o arquivo .env no seu projeto")
+                        print("   5. Substitua a chave antiga pela nova:")
+                        print("      RIOT_API_KEY=RGAPI-sua-nova-chave-aqui")
+                        print("   6. Reinicie o bot")
+                        print()
+                        print("💡 A chave começa com 'RGAPI-' e tem ~80 caracteres")
+                        print("=" * 80)
+                        
                         # Marca que a chave está inválida para evitar novas tentativas
                         self._api_key_invalid = True
                         return None
@@ -439,12 +462,18 @@ class RiotAPI:
                         print("✅ Chave da API Riot funcionando corretamente!")
                         return True
                     elif response.status == 401:
+                        print("=" * 80)
                         print("❌ Chave da API Riot não autorizada (erro 401)")
                         print("💡 Verifique se a chave está correta no arquivo .env")
+                        print("=" * 80)
                         return False
                     elif response.status == 403:
+                        print("=" * 80)
                         print("❌ Chave da API Riot inválida/expirada (erro 403)")
+                        print("⏰ Chaves de desenvolvimento expiram a cada 24 horas")
+                        print()
                         print("💡 Gere uma nova chave em: https://developer.riotgames.com/")
+                        print("=" * 80)
                         return False
                     else:
                         print(f"⚠️ Erro inesperado ao testar chave da API: {response.status}")
