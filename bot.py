@@ -366,6 +366,16 @@ async def logar(interaction: discord.Interaction, riot_id: str, regiao: str = DE
     
     # Adiciona conta ao banco de dados
     discord_id = str(interaction.user.id)
+    
+    # Verifica se a conta já existe e está marcada como corrompida
+    existing_accounts = db.get_user_accounts(discord_id)
+    for acc in existing_accounts:
+        if acc['puuid'] == account['puuid']:
+            # Conta já existe, vamos atualizar o PUUID e limpar flag de corrompido
+            print(f"✅ Conta {game_name}#{tag_line} já existe, atualizando dados...")
+            db.update_account_puuid(acc['id'], account['puuid'], summoner_id, account_id)
+            db.clear_account_corrupted_flag(acc['id'])
+    
     success, message = db.add_lol_account(
         discord_id=discord_id,
         summoner_name=f"{game_name}#{tag_line}",
@@ -2747,10 +2757,10 @@ async def check_live_games():
         active_count = len(db.get_active_live_games(hours=1))
         print(f"📊 [Live Games] {active_count} notificações ativas na última hora")
         
-        # Busca todas as contas vinculadas
+        # Busca todas as contas vinculadas (exclui contas corrompidas)
         conn = db.get_connection()
         cursor = conn.cursor()
-        cursor.execute('SELECT id, puuid, region, discord_id, summoner_name FROM lol_accounts')
+        cursor.execute('SELECT id, puuid, region, discord_id, summoner_name FROM lol_accounts WHERE is_corrupted = 0 OR is_corrupted IS NULL')
         accounts = cursor.fetchall()
         conn.close()
         
@@ -2938,10 +2948,10 @@ async def check_new_matches():
     try:
         print("🔄 [Partidas] Verificando novas partidas...")
         
-        # Busca todas as contas vinculadas
+        # Busca todas as contas vinculadas (exclui contas corrompidas)
         conn = db.get_connection()
         cursor = conn.cursor()
-        cursor.execute('SELECT id, puuid, region FROM lol_accounts')
+        cursor.execute('SELECT id, puuid, region FROM lol_accounts WHERE is_corrupted = 0 OR is_corrupted IS NULL')
         accounts = cursor.fetchall()
         conn.close()
         

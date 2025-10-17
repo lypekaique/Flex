@@ -3,6 +3,7 @@ import asyncio
 import time
 from typing import Optional, Dict, List
 from datetime import datetime
+from urllib.parse import quote
 
 class RiotAPI:
     """Cliente para interagir com a API da Riot Games"""
@@ -103,12 +104,18 @@ class RiotAPI:
                             return None
                         elif response.status == 400:
                             # Bad Request - parâmetros inválidos, não adianta tentar novamente
+                            text = await response.text()
                             print(f"❌ [BAD REQUEST] Erro 400 na API Riot")
                             print(f"🔗 URL: {url}")
                             print(f"📋 Params: {params}")
-                            text = await response.text()
                             print(f"📄 Resposta: {text[:500]}")
-                            print(f"⚠️ Não tentaremos novamente pois erro 400 indica problema nos parâmetros")
+                            
+                            # Detecta erro específico de PUUID corrompido
+                            if "Exception decrypting" in text:
+                                print(f"⚠️ PUUID CORROMPIDO detectado!")
+                                print(f"💡 Solução: Use /logar novamente para revincular a conta")
+                            else:
+                                print(f"⚠️ Não tentaremos novamente pois erro 400 indica problema nos parâmetros")
                             return None  # Não tenta novamente
                         elif response.status == 401:
                             # Chave da API não autorizada
@@ -148,7 +155,10 @@ class RiotAPI:
     async def get_account_by_riot_id(self, game_name: str, tag_line: str, region: str = 'br1') -> Optional[Dict]:
         """Busca informações da conta pelo Riot ID (nome#tag)"""
         routing = self.ROUTING.get(region, 'americas')
-        url = f"https://{routing}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/{game_name}/{tag_line}"
+        # URL encode o game_name e tag_line para lidar com caracteres especiais
+        encoded_game_name = quote(game_name, safe='')
+        encoded_tag_line = quote(tag_line, safe='')
+        url = f"https://{routing}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/{encoded_game_name}/{encoded_tag_line}"
 
         return await self._make_request(url)
     
@@ -163,7 +173,9 @@ class RiotAPI:
             print(f"⚠️ PUUID inválido: {puuid}")
             return None
 
-        url = f"https://{self.REGIONS[region]}/lol/summoner/v4/summoners/by-puuid/{puuid}"
+        # URL encode o PUUID para lidar com caracteres especiais
+        encoded_puuid = quote(puuid, safe='')
+        url = f"https://{self.REGIONS[region]}/lol/summoner/v4/summoners/by-puuid/{encoded_puuid}"
 
         return await self._make_request(url)
     
@@ -176,7 +188,9 @@ class RiotAPI:
             return None
         
         routing = self.ROUTING.get(region, 'americas')
-        url = f"https://{routing}.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids"
+        # URL encode o PUUID para lidar com caracteres especiais
+        encoded_puuid = quote(puuid, safe='')
+        url = f"https://{routing}.api.riotgames.com/lol/match/v5/matches/by-puuid/{encoded_puuid}/ids"
 
         # Nota: O parâmetro 'queue' foi removido pois causava erro 400
         # Agora filtramos as partidas pelo queueId após buscar os detalhes
@@ -210,7 +224,9 @@ class RiotAPI:
             return None
 
         # Spectator V5 usa PUUID diretamente
-        url = f"https://{self.REGIONS[region]}/lol/spectator/v5/active-games/by-summoner/{puuid}"
+        # URL encode o PUUID para lidar com caracteres especiais
+        encoded_puuid = quote(puuid, safe='')
+        url = f"https://{self.REGIONS[region]}/lol/spectator/v5/active-games/by-summoner/{encoded_puuid}"
 
         # Usa o método _make_request mas com tratamento especial para erro 404
         await self._rate_limit_wait()
@@ -232,11 +248,16 @@ class RiotAPI:
                         return None
                     elif response.status == 400:
                         # Bad Request - PUUID inválido ou outro problema
+                        text = await response.text()
                         print(f"❌ [BAD REQUEST] Erro 400 ao buscar partida ativa")
                         print(f"🔗 URL: {url}")
-                        text = await response.text()
                         print(f"📄 Resposta: {text[:500]}")
                         print(f"⚠️ PUUID: {puuid}")
+                        
+                        # Detecta erro específico de PUUID corrompido
+                        if "Exception decrypting" in text:
+                            print(f"⚠️ PUUID CORROMPIDO detectado!")
+                            print(f"💡 Solução: Use /logar novamente para revincular a conta")
                         return None
                     elif response.status == 401:
                         # Chave da API não autorizada (incorreta ou mal formatada)
