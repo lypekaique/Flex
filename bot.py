@@ -2864,7 +2864,7 @@ async def check_live_games_error(error):
     traceback.print_exc()
     # Task loop automaticamente reinicia após erro
 
-@tasks.loop(minutes=5)
+@tasks.loop(minutes=2)
 async def check_new_matches():
     """Task que verifica novas partidas a cada 5 minutos (sistema automático completo)"""
     try:
@@ -2884,80 +2884,25 @@ async def check_new_matches():
         print(f"📊 [Partidas] Verificando {len(accounts)} conta(s)...")
         new_matches_count = 0
 
-        for account_id, puuid, region in accounts:
-            try:
-                print(f"🔍 Buscando partidas recentes para conta {account_id}...")
+        # Processa 8 contas simultaneamente para maior velocidade
+        batch_size = 8
+        for i in range(0, len(accounts), batch_size):
+            batch_accounts = accounts[i:i + batch_size]
 
-                # Busca apenas 1 partida (otimizado)
-                flex_matches = await riot_api.get_flex_matches_batch(puuid, region, max_matches=1)
+            # Processa batch em paralelo
+            tasks = []
+            for account_id, puuid, region in batch_accounts:
+                tasks.append(process_account_batch(account_id, puuid, region, riot_api, db))
 
-                if not flex_matches:
-                    print(f"⚠️ Nenhuma partida de flex encontrada para conta {account_id}")
-                    continue
+            # Aguarda todas as tarefas do batch terminarem
+            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-                print(f"📋 Encontradas {len(flex_matches)} partidas de flex para conta {account_id}")
-
-                # Verifica cada partida e salva apenas as novas E recentes
-                for match_data in flex_matches:
-                    match_id = match_data['metadata']['matchId']
-
-                    # Verifica se já está registrada
-                    if db.get_last_match_id(account_id) == match_id:
-                        print(f"⏭️ Partida {match_id} já registrada, pulando")
-                        continue
-
-                    # Verifica se a partida acabou recentemente (últimos 30 minutos)
-                    game_end_timestamp = match_data.get('info', {}).get('gameEndTimestamp')
-                    if game_end_timestamp:
-                        from datetime import datetime, timedelta
-                        game_end = datetime.fromtimestamp(game_end_timestamp / 1000)
-                        now = datetime.now()
-                        time_diff = (now - game_end).total_seconds()
-
-                        # Só processa partidas que acabaram há menos de 2 horas
-                        if time_diff > 7200:  # 2 horas
-                            print(f"⏭️ Partida {match_id} antiga ({time_diff//60:.0f}min atrás, limite 2h), pulando")
-                            continue
-
-                        print(f"🕐 Partida {match_id} terminou há {time_diff//60:.0f}min - processando...")
-
-                    try:
-                        # Extrai estatísticas
-                        stats = riot_api.extract_player_stats(match_data, puuid)
-
-                        if stats:
-                            # Salva automaticamente no banco
-                            success = db.add_match(account_id, stats)
-
-                            if success:
-                                new_matches_count += 1
-
-                                # Log diferente para remakes
-                                if stats.get('is_remake', False):
-                                    print(f"⚠️ [Partidas] Remake registrado: {match_id} ({stats['game_duration']}s)")
-                                else:
-                                    print(f"✅ [Partidas] Nova partida registrada: {match_id} (MVP: {stats.get('mvp_score', 0)})")
-
-                                # Verifica performance apenas se não for remake
-                                if not stats.get('is_remake', False):
-                                    await check_champion_performance(account_id, stats['champion_name'])
-
-                                # Envia notificação automática da nova partida
-                                await send_match_notification(account_id, stats)
-
-                            else:
-                                print(f"⚠️ Falha ao salvar partida {match_id} no banco")
-
-                    except Exception as e:
-                        print(f"❌ Erro ao processar partida {match_id}: {e}")
-                        continue
-
-                # Delay menor entre contas (já processamos múltiplas partidas por conta)
-                await asyncio.sleep(1)
-
-            except Exception as e:
-                print(f"❌ [Partidas] Erro ao verificar conta {account_id}: {e}")
-                continue
+            # Processa resultados
+            for result in batch_results:
+                if isinstance(result, Exception):
+                    print(f"❌ [Partidas] Erro em processamento paralelo: {result}")
+                else:
+                    new_matches_count += result
 
         if new_matches_count > 0:
             print(f"🎮 [Partidas] {new_matches_count} nova(s) partida(s) encontrada(s) e salva(s) automaticamente")
@@ -2968,6 +2913,82 @@ async def check_new_matches():
         print(f"❌ [Partidas] Erro geral ao verificar partidas: {e}")
         import traceback
         traceback.print_exc()
+
+async def process_account_batch(account_id: int, puuid: str, region: str, riot_api, db) -> int:
+    """Processa uma conta específica em paralelo"""
+    try:
+        print(f"🔍 Buscando partidas recentes para conta {account_id}...")
+
+        # Busca apenas 1 partida (otimizado)
+        flex_matches = await riot_api.get_flex_matches_batch(puuid, region, max_matches=1)
+
+        if not flex_matches:
+            print(f"⚠️ Nenhuma partida de flex encontrada para conta {account_id}")
+            return 0
+
+        print(f"📋 Encontrada {len(flex_matches)} partida de flex para conta {account_id}")
+        matches_processed = 0
+
+        # Verifica cada partida e salva apenas as novas E recentes
+        for match_data in flex_matches:
+            match_id = match_data['metadata']['matchId']
+
+            # Verifica se já está registrada
+            if db.get_last_match_id(account_id) == match_id:
+                print(f"⏭️ Partida {match_id} já registrada, pulando")
+                continue
+
+            # Verifica se a partida acabou recentemente (última 1 hora)
+            game_end_timestamp = match_data.get('info', {}).get('gameEndTimestamp')
+            if game_end_timestamp:
+                from datetime import datetime, timedelta
+                game_end = datetime.fromtimestamp(game_end_timestamp / 1000)
+                now = datetime.now()
+                time_diff = (now - game_end).total_seconds()
+
+                # Só processa partidas que acabaram há menos de 2 horas
+                if time_diff > 7200:  # 2 horas
+                    print(f"⏭️ Partida {match_id} antiga ({time_diff//60:.0f}min atrás, limite 2h), pulando")
+                    continue
+
+                print(f"🕐 Partida {match_id} terminou há {time_diff//60:.0f}min - processando...")
+
+            try:
+                # Extrai estatísticas
+                stats = riot_api.extract_player_stats(match_data, puuid)
+
+                if stats:
+                    # Salva automaticamente no banco
+                    success = db.add_match(account_id, stats)
+
+                    if success:
+                        matches_processed += 1
+
+                        # Log diferente para remakes
+                        if stats.get('is_remake', False):
+                            print(f"⚠️ [Partidas] Remake registrado: {match_id} ({stats['game_duration']}s)")
+                        else:
+                            print(f"✅ [Partidas] Nova partida registrada: {match_id} (MVP: {stats.get('mvp_score', 0)})")
+
+                        # Verifica performance apenas se não for remake
+                        if not stats.get('is_remake', False):
+                            await check_champion_performance(account_id, stats['champion_name'])
+
+                        # Envia notificação automática da nova partida
+                        await send_match_notification(account_id, stats)
+
+                    else:
+                        print(f"⚠️ Falha ao salvar partida {match_id} no banco")
+
+            except Exception as e:
+                print(f"❌ Erro ao processar partida {match_id}: {e}")
+                continue
+
+        return matches_processed
+
+    except Exception as e:
+        print(f"❌ [Partidas] Erro ao verificar conta {account_id}: {e}")
+        return 0
 
 @check_new_matches.before_loop
 async def before_check_matches():
