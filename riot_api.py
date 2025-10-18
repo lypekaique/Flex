@@ -159,8 +159,8 @@ class RiotAPI:
             print(f"⚠️ PUUID inválido: {puuid}")
             return []
 
-        # Busca histórico de partidas
-        match_ids = await self.get_match_history(puuid, region, count=max_matches)
+        # Busca histórico de partidas (apenas 1 partida para otimizar)
+        match_ids = await self.get_match_history(puuid, region, count=1)
 
         if not match_ids:
             return []

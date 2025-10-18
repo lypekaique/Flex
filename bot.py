@@ -2888,8 +2888,8 @@ async def check_new_matches():
             try:
                 print(f"🔍 Buscando partidas recentes para conta {account_id}...")
 
-                # Busca múltiplas partidas de flex em lote (mais eficiente)
-                flex_matches = await riot_api.get_flex_matches_batch(puuid, region, max_matches=15)
+                # Busca apenas 1 partida (otimizado)
+                flex_matches = await riot_api.get_flex_matches_batch(puuid, region, max_matches=1)
 
                 if not flex_matches:
                     print(f"⚠️ Nenhuma partida de flex encontrada para conta {account_id}")
@@ -2914,9 +2914,9 @@ async def check_new_matches():
                         now = datetime.now()
                         time_diff = (now - game_end).total_seconds()
 
-                        # Só processa partidas que acabaram há menos de 30 minutos
-                        if time_diff > 1800:  # 30 minutos
-                            print(f"⏭️ Partida {match_id} antiga ({time_diff//60:.0f}min atrás), pulando")
+                        # Só processa partidas que acabaram há menos de 2 horas
+                        if time_diff > 7200:  # 2 horas
+                            print(f"⏭️ Partida {match_id} antiga ({time_diff//60:.0f}min atrás, limite 2h), pulando")
                             continue
 
                         print(f"🕐 Partida {match_id} terminou há {time_diff//60:.0f}min - processando...")
@@ -2962,7 +2962,7 @@ async def check_new_matches():
         if new_matches_count > 0:
             print(f"🎮 [Partidas] {new_matches_count} nova(s) partida(s) encontrada(s) e salva(s) automaticamente")
         else:
-            print("✅ [Partidas] Verificação concluída - Nenhuma partida nova recente")
+            print("✅ [Partidas] Verificação concluída - Nenhuma partida nova nas últimas 2 horas")
 
     except Exception as e:
         print(f"❌ [Partidas] Erro geral ao verificar partidas: {e}")
