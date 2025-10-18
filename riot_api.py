@@ -151,115 +151,148 @@ class RiotAPI:
         url = f"https://{routing}.api.riotgames.com/lol/match/v5/matches/{match_id}"
 
         return await self._make_request(url)
+
+    async def get_flex_matches_batch(self, puuid: str, region: str = 'br1', max_matches: int = 20) -> List[Dict]:
+        """Busca múltiplas partidas de Ranked Flex do jogador (para evitar duplicatas)"""
+        # Valida PUID
+        if not puuid or len(puuid) < 10:
+            print(f"⚠️ PUUID inválido: {puuid}")
+            return []
+
+        # Busca histórico de partidas
+        match_ids = await self.get_match_history(puuid, region, count=max_matches)
+
+        if not match_ids:
+            return []
+
+        flex_matches = []
+
+        # Verifica cada partida e coleta apenas as de flex (queue 440)
+        for match_id in match_ids:
+            try:
+                match_data = await self.get_match_details(match_id, region)
+
+                if match_data:
+                    queue_id = match_data.get('info', {}).get('queueId', 0)
+                    if queue_id == 440:  # Ranked Flex
+                        flex_matches.append(match_data)
+
+            except Exception as e:
+                print(f"⚠️ Erro ao buscar detalhes da partida {match_id}: {e}")
+                continue
+
+        return flex_matches
+
+    # DESABILITADO TEMPORARIAMENTE - Spectator API V5 desativada pela Riot em 18/10/2025
+    # async def get_active_game(self, puuid: str, region: str = 'br1') -> Optional[Dict]:
+    #     """Busca informações de partida em andamento (Spectator API)"""
+    #     if region not in self.REGIONS:
+    #         return None
+    #
+    #     # Spectator V5 usa PUUID diretamente
+    #     url = f"https://{self.REGIONS[region]}/lol/spectator/v5/active-games/by-summoner/{puuid}"
+    #
+    #     # Usa o método _make_request mas com tratamento especial para erro 404
+    #     await self._rate_limit_wait()
+    #
+    #     try:
+    #         async with aiohttp.ClientSession() as session:
+    #             async with session.get(url, headers=self.headers) as response:
+    #                 if response.status == 429:
+    #                     # Rate limit - aguardar mais tempo
+    #                     retry_after = int(response.headers.get('Retry-After', 60))
+    #                     print(f"🚫 [Rate Limit] API retornou 429, aguardando {retry_after}s")
+    #                     await asyncio.sleep(retry_after)
+    #                     return None
+    #
+    #                 if response.status == 200:
+    #                     return await response.json()
+    #                 elif response.status == 404:
+    #                     # Jogador não está em partida (normal, não é erro)
+    #                     return None
+    #                 else:
+    #                     # Apenas mostra erro uma vez por minuto para não spammar logs
+    #                     if not hasattr(self, '_last_spectator_error') or \
+    #                        (datetime.now() - self._last_spectator_error).seconds > 60:
+    #                         print(f"Erro ao buscar partida ativa: {response.status}")
+    #                         text = await response.text()
+    #                         print(f"Resposta da API: {text[:200]}")
+    #                         self._last_spectator_error = datetime.now()
+    #                     return None
+    #     except Exception as e:
+    #         print(f"Erro ao buscar partida ativa: {e}")
+    #         return None
     
-    async def get_active_game(self, puuid: str, region: str = 'br1') -> Optional[Dict]:
-        """Busca informações de partida em andamento (Spectator API)"""
-        if region not in self.REGIONS:
-            return None
-
-        # Spectator V5 usa PUUID diretamente
-        url = f"https://{self.REGIONS[region]}/lol/spectator/v5/active-games/by-summoner/{puuid}"
-
-        # Usa o método _make_request mas com tratamento especial para erro 404
-        await self._rate_limit_wait()
-
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=self.headers) as response:
-                    if response.status == 429:
-                        # Rate limit - aguardar mais tempo
-                        retry_after = int(response.headers.get('Retry-After', 60))
-                        print(f"🚫 [Rate Limit] API retornou 429, aguardando {retry_after}s")
-                        await asyncio.sleep(retry_after)
-                        return None
-
-                    if response.status == 200:
-                        return await response.json()
-                    elif response.status == 404:
-                        # Jogador não está em partida (normal, não é erro)
-                        return None
-                    else:
-                        # Apenas mostra erro uma vez por minuto para não spammar logs
-                        if not hasattr(self, '_last_spectator_error') or \
-                           (datetime.now() - self._last_spectator_error).seconds > 60:
-                            print(f"Erro ao buscar partida ativa: {response.status}")
-                            text = await response.text()
-                            print(f"Resposta da API: {text[:200]}")
-                            self._last_spectator_error = datetime.now()
-                        return None
-        except Exception as e:
-            print(f"Erro ao buscar partida ativa: {e}")
-            return None
-    
-    def extract_live_game_info(self, game_data: Dict, puuid: str) -> Optional[Dict]:
-        """Extrai informações relevantes de uma partida ao vivo"""
-        try:
-            # Encontra o participante
-            participant = None
-            for p in game_data.get('participants', []):
-                if p.get('puuid') == puuid:
-                    participant = p
-                    break
-        
-            if not participant:
-                return None
-            
-            # Mapeamento de game mode
-            game_modes = {
-                440: 'Ranked Flex',
-                420: 'Ranked Solo/Duo',
-                400: 'Normal Draft',
-                430: 'Normal Blind',
-                450: 'ARAM',
-            }
-            
-            queue_id = game_data.get('gameQueueConfigId', 0)
-            game_mode = game_modes.get(queue_id, f'Queue {queue_id}')
-            
-            # Mapeamento de roles
-            role_names = {
-                'TOP': 'Top',
-                'JUNGLE': 'Jungle',
-                'MIDDLE': 'Mid',
-                'BOTTOM': 'ADC',
-                'UTILITY': 'Support'
-            }
-            
-            # Pega informações dos times
-            team_100 = []
-            team_200 = []
-            
-            for p in game_data.get('participants', []):
-                player_info = {
-                    'summonerName': p.get('riotId', p.get('summonerName', 'Unknown')),
-                    'championId': p.get('championId', 0),
-                    'champion': self.get_champion_name(p.get('championId', 0))
-                }
-                
-                if p.get('teamId') == 100:
-                    team_100.append(player_info)
-                else:
-                    team_200.append(player_info)
-            
-            live_info = {
-                'gameId': game_data.get('gameId'),
-                'gameMode': game_mode,
-                'queueId': queue_id,
-                'champion': self.get_champion_name(participant.get('championId', 0)),
-                'championId': participant.get('championId', 0),
-                'summonerName': participant.get('riotId', participant.get('summonerName', 'Unknown')),
-                'teamId': participant.get('teamId', 100),
-                'gameLength': game_data.get('gameLength', 0),  # Em segundos
-                'gameStartTime': game_data.get('gameStartTime', 0),
-                'team_100': team_100,
-                'team_200': team_200,
-                'bannedChampions': [self.get_champion_name(b.get('championId', 0)) for b in game_data.get('bannedChampions', [])],
-            }
-            
-            return live_info
-        except Exception as e:
-            print(f"Erro ao extrair informações de live game: {e}")
-            return None
+    # DESABILITADO TEMPORARIAMENTE - Spectator API V5 desativada pela Riot em 18/10/2025
+    # def extract_live_game_info(self, game_data: Dict, puuid: str) -> Optional[Dict]:
+    #     """Extrai informações relevantes de uma partida ao vivo"""
+    #     try:
+    #         # Encontra o participante
+    #         participant = None
+    #         for p in game_data.get('participants', []):
+    #             if p.get('puuid') == puuid:
+    #                 participant = p
+    #                 break
+    #
+    #         if not participant:
+    #             return None
+    #
+    #         # Mapeamento de game mode
+    #         game_modes = {
+    #             440: 'Ranked Flex',
+    #             420: 'Ranked Solo/Duo',
+    #             400: 'Normal Draft',
+    #             430: 'Normal Blind',
+    #             450: 'ARAM',
+    #         }
+    #
+    #         queue_id = game_data.get('gameQueueConfigId', 0)
+    #         game_mode = game_modes.get(queue_id, f'Queue {queue_id}')
+    #
+    #         # Mapeamento de roles
+    #         role_names = {
+    #             'TOP': 'Top',
+    #             'JUNGLE': 'Jungle',
+    #             'MIDDLE': 'Mid',
+    #             'BOTTOM': 'ADC',
+    #             'UTILITY': 'Support'
+    #         }
+    #
+    #         # Pega informações dos times
+    #         team_100 = []
+    #         team_200 = []
+    #
+    #         for p in game_data.get('participants', []):
+    #             player_info = {
+    #                 'summonerName': p.get('riotId', p.get('summonerName', 'Unknown')),
+    #                 'championId': p.get('championId', 0),
+    #                 'champion': self.get_champion_name(p.get('championId', 0))
+    #             }
+    #
+    #             if p.get('teamId') == 100:
+    #                 team_100.append(player_info)
+    #             else:
+    #                 team_200.append(player_info)
+    #
+    #         live_info = {
+    #             'gameId': game_data.get('gameId'),
+    #             'gameMode': game_mode,
+    #             'queueId': queue_id,
+    #             'champion': self.get_champion_name(participant.get('championId', 0)),
+    #             'championId': participant.get('championId', 0),
+    #             'summonerName': participant.get('riotId', participant.get('summonerName', 'Unknown')),
+    #             'teamId': participant.get('teamId', 100),
+    #             'gameLength': game_data.get('gameLength', 0),  # Em segundos
+    #             'gameStartTime': game_data.get('gameStartTime', 0),
+    #             'team_100': team_100,
+    #             'team_200': team_200,
+    #             'bannedChampions': [self.get_champion_name(b.get('championId', 0)) for b in game_data.get('bannedChampions', [])],
+    #         }
+    #
+    #         return live_info
+    #     except Exception as e:
+    #         print(f"Erro ao extrair informações de live game: {e}")
+    #         return None
     
     def get_champion_name(self, champion_id: int) -> str:
         """Retorna nome do campeão pelo ID (mapeamento básico)"""
