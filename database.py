@@ -183,6 +183,22 @@ class Database:
             cursor.execute('ALTER TABLE matches ADD COLUMN mvp_placement INTEGER DEFAULT 0')
             print("✅ Migração mvp_placement concluída!")
         
+        # Tabela de banimentos de campeões (sistema progressivo)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS champion_bans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                lol_account_id INTEGER NOT NULL,
+                champion_name TEXT NOT NULL,
+                ban_level INTEGER DEFAULT 1,
+                ban_days INTEGER NOT NULL,
+                banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP NOT NULL,
+                reason TEXT,
+                FOREIGN KEY (lol_account_id) REFERENCES lol_accounts(id),
+                UNIQUE(lol_account_id, champion_name)
+            )
+        ''')
+        
         conn.commit()
         conn.close()
     
@@ -963,4 +979,141 @@ class Database:
         
         conn.close()
         return accounts
+    
+    def add_champion_ban(self, lol_account_id: int, champion_name: str, ban_days: int, ban_level: int, reason: str = None) -> bool:
+        """Adiciona ou atualiza um banimento de campeão com sistema progressivo"""
+        try:
+            from datetime import datetime, timedelta
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            expires_at = datetime.now() + timedelta(days=ban_days)
+            
+            # Verifica se já existe um banimento ativo
+            cursor.execute('''
+                SELECT id, ban_level FROM champion_bans
+                WHERE lol_account_id = ? AND champion_name = ?
+            ''', (lol_account_id, champion_name))
+            
+            existing = cursor.fetchone()
+            
+            if existing:
+                # Atualiza banimento existente
+                cursor.execute('''
+                    UPDATE champion_bans
+                    SET ban_level = ?, ban_days = ?, banned_at = CURRENT_TIMESTAMP, 
+                        expires_at = ?, reason = ?
+                    WHERE lol_account_id = ? AND champion_name = ?
+                ''', (ban_level, ban_days, expires_at, reason, lol_account_id, champion_name))
+            else:
+                # Cria novo banimento
+                cursor.execute('''
+                    INSERT INTO champion_bans (lol_account_id, champion_name, ban_level, ban_days, expires_at, reason)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (lol_account_id, champion_name, ban_level, ban_days, expires_at, reason))
+            
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"❌ Erro ao adicionar banimento: {e}")
+            return False
+    
+    def get_active_champion_bans(self, lol_account_id: int) -> List[Dict]:
+        """Retorna todos os banimentos ativos de um jogador"""
+        from datetime import datetime
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT champion_name, ban_level, ban_days, banned_at, expires_at, reason
+            FROM champion_bans
+            WHERE lol_account_id = ? AND expires_at > datetime('now')
+            ORDER BY expires_at DESC
+        ''', (lol_account_id,))
+        
+        bans = []
+        for row in cursor.fetchall():
+            bans.append({
+                'champion_name': row[0],
+                'ban_level': row[1],
+                'ban_days': row[2],
+                'banned_at': row[3],
+                'expires_at': row[4],
+                'reason': row[5]
+            })
+        
+        conn.close()
+        return bans
+    
+    def is_champion_banned(self, lol_account_id: int, champion_name: str) -> bool:
+        """Verifica se um campeão está banido para o jogador"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id FROM champion_bans
+            WHERE lol_account_id = ? AND champion_name = ? AND expires_at > datetime('now')
+        ''', (lol_account_id, champion_name))
+        
+        result = cursor.fetchone()
+        conn.close()
+        return result is not None
+    
+    def get_champion_ban_level(self, lol_account_id: int, champion_name: str) -> int:
+        """Retorna o nível de banimento atual do campeão (0 se não banido ou expirado)"""
+        from datetime import datetime, timedelta
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Busca o último banimento (ativo ou expirado recentemente)
+        cursor.execute('''
+            SELECT ban_level, expires_at FROM champion_bans
+            WHERE lol_account_id = ? AND champion_name = ?
+            ORDER BY banned_at DESC
+            LIMIT 1
+        ''', (lol_account_id, champion_name))
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        if not result:
+            return 0
+        
+        ban_level, expires_at_str = result
+        expires_at = datetime.fromisoformat(expires_at_str)
+        now = datetime.now()
+        
+        # Se ainda está ativo, retorna o nível atual
+        if expires_at > now:
+            return ban_level
+        
+        # Se expirou há menos de 3 dias, mantém o nível para próximo banimento
+        if (now - expires_at) < timedelta(days=3):
+            return ban_level
+        
+        # Se expirou há mais de 3 dias, reseta para 0
+        return 0
+    
+    def cleanup_expired_bans(self) -> int:
+        """Remove banimentos expirados há mais de 30 dias (limpeza de histórico)"""
+        try:
+            from datetime import datetime, timedelta
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cutoff_date = datetime.now() - timedelta(days=30)
+            
+            cursor.execute('''
+                DELETE FROM champion_bans
+                WHERE expires_at < ?
+            ''', (cutoff_date,))
+            
+            deleted = cursor.rowcount
+            conn.commit()
+            conn.close()
+            return deleted
+        except Exception as e:
+            print(f"❌ Erro ao limpar banimentos expirados: {e}")
+            return 0
 
