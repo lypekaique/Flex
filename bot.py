@@ -440,6 +440,105 @@ async def contas(interaction: discord.Interaction):
     
     await interaction.followup.send(embed=embed, ephemeral=True)
 
+@bot.tree.command(name="champban", description="🚫 Veja seus campeões banidos e tempo restante")
+async def champban(interaction: discord.Interaction):
+    """Mostra todos os campeões banidos do usuário e tempo restante"""
+    if not await check_command_channel(interaction):
+        return
+    
+    await interaction.response.defer(ephemeral=True)
+    
+    discord_id = str(interaction.user.id)
+    accounts = db.get_user_accounts(discord_id)
+    
+    if not accounts:
+        await interaction.followup.send(
+            "❌ Você não tem nenhuma conta vinculada. Use `/logar` para vincular uma conta!",
+            ephemeral=True
+        )
+        return
+    
+    # Busca banimentos de todas as contas
+    all_bans = []
+    for account in accounts:
+        bans = db.get_active_champion_bans(account['id'])
+        for ban in bans:
+            ban['account_name'] = account['summoner_name']
+            all_bans.append(ban)
+    
+    if not all_bans:
+        embed = discord.Embed(
+            title="✅ Nenhum Campeão Banido",
+            description="Você não tem nenhum campeão banido no momento!\n\nContinue jogando bem para manter assim! 🎮",
+            color=discord.Color.green()
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        return
+    
+    # Cria embed com banimentos
+    embed = discord.Embed(
+        title="🚫 Campeões Banidos",
+        description=f"Total: **{len(all_bans)}** campeão(ões) banido(s)",
+        color=discord.Color.red()
+    )
+    
+    from datetime import datetime
+    now = datetime.now()
+    
+    for ban in all_bans:
+        # Calcula tempo restante
+        expires_at = datetime.fromisoformat(ban['expires_at'])
+        time_left = expires_at - now
+        
+        days_left = time_left.days
+        hours_left = time_left.seconds // 3600
+        minutes_left = (time_left.seconds % 3600) // 60
+        
+        # Formata tempo restante
+        if days_left > 0:
+            time_str = f"{days_left}d {hours_left}h"
+        elif hours_left > 0:
+            time_str = f"{hours_left}h {minutes_left}m"
+        else:
+            time_str = f"{minutes_left}m"
+        
+        # Define emoji baseado no nível
+        if ban['ban_level'] == 1:
+            level_emoji = "⚠️"
+            level_text = "Nível 1"
+        elif ban['ban_level'] == 2:
+            level_emoji = "🚨"
+            level_text = "Nível 2"
+        else:
+            level_emoji = "🔴"
+            level_text = "Nível 3 (Máximo)"
+        
+        embed.add_field(
+            name=f"{level_emoji} {ban['champion_name']}",
+            value=(
+                f"**Conta:** {ban['account_name']}\n"
+                f"**{level_text}** - {ban['ban_days']} dias\n"
+                f"⏱️ Tempo restante: **{time_str}**\n"
+                f"📋 Motivo: {ban['reason']}"
+            ),
+            inline=False
+        )
+    
+    embed.add_field(
+        name="ℹ️ Sistema de Banimento",
+        value=(
+            "**Níveis:**\n"
+            "• Nível 1: 2 dias\n"
+            "• Nível 2: 4 dias\n"
+            "• Nível 3: 1 semana\n\n"
+            "O sistema reseta após 3 dias do último banimento ou ao atingir o nível máximo."
+        ),
+        inline=False
+    )
+    
+    embed.set_footer(text="Jogue melhor para evitar banimentos!")
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
 
 async def champion_autocomplete(
     interaction: discord.Interaction,
@@ -2218,8 +2317,9 @@ async def update_live_game_result(game_id: str, match_data: Dict):
         traceback.print_exc()
 
 async def check_champion_performance(lol_account_id: int, champion_name: str):
-    """Sistema de PROIBIÇÃO - Verifica se o jogador teve performances ruins com o mesmo campeão
-    Se atender aos critérios, fica PROIBIDO de jogar com esse campeão por 2 dias
+    """Sistema de PROIBIÇÃO PROGRESSIVA - Verifica se o jogador teve performances ruins com o mesmo campeão
+    Sistema de Stack: 2 dias → 4 dias → 1 semana
+    Reseta após 3 dias do último banimento ou ao atingir o máximo
 
     Critérios de Proibição:
     1. 3 partidas ruins seguidas (< 45 pontos cada) - mostra todas as 3 partidas
@@ -2243,6 +2343,32 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
 
         if not should_alert:
             return
+        
+        # Determina o nível de banimento (progressivo)
+        current_level = db.get_champion_ban_level(lol_account_id, champion_name)
+        
+        # Sistema de stack: 1 (2 dias) → 2 (4 dias) → 3 (1 semana)
+        if current_level == 0:
+            new_level = 1
+            ban_days = 2
+        elif current_level == 1:
+            new_level = 2
+            ban_days = 4
+        elif current_level == 2:
+            new_level = 3
+            ban_days = 7
+        else:  # Já está no máximo (3), reseta para 1
+            new_level = 1
+            ban_days = 2
+        
+        # Determina a razão do banimento
+        if any_single_below_35:
+            reason = "Partida abaixo de 35 pontos"
+        else:
+            reason = "3 partidas ruins seguidas (< 45 pontos)"
+        
+        # Registra o banimento no banco
+        db.add_champion_ban(lol_account_id, champion_name, ban_days, new_level, reason)
         
         # Busca informações da conta
         conn = db.get_connection()
@@ -2286,10 +2412,24 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
             else:
                 alert_reason = "• 3 partidas ruins seguidas (< 45 pontos cada)!"
 
+            # Define emoji e cor baseado no nível
+            if new_level == 1:
+                level_emoji = "⚠️"
+                level_color = discord.Color.orange()
+                level_text = "NÍVEL 1"
+            elif new_level == 2:
+                level_emoji = "🚨"
+                level_color = discord.Color.red()
+                level_text = "NÍVEL 2"
+            else:  # nível 3
+                level_emoji = "🔴"
+                level_color = discord.Color.dark_red()
+                level_text = "NÍVEL 3 (MÁXIMO)"
+            
             embed = discord.Embed(
-                title="⚠️ ALERTA DE PERFORMANCE BAIXA",
-                description=f"{member.mention} está **PROIBIDO** de jogar com **{champion_name}** por 2 dias!",
-                color=discord.Color.red()
+                title=f"{level_emoji} BANIMENTO PROGRESSIVO - {level_text}",
+                description=f"{member.mention} está **PROIBIDO** de jogar com **{champion_name}** por **{ban_days} dias**!",
+                color=level_color
             )
 
             # Filtra partidas baseado no critério atendido
@@ -2331,13 +2471,16 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
             )
             
             embed.add_field(
-                name="🚫 REGRAS DO SISTEMA",
+                name="🚫 SISTEMA DE BANIMENTO PROGRESSIVO",
                 value=(
                     "**Critérios de Proibição:**\n"
                     "• **3 partidas ruins seguidas** (< 45 pontos cada)\n"
                     "• **Pelo menos 1 partida abaixo de 35 pontos**\n\n"
-                    "**PENALIDADE:**\n"
-                    "• **PROIBIDO** de jogar com esse campeão por **2 dias**"
+                    "**Sistema de Stack:**\n"
+                    "• **Nível 1:** 2 dias de banimento\n"
+                    "• **Nível 2:** 4 dias de banimento\n"
+                    "• **Nível 3:** 1 semana de banimento\n\n"
+                    "**Reset:** Após 3 dias do último banimento ou ao atingir nível máximo"
                 ),
                 inline=False
             )
@@ -2701,6 +2844,12 @@ async def check_live_games():
 
                 if game_data:
                     game_id = str(game_data.get('gameId'))
+                    queue_id = game_data.get('gameQueueConfigId', 0)
+                    
+                    # Filtra apenas Ranked Flex (440) e Personalizadas (0)
+                    if queue_id not in [440, 0]:
+                        print(f"⚠️ [Live Games] Partida {game_id} ignorada (queueId: {queue_id} - não é Flex ou Personalizada)")
+                        continue
 
                     # Verificação GLOBAL: se esta partida foi notificada recentemente (últimos 5 minutos), pula TUDO
                     last_notification = db.get_live_game_notification_time(game_id)
@@ -3100,12 +3249,12 @@ async def check_live_games_finished():
                 match_data = await riot_api.get_match_details(match_id, region)
 
                 if match_data:
-                    # Verifica se é Ranked Flex (queueId 440)
+                    # Verifica se é Ranked Flex (440) ou Personalizada (0)
                     queue_id = match_data.get('info', {}).get('queueId', 0)
                     print(f"🔍 [Live Check] Queue ID da partida: {queue_id}")
-                    if queue_id != 440:
-                        # Não é Ranked Flex, pula
-                        print(f"⚠️ [Live Check] Partida {match_id} não é Ranked Flex (queueId: {queue_id})")
+                    if queue_id not in [440, 0]:
+                        # Não é Ranked Flex nem Personalizada, pula
+                        print(f"⚠️ [Live Check] Partida {match_id} não é Flex ou Personalizada (queueId: {queue_id})")
                         continue
                     
                     # Verifica se é a partida do live game (o game_id da spectator API é diferente do match_id)
