@@ -5,9 +5,6 @@ from typing import Optional, Dict, List
 from datetime import datetime
 
 class RiotAPI:
-    """Cliente para interagir com a API da Riot Games"""
-    
-    # Mapeamento de regiões para endpoints
     REGIONS = {
         'br1': 'br1.api.riotgames.com',
         'eun1': 'eun1.api.riotgames.com',
@@ -42,25 +39,21 @@ class RiotAPI:
             "X-Riot-Token": api_key
         }
 
-        # Controle de rate limiting
         self._last_request_time = 0
-        self._request_interval = 1.5  # 1.5 segundos entre requisições (40/min para margem de segurança)
+        self._request_interval = 1.5
         self._rate_limit_lock = asyncio.Lock()
-        self._request_count_2min = 0  # Contador de requisições nos últimos 2 minutos
+        self._request_count_2min = 0
         self._rate_limit_window_start = time.time()
-        self._max_requests_per_2min = 95  # Fica abaixo do limite de 100 para margem de segurança
+        self._max_requests_per_2min = 95
 
     async def _rate_limit_wait(self):
-        """Controla o rate limiting entre requisições"""
         async with self._rate_limit_lock:
             current_time = time.time()
 
-            # Reseta contador se passou 2 minutos
             if current_time - self._rate_limit_window_start > 120:
                 self._request_count_2min = 0
                 self._rate_limit_window_start = current_time
 
-            # Verifica limite de 2 minutos
             if self._request_count_2min >= self._max_requests_per_2min:
                 sleep_time = 120 - (current_time - self._rate_limit_window_start) + 1
                 print(f"⏳ [Rate Limit] Aguardando {sleep_time:.1f}s para resetar janela de 2 minutos")
@@ -68,7 +61,6 @@ class RiotAPI:
                 self._request_count_2min = 0
                 self._rate_limit_window_start = time.time()
 
-            # Controle de intervalo mínimo entre requisições
             time_since_last = current_time - self._last_request_time
             if time_since_last < self._request_interval:
                 await asyncio.sleep(self._request_interval - time_since_last)
@@ -77,7 +69,6 @@ class RiotAPI:
             self._request_count_2min += 1
 
     async def _make_request(self, url: str, params: dict = None) -> Optional[Dict]:
-        """Método auxiliar para fazer requisições com tratamento de erro 429"""
         max_retries = 3
         retry_delay = 2
 
@@ -88,7 +79,6 @@ class RiotAPI:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(url, headers=self.headers, params=params) as response:
                         if response.status == 429:
-                            # Rate limit - aguardar mais tempo
                             retry_after = int(response.headers.get('Retry-After', 60))
                             print(f"🚫 [Rate Limit] API retornou 429, aguardando {retry_after}s")
                             await asyncio.sleep(retry_after)
@@ -435,7 +425,6 @@ class RiotAPI:
                 'vision': 0.05     # Vision quase ignorada (realista com sites)
             }
         
-        # Calcula score final (0-100)
         score = (
             norm_kda * weights['kda'] +
             norm_kp * weights['kp'] +
@@ -445,27 +434,30 @@ class RiotAPI:
             norm_vision * weights['vision']
         ) * 100
         
-        # PENALIDADE SEVERA para KDA muito baixo (evita feeders terem score alto)
         kda_value = player_stats.get('kda', 0)
-        if kda_value < 1.0:
-            # Penalidade progressiva baseada no quão ruim é o KDA
-            if kda_value < 0.5:
-                # KDA abaixo de 0.5 (ex: 0/6/2 = 0.33) → -30 pontos
-                score = max(score - 30, 0)
-            elif kda_value < 0.75:
-                # KDA entre 0.5 e 0.75 → -20 pontos
-                score = max(score - 20, 0)
-            else:
-                # KDA entre 0.75 e 1.0 → -10 pontos
-                score = max(score - 10, 0)
+        deaths = player_stats.get('deaths', 0)
         
-        # Bônus para time vitorioso (+5 pontos no MVP score)
-        # Isso dá uma leve vantagem para o time que venceu
+        if deaths <= 1:
+            pass
+        elif kda_value < 1.0:
+            if kda_value < 0.5:
+                score = max(score - 40, 0)
+            elif kda_value < 0.75:
+                score = max(score - 25, 0)
+            else:
+                score = max(score - 15, 0)
+        elif kda_value >= 1.0:
+            if kda_value >= 5.0:
+                score = min(score + 15, 100)
+            elif kda_value >= 3.0:
+                score = min(score + 10, 100)
+            elif kda_value >= 2.0:
+                score = min(score + 5, 100)
+        
         won = player_stats.get('win', False)
         if won:
-            score = min(score + 5, 100)  # Adiciona 5 pontos, mas não passa de 100
+            score = min(score + 5, 100)
         
-        # Calcula colocação geral (média ponderada das posições)
         overall_placement = (
             rank_kda * weights['kda'] +
             rank_kp * weights['kp'] +
@@ -475,8 +467,6 @@ class RiotAPI:
             rank_vision * weights['vision']
         )
         
-        # Retorna score e placement (placement será corrigido depois com base em todos os scores)
-        # Por enquanto retorna a média ponderada sem arredondar para manter precisão
         return (int(min(max(score, 0), 100)), overall_placement)
     
     def extract_player_stats(self, match_data: Dict, puuid: str) -> Optional[Dict]:
