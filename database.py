@@ -230,7 +230,6 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        # Verifica se já tem 3 contas
         cursor.execute('SELECT COUNT(*) FROM lol_accounts WHERE discord_id = ?', (discord_id,))
         count = cursor.fetchone()[0]
         
@@ -238,7 +237,6 @@ class Database:
             conn.close()
             return False, "Você já tem 3 contas vinculadas. Remova uma para adicionar outra."
         
-        # Adiciona usuário se não existir
         self.add_user(discord_id)
         
         try:
@@ -803,11 +801,9 @@ class Database:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            # Conta quantas partidas tem antes de deletar
             cursor.execute('SELECT COUNT(*) FROM matches')
             count = cursor.fetchone()[0]
             
-            # Deleta todas as partidas
             cursor.execute('DELETE FROM matches')
             
             # Também limpa as notificações de live games antigas
@@ -828,11 +824,9 @@ class Database:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            # Conta quantas partidas tem antes de deletar
             cursor.execute('SELECT COUNT(*) FROM matches WHERE lol_account_id = ?', (lol_account_id,))
             count = cursor.fetchone()[0]
             
-            # Deleta as partidas
             cursor.execute('DELETE FROM matches WHERE lol_account_id = ?', (lol_account_id,))
             
             # Limpa notificações de live games dessa conta
@@ -853,7 +847,6 @@ class Database:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            # Busca IDs de todas as contas do usuário
             cursor.execute('SELECT id FROM lol_accounts WHERE discord_id = ?', (discord_id,))
             account_ids = [row[0] for row in cursor.fetchall()]
             
@@ -861,12 +854,10 @@ class Database:
                 conn.close()
                 return True, 0
             
-            # Conta quantas partidas tem antes de deletar
             placeholders = ','.join('?' * len(account_ids))
             cursor.execute(f'SELECT COUNT(*) FROM matches WHERE lol_account_id IN ({placeholders})', account_ids)
             count = cursor.fetchone()[0]
             
-            # Deleta as partidas
             cursor.execute(f'DELETE FROM matches WHERE lol_account_id IN ({placeholders})', account_ids)
             
             # Limpa notificações de live games dessas contas

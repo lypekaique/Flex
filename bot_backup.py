@@ -9,18 +9,22 @@ from datetime import datetime
 from typing import Dict
 import asyncio
 
+# Carrega variáveis de ambiente
 load_dotenv()
 
+# Configurações
 TOKEN = os.getenv('DISCORD_TOKEN')
 RIOT_API_KEY = os.getenv('RIOT_API_KEY')
 DEFAULT_REGION = os.getenv('DEFAULT_REGION', 'br1')
 
+# Inicializa bot e banco de dados
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 db = Database()
 riot_api = RiotAPI(RIOT_API_KEY)
 
+# Função auxiliar para verificar permissões de canal
 async def check_command_channel(interaction: discord.Interaction) -> bool:
     """
     Verifica se o comando pode ser executado no canal atual.
@@ -29,15 +33,19 @@ async def check_command_channel(interaction: discord.Interaction) -> bool:
     Se houver canal configurado, usuários comuns só podem usar lá.
     Retorna True se pode executar, False caso contrário.
     """
+    # Admins podem usar comandos em qualquer lugar
     if interaction.user.guild_permissions.administrator:
         return True
     
+    # Busca o canal configurado
     guild_id = str(interaction.guild_id)
     command_channel_id = db.get_command_channel(guild_id)
-
+    
+    # Se não tem canal configurado, permite usar em qualquer lugar
     if not command_channel_id:
         return True
-
+    
+    # Verifica se está no canal correto
     if str(interaction.channel_id) != command_channel_id:
         await interaction.response.send_message(
             f"❌ **Canal incorreto!**\n"
@@ -48,6 +56,7 @@ async def check_command_channel(interaction: discord.Interaction) -> bool:
     
     return True
 
+# View com botões persistentes para o comando /flex
 class FlexGuideView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)  # Timeout None = persistente
@@ -231,15 +240,18 @@ async def on_ready():
     print(f'ID: {bot.user.id}')
     print('------')
     
+    # Registra Views persistentes
     bot.add_view(FlexGuideView())
     print('✅ Views persistentes registradas')
-
+    
+    # Sincroniza comandos slash
     try:
         synced = await bot.tree.sync()
         print(f'{len(synced)} comandos sincronizados')
     except Exception as e:
         print(f'Erro ao sincronizar comandos: {e}')
     
+    # Inicia verificação de partidas (verifica se já não está rodando)
     if not check_new_matches.is_running():
         check_new_matches.start()
         print('✅ Task de verificação de partidas iniciada')
@@ -264,6 +276,7 @@ async def on_ready():
     print('⚠️ Funcionalidades de live games desabilitadas temporariamente (Spectator API V5 indisponível)')
     print('✅ Sistema de match score funcionando normalmente pelo histórico de partidas')
 
+# Auto-complete para regiões
 async def region_autocomplete(
     interaction: discord.Interaction,
     current: str,
@@ -296,11 +309,13 @@ async def region_autocomplete(
 @app_commands.autocomplete(regiao=region_autocomplete)
 async def logar(interaction: discord.Interaction, riot_id: str, regiao: str = DEFAULT_REGION):
     """Comando para vincular conta do LOL usando Riot ID (nome#tag)"""
+    # Verifica permissão de canal
     if not await check_command_channel(interaction):
         return
     
     await interaction.response.defer(ephemeral=True)
     
+    # Valida formato do Riot ID
     if '#' not in riot_id:
         await interaction.followup.send(
             "❌ Formato inválido! Use o formato: **Nome#TAG**\n"
@@ -321,6 +336,7 @@ async def logar(interaction: discord.Interaction, riot_id: str, regiao: str = DE
         )
         return
     
+    # Busca conta na API da Riot (Riot ID)
     account = await riot_api.get_account_by_riot_id(game_name, tag_line, regiao)
     
     if not account:
@@ -331,6 +347,7 @@ async def logar(interaction: discord.Interaction, riot_id: str, regiao: str = DE
         )
         return
     
+    # Busca dados do summoner pelo PUUID
     summoner = await riot_api.get_summoner_by_puuid(account['puuid'], regiao)
     
     if not summoner:
@@ -346,10 +363,12 @@ async def logar(interaction: discord.Interaction, riot_id: str, regiao: str = DE
     account_id = summoner.get('accountId', account['puuid'])
     summoner_level = summoner.get('summonerLevel', 0)
     
+    # Log para debug se os campos estiverem faltando
     if 'id' not in summoner or 'accountId' not in summoner:
         print(f"⚠️ API retornou summoner sem id/accountId. Usando PUUID como fallback.")
         print(f"Summoner data: {summoner}")
     
+    # Adiciona conta ao banco de dados
     discord_id = str(interaction.user.id)
     success, message = db.add_lol_account(
         discord_id=discord_id,
@@ -361,6 +380,7 @@ async def logar(interaction: discord.Interaction, riot_id: str, regiao: str = DE
     )
     
     if success:
+        # Busca o ID da conta recém-criada
         accounts = db.get_user_accounts(discord_id)
         new_account = None
         for acc in accounts:
@@ -378,6 +398,7 @@ async def logar(interaction: discord.Interaction, riot_id: str, regiao: str = DE
                     for match_id in match_ids:
                         match_data = await riot_api.get_match_details(match_id, regiao)
                         if match_data:
+                            # Verifica se é Ranked Flex (queueId 440)
                             queue_id = match_data.get('info', {}).get('queueId', 0)
                             if queue_id == 440:
                                 # Extrai stats mas NÃO envia notificações
@@ -391,6 +412,7 @@ async def logar(interaction: discord.Interaction, riot_id: str, regiao: str = DE
                 print(f"⚠️ Erro ao marcar última partida: {e}")
                 # Não interrompe o fluxo se houver erro
         
+        # Cria embed bonito
         embed = discord.Embed(
             title="✅ Conta Vinculada!",
             description=f"Conta **{game_name}#{tag_line}** vinculada com sucesso!",
@@ -414,6 +436,7 @@ async def logar(interaction: discord.Interaction, riot_id: str, regiao: str = DE
 @bot.tree.command(name="contas", description="📋 Veja todas as suas contas vinculadas")
 async def contas(interaction: discord.Interaction):
     """Lista todas as contas vinculadas do usuário"""
+    # Verifica permissão de canal
     if not await check_command_channel(interaction):
         return
     
@@ -429,6 +452,7 @@ async def contas(interaction: discord.Interaction):
         )
         return
     
+    # Cria embed com as contas
     embed = discord.Embed(
         title="📋 Suas Contas Vinculadas",
         description=f"Total: {len(accounts)}/3 contas",
@@ -445,6 +469,7 @@ async def contas(interaction: discord.Interaction):
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 
+# Auto-complete para campeões
 async def champion_autocomplete(
     interaction: discord.Interaction,
     current: str,
@@ -505,6 +530,7 @@ async def metric_autocomplete(
 async def media(interaction: discord.Interaction, campeao: str = None, metrica: str = None, 
                 usuario: discord.User = None, conta: int = None):
     """Calcula estatísticas e média de desempenho do mês atual"""
+    # Verifica permissão de canal
     if not await check_command_channel(interaction):
         return
     
@@ -557,6 +583,7 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
         title_parts.append(f"- {metric_names.get(metrica, metrica.upper())}")
     title_parts.append(f"- {now.strftime('%B/%Y')}")
     
+    # Cria embed para resultados
     embed = discord.Embed(
         title=" ".join(title_parts),
         color=discord.Color.gold()
@@ -753,6 +780,7 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
 )
 async def historico(interaction: discord.Interaction, conta: int = 1, quantidade: int = 5):
     """Mostra histórico detalhado de partidas"""
+    # Verifica permissão de canal
     if not await check_command_channel(interaction):
         return
     
@@ -783,6 +811,7 @@ async def historico(interaction: discord.Interaction, conta: int = 1, quantidade
         )
         return
     
+    # Limita quantidade
     matches = matches[:min(quantidade, 10)]
     
     embed = discord.Embed(
@@ -792,6 +821,7 @@ async def historico(interaction: discord.Interaction, conta: int = 1, quantidade
     )
     
     for i, match in enumerate(matches, 1):
+        # Verifica se é remake
         is_remake = match.get('is_remake', False)
         
         if is_remake:
@@ -1007,7 +1037,7 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
                 name="📢 O que será notificado?",
                 value=(
                     "• Quando um jogador usar o **mesmo campeão 3x seguidas**\n"
-                    "• E tiver **MVP Score abaixo de 45** nas 3 partidas\n"
+                    "• E tiver **média abaixo de 35 pontos** nas 3 partidas\n"
                     "• Será enviada uma notificação com sugestões"
                 ),
                 inline=False
@@ -1092,6 +1122,7 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
             await interaction.followup.send("❌ Erro ao configurar canal.", ephemeral=True)
             return
     
+    # Mostra configuração atual
     config = db.get_server_config(guild_id)
     config_text = "**Configuração Atual:**\n"
     
@@ -1126,13 +1157,16 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
 )
 async def tops_flex(interaction: discord.Interaction, quantidade: int = 10):
     """Mostra o ranking dos melhores jogadores por MVP score"""
+    # Verifica permissão de canal
     if not await check_command_channel(interaction):
         return
     
     await interaction.response.defer()
     
+    # Limita quantidade
     quantidade = max(5, min(quantidade, 25))
     
+    # Busca ranking
     ranking = db.get_top_players_by_mvp(limit=quantidade, min_games=5)
     
     if not ranking:
@@ -1142,6 +1176,7 @@ async def tops_flex(interaction: discord.Interaction, quantidade: int = 10):
         )
         return
     
+    # Cria embed
     now = datetime.now()
     embed = discord.Embed(
         title="🏆 TOP FLEX PLAYERS - RANKING",
@@ -1201,6 +1236,7 @@ async def tops_flex(interaction: discord.Interaction, quantidade: int = 10):
 @bot.tree.command(name="flex", description="🎯 Guia completo do bot com botões interativos")
 async def flex_guide(interaction: discord.Interaction):
     """Comando com guia interativo do bot"""
+    # Verifica permissão de canal
     if not await check_command_channel(interaction):
         return
     
@@ -1697,7 +1733,8 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
             
             # URL da imagem do campeão (Data Dragon Riot)
             champion_image_url = f"https://ddragon.leagueoflegends.com/cdn/14.1.1/img/champion/{stats['champion_name']}.png"
-
+            
+            # Cria embed com informações detalhadas
             if is_remake:
                 # Layout especial para remake
                 embed = discord.Embed(
@@ -2221,13 +2258,15 @@ async def update_live_game_result(game_id: str, match_data: Dict):
         import traceback
         traceback.print_exc()
 
-async def check_champion_performance(lol_account_id: int, champion_name: str):
-    """Sistema de PROIBIÇÃO - Verifica se o jogador teve performances ruins com o mesmo campeão
-    Se atender aos critérios, fica PROIBIDO de jogar com esse campeão por 2 dias
-
-    Critérios de Proibição:
-    1. 3 partidas ruins seguidas (< 45 pontos cada)
-    2. Pelo menos 1 partida abaixo de 35 pontos"""
+# ====== SISTEMA ANTIGO DE ALERTA ========
+# Sistema antigo: alertava quando jogador tinha 3 performances ruins seguidas (< 45 MVP Score)
+# Novo sistema: alerta apenas quando media fica abaixo de 35 pontos
+# ========== SISTEMA ANTIGO DE ALERTA (DESABILITADO) ==========
+# Este código foi preservado para referência histórica
+# Sistema antigo: alertava quando jogador tinha 3 performances ruins seguidas (< 45 MVP Score)
+"""
+async def check_champion_performance_old(lol_account_id: int, champion_name: str):
+    \"\"\"Verifica se o jogador teve 3 performances ruins seguidas com o mesmo campeão\"\"\"
     try:
         # Busca as últimas 3 partidas com esse campeão
         matches = db.get_last_n_matches_with_champion(lol_account_id, champion_name, n=3)
@@ -2236,18 +2275,12 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
         if len(matches) < 3:
             return
 
-        # CRITÉRIO 1: Sistema antigo - verifica se todas as 3 têm MVP Score abaixo de 45
+        # Verifica se todas as 3 têm MVP Score abaixo de 45
         all_bad_scores = all(match.get('mvp_score', 0) < 45 for match in matches)
 
-        # CRITÉRIO 2: Critério rigoroso - verifica se QUALQUER partida individual ficou abaixo de 35 pontos
-        any_single_below_35 = any(match.get('mvp_score', 0) < 35 for match in matches)
-
-        # Dispara alerta se qualquer um dos critérios for atendido
-        should_alert = all_bad_scores or any_single_below_35
-
-        if not should_alert:
+        if not all_bad_scores:
             return
-        
+
         # Busca informações da conta
         conn = db.get_connection()
         cursor = conn.cursor()
@@ -2257,43 +2290,139 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
         ''', (lol_account_id,))
         account_info = cursor.fetchone()
         conn.close()
-        
+
         if not account_info:
             return
-        
+
         discord_id, summoner_name = account_info
-        
+
         # Busca todos os servidores onde está o bot
         for guild in bot.guilds:
             # Verifica se o usuário está nesse servidor
             member = guild.get_member(int(discord_id))
             if not member:
                 continue
-            
+
             # Busca canal de notificações configurado para esse servidor
             channel_id = db.get_notification_channel(str(guild.id))
             if not channel_id:
                 continue
-            
+
             # Busca o canal
             channel = guild.get_channel(int(channel_id))
             if not channel:
                 continue
-            
+
             # Calcula média dos MVP Scores
             avg_mvp_score = sum(m.get('mvp_score', 0) for m in matches) / 3
 
-            # Determina qual critério foi atendido para personalizar a mensagem
-            alert_reason = ""
-            if any_single_below_35:
-                alert_reason = "• Teve uma partida abaixo de 35 pontos!"
-            else:
-                alert_reason = "• 3 partidas ruins seguidas (< 45 pontos cada)!"
+            # Cria embed de "vergonha"
+            embed = discord.Embed(
+                title="ALERTA DE PERFORMANCE BAIXA",
+                description=f"{member.mention} esta Proibido de jogar **{champion_name}**!",
+                color=discord.Color.red()
+            )
+
+            embed.add_field(
+                name="Estatisticas Recentes",
+                value=(
+                    f"3 ultimas partidas com {champion_name}\n"
+                    f"MVP Score medio: **{int(avg_mvp_score)}/100**\n"
+                    f"MVP Score abaixo de 45 nas 3 partidas!"
+                ),
+                inline=False
+            )
+
+            # Adiciona detalhes das 3 partidas
+            matches_text = ""
+            for i, match in enumerate(matches, 1):
+                result_emoji = "Vitoria" if match['win'] else "Derrota"
+                mvp_placement = match.get('mvp_placement', 0)
+                matches_text += (
+                    f"{result_emoji} MVP: **{match.get('mvp_score', 0)} ({mvp_placement}º)** | "
+                    f"{match['kills']}/{match['deaths']}/{match['assists']}\n"
+                )
+
+            embed.add_field(
+                name="Ultimas 3 Partidas",
+                value=matches_text.strip(),
+                inline=False
+            )
+
+            embed.add_field(
+                name="Regra",
+                value=(
+                    "Esta proibido de jogar por 2 dias com esse boneco"
+                ),
+                inline=False
+            )
+
+            embed.set_footer(text=f"Conta: {summoner_name}")
+
+            # Envia notificação
+            try:
+                await channel.send(embed=embed)
+                print(f"Notificacao enviada: {summoner_name} com {champion_name} (MVP medio: {avg_mvp_score:.2f})")
+            except Exception as e:
+                print(f"Erro ao enviar notificacao: {e}")
+
+    except Exception as e:
+        print(f"Erro ao verificar performance: {e}")
+# ========== NOVO SISTEMA DE ALERTA ==========
+# Sistema novo: alerta apenas quando media fica abaixo de 35 pontos
+async def check_champion_performance(lol_account_id: int, champion_name: str):
+    """Verifica se o jogador teve performance abaixo de 35 pontos com o mesmo campeão"""
+    try:
+        # Busca as últimas 3 partidas com esse campeão
+        matches = db.get_last_n_matches_with_champion(lol_account_id, champion_name, n=3)
+
+        # Se não tem 3 partidas ainda, não faz nada
+        if len(matches) < 3:
+            return
+
+        # Calcula média dos MVP Scores
+        avg_mvp_score = sum(m.get('mvp_score', 0) for m in matches) / 3
+
+        # Novo sistema: alerta apenas se média ficar abaixo de 35 pontos
+        if avg_mvp_score >= 35:
+            return
+
+        # Busca informações da conta
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT discord_id, summoner_name FROM lol_accounts
+            WHERE id = ?
+        ''', (lol_account_id,))
+        account_info = cursor.fetchone()
+        conn.close()
+
+        if not account_info:
+            return
+
+        discord_id, summoner_name = account_info
+
+        # Busca todos os servidores onde está o bot
+        for guild in bot.guilds:
+            # Verifica se o usuário está nesse servidor
+            member = guild.get_member(int(discord_id))
+            if not member:
+                continue
+
+            # Busca canal de notificações configurado para esse servidor
+            channel_id = db.get_notification_channel(str(guild.id))
+            if not channel_id:
+                continue
+
+            # Busca o canal
+            channel = guild.get_channel(int(channel_id))
+            if not channel:
+                continue
 
             embed = discord.Embed(
                 title="⚠️ ALERTA DE PERFORMANCE BAIXA",
-                description=f"{member.mention} está **PROIBIDO** de jogar com **{champion_name}** por 2 dias!",
-                color=discord.Color.red()
+                description=f"{member.mention} precisa melhorar com **{champion_name}**!",
+                color=discord.Color.orange()
             )
 
             embed.add_field(
@@ -2301,11 +2430,11 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
                 value=(
                     f"🎮 **3 últimas partidas** com {champion_name}\n"
                     f"👑 MVP Score médio: **{int(avg_mvp_score)}/100**\n"
-                    f"⚠️ {alert_reason}"
+                    f"⚠️ Performance abaixo de 35 pontos!"
                 ),
                 inline=False
             )
-            
+
             # Adiciona detalhes das 3 partidas
             matches_text = ""
             for i, match in enumerate(matches, 1):
@@ -2315,37 +2444,32 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
                     f"{result_emoji} MVP: **{match.get('mvp_score', 0)} ({mvp_placement}º)** | "
                     f"{match['kills']}/{match['deaths']}/{match['assists']}\n"
                 )
-            
+
             embed.add_field(
                 name="🎯 Últimas 3 Partidas",
                 value=matches_text.strip(),
                 inline=False
             )
-            
+
             embed.add_field(
-                name="🚫 REGRAS DO SISTEMA",
+                name="💡 Dicas",
                 value=(
-                    "**Critérios de Proibição:**\n"
-                    "• **3 partidas ruins seguidas** (< 45 pontos cada)\n"
-                    "• **Pelo menos 1 partida abaixo de 35 pontos**\n\n"
-                    "**PENALIDADE:**\n"
-                    "• **PROIBIDO** de jogar com esse campeão por **2 dias**"
+                    "• Treine mais com esse campeão\n"
+                    "• Foque em objetivos e trabalho em equipe\n"
+                    "• Assista replays para identificar erros"
                 ),
                 inline=False
             )
-            
+
             embed.set_footer(text=f"Conta: {summoner_name}")
-            
+
             # Envia notificação
             try:
                 await channel.send(embed=embed)
-                if any_single_below_35:
-                    print(f"⚠️ Alerta enviado: {summoner_name} com {champion_name} (partida abaixo de 35 pontos)")
-                else:
-                    print(f"⚠️ Alerta enviado: {summoner_name} com {champion_name} (3 partidas ruins seguidas)")
+                print(f"⚠️ Alerta enviado: {summoner_name} com {champion_name} (MVP médio: {avg_mvp_score:.2f})")
             except Exception as e:
-                print(f"Erro ao enviar notificação: {e}")
-    
+                print(f"Erro ao enviar alerta: {e}")
+
     except Exception as e:
         print(f"Erro ao verificar performance: {e}")
 
@@ -2395,6 +2519,7 @@ async def send_live_game_notification(lol_account_id: int, live_info: Dict):
             else:
                 color = discord.Color.blue()
             
+            # Cria embed
             embed = discord.Embed(
                 title="🔴 PARTIDA AO VIVO!",
                 description=f"{member.mention} **entrou em partida!**",
@@ -2471,8 +2596,8 @@ async def send_live_game_notification(lol_account_id: int, live_info: Dict):
             summoner_clean = summoner_name.split('#')[0] if '#' in summoner_name else summoner_name
             
             links = f"""
-[OP.GG](https://www.op.gg/summoners/{region_short}/{summoner_clean}) • 
-[U.GG](https://u.gg/lol/profile/{region_short}/{summoner_clean}/overview) • 
+[OP.GG](https://www.op.gg/summoners/{region_short}/{summoner_clean})
+[U.GG](https://u.gg/lol/profile/{region_short}/{summoner_clean}/overview)
 [Porofessor](https://porofessor.gg/live/{region_short}/{summoner_clean})
             """
             
@@ -2561,7 +2686,8 @@ async def send_live_game_notification_grouped(game_id: str, players: list):
             color = discord.Color.purple()
         else:
             color = discord.Color.blue()
-
+        
+        # Cria embed agrupado
         players_mentions = ", ".join([m['member'].mention for m in members])
         
         embed = discord.Embed(

@@ -154,12 +154,10 @@ class RiotAPI:
 
     async def get_flex_matches_batch(self, puuid: str, region: str = 'br1', max_matches: int = 20) -> List[Dict]:
         """Busca múltiplas partidas de Ranked Flex do jogador (para evitar duplicatas)"""
-        # Valida PUID
         if not puuid or len(puuid) < 10:
             print(f"⚠️ PUUID inválido: {puuid}")
             return []
 
-        # Busca histórico de partidas (apenas 1 partida para otimizar)
         match_ids = await self.get_match_history(puuid, region, count=1)
 
         if not match_ids:
@@ -574,13 +572,11 @@ class RiotAPI:
             # Ordena por score (descendente), depois por índice (para desempate consistente)
             all_player_scores.sort(key=lambda x: (-x[0], x[1]))
             
-            # Encontra o placement do jogador atual
             mvp_placement = next(
                 i + 1 for i, (score, idx, p_puuid) in enumerate(all_player_scores)
                 if p_puuid == puuid
             )
             
-            # Mapeamento de roles para nomes amigáveis
             role_names = {
                 'TOP': 'Top',
                 'JUNGLE': 'Jungle',
@@ -598,7 +594,6 @@ class RiotAPI:
             # Detecta se é remake (partida < 5 minutos = 300 segundos)
             is_remake = game_duration < 300
             
-            # Extrai informações relevantes
             stats = {
                 'match_id': match_data['metadata']['matchId'],
                 'game_mode': match_data['info'].get('gameMode', 'CLASSIC'),
