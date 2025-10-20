@@ -2226,8 +2226,8 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
     Se atender aos critérios, fica PROIBIDO de jogar com esse campeão por 2 dias
 
     Critérios de Proibição:
-    1. 3 partidas ruins seguidas (< 45 pontos cada)
-    2. Pelo menos 1 partida abaixo de 35 pontos"""
+    1. 3 partidas ruins seguidas (< 45 pontos cada) - mostra todas as 3 partidas
+    2. Pelo menos 1 partida abaixo de 35 pontos - mostra apenas a(s) partida(s) < 35 pontos"""
     try:
         # Busca as últimas 3 partidas com esse campeão
         matches = db.get_last_n_matches_with_champion(lol_account_id, champion_name, n=3)
@@ -2296,28 +2296,40 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
                 color=discord.Color.red()
             )
 
+            # Filtra partidas baseado no critério atendido
+            if any_single_below_35:
+                # Mostra apenas partidas abaixo de 35 pontos
+                relevant_matches = [match for match in matches if match.get('mvp_score', 0) < 35]
+                field_title = "🎯 Partida(s) Problemática(s)"
+                field_desc = f"Partida(s) com MVP Score abaixo de 35 pontos com {champion_name}"
+            else:
+                # Mostra todas as 3 partidas ruins
+                relevant_matches = matches
+                field_title = "🎯 Últimas 3 Partidas"
+                field_desc = f"As 3 partidas ruins seguidas com {champion_name}"
+
             embed.add_field(
                 name="📊 Estatísticas Recentes",
                 value=(
-                    f"🎮 **3 últimas partidas** com {champion_name}\n"
+                    f"🎮 **{len(relevant_matches)}** partida(s) relevante(s) com {champion_name}\n"
                     f"👑 MVP Score médio: **{int(avg_mvp_score)}/100**\n"
                     f"⚠️ {alert_reason}"
                 ),
                 inline=False
             )
-            
-            # Adiciona detalhes das 3 partidas
+
+            # Adiciona detalhes das partidas relevantes
             matches_text = ""
-            for i, match in enumerate(matches, 1):
+            for i, match in enumerate(relevant_matches, 1):
                 result_emoji = "✅" if match['win'] else "❌"
                 mvp_placement = match.get('mvp_placement', 0)
                 matches_text += (
                     f"{result_emoji} MVP: **{match.get('mvp_score', 0)} ({mvp_placement}º)** | "
                     f"{match['kills']}/{match['deaths']}/{match['assists']}\n"
                 )
-            
+
             embed.add_field(
-                name="🎯 Últimas 3 Partidas",
+                name=field_title,
                 value=matches_text.strip(),
                 inline=False
             )
