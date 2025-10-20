@@ -1116,4 +1116,42 @@ class Database:
         except Exception as e:
             print(f"❌ Erro ao limpar banimentos expirados: {e}")
             return 0
+    
+    def remove_champion_ban(self, lol_account_id: int, champion_name: str) -> bool:
+        """Remove um banimento específico de campeão"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                DELETE FROM champion_bans
+                WHERE lol_account_id = ? AND champion_name = ?
+            ''', (lol_account_id, champion_name))
+            
+            deleted = cursor.rowcount > 0
+            conn.commit()
+            conn.close()
+            return deleted
+        except Exception as e:
+            print(f"❌ Erro ao remover banimento: {e}")
+            return False
+    
+    def remove_all_champion_bans(self, lol_account_id: int) -> int:
+        """Remove todos os banimentos de uma conta. Retorna quantidade removida."""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                DELETE FROM champion_bans
+                WHERE lol_account_id = ?
+            ''', (lol_account_id,))
+            
+            deleted = cursor.rowcount
+            conn.commit()
+            conn.close()
+            return deleted
+        except Exception as e:
+            print(f"❌ Erro ao remover todos os banimentos: {e}")
+            return 0
 

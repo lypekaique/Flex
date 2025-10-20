@@ -539,6 +539,88 @@ async def champban(interaction: discord.Interaction):
     embed.set_footer(text="Jogue melhor para evitar banimentos!")
     await interaction.followup.send(embed=embed, ephemeral=True)
 
+@bot.tree.command(name="champban_remove", description="🔓 [ADMIN] Remove banimento de campeão de um jogador")
+@app_commands.describe(
+    usuario="Usuário Discord para remover o banimento",
+    campeao="Nome do campeão para desbanir (deixe vazio para remover todos)"
+)
+@app_commands.checks.has_permissions(administrator=True)
+async def champban_remove(interaction: discord.Interaction, usuario: discord.Member, campeao: str = None):
+    """[ADMIN] Remove banimento de campeão de um jogador específico"""
+    if not await check_command_channel(interaction):
+        return
+    
+    await interaction.response.defer(ephemeral=True)
+    
+    discord_id = str(usuario.id)
+    accounts = db.get_user_accounts(discord_id)
+    
+    if not accounts:
+        await interaction.followup.send(
+            f"❌ {usuario.mention} não tem nenhuma conta vinculada!",
+            ephemeral=True
+        )
+        return
+    
+    # Se campeão não foi especificado, remove todos os banimentos
+    if not campeao:
+        total_removed = 0
+        for account in accounts:
+            removed = db.remove_all_champion_bans(account['id'])
+            total_removed += removed
+        
+        if total_removed > 0:
+            embed = discord.Embed(
+                title="✅ Banimentos Removidos",
+                description=f"Todos os banimentos de {usuario.mention} foram removidos!",
+                color=discord.Color.green()
+            )
+            embed.add_field(
+                name="📊 Total",
+                value=f"**{total_removed}** banimento(s) removido(s)",
+                inline=False
+            )
+            embed.set_footer(text=f"Removido por {interaction.user.name}")
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        else:
+            await interaction.followup.send(
+                f"ℹ️ {usuario.mention} não tinha nenhum banimento ativo.",
+                ephemeral=True
+            )
+        return
+    
+    # Remove banimento de campeão específico
+    removed = False
+    for account in accounts:
+        if db.remove_champion_ban(account['id'], campeao):
+            removed = True
+    
+    if removed:
+        embed = discord.Embed(
+            title="✅ Banimento Removido",
+            description=f"O banimento de **{campeao}** foi removido para {usuario.mention}!",
+            color=discord.Color.green()
+        )
+        embed.set_footer(text=f"Removido por {interaction.user.name}")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        
+        # Log no console
+        print(f"🔓 [ADMIN] {interaction.user.name} removeu banimento de {campeao} de {usuario.name}")
+    else:
+        await interaction.followup.send(
+            f"ℹ️ {usuario.mention} não tinha banimento ativo de **{campeao}**.",
+            ephemeral=True
+        )
+
+@champban_remove.error
+async def champban_remove_error(interaction: discord.Interaction, error):
+    """Tratamento de erro para comando champban_remove"""
+    if isinstance(error, app_commands.errors.MissingPermissions):
+        await interaction.response.send_message(
+            "❌ Você precisa ser **Administrador** para usar este comando!",
+            ephemeral=True
+        )
+
 
 async def champion_autocomplete(
     interaction: discord.Interaction,
