@@ -246,23 +246,19 @@ async def on_ready():
     else:
         print('⚠️ Task de verificação de partidas já está rodando')
     
-    # DESABILITADO TEMPORARIAMENTE - Spectator API V5 desativada pela Riot em 18/10/2025
-    # # Inicia verificação de live games (verifica se já não está rodando)
-    # if not check_live_games.is_running():
-    #     check_live_games.start()
-    #     print('✅ Task de verificação de live games iniciada (a cada 3 minutos)')
-    # else:
-    #     print('⚠️ Task de verificação de live games já está rodando')
-    #
-    # # Inicia verificação de partidas finalizadas
-    # if not check_live_games_finished.is_running():
-    #     check_live_games_finished.start()
-    #     print('✅ Task de verificação de partidas finalizadas iniciada (a cada 60s)')
-    # else:
-    #     print('⚠️ Task de verificação de partidas finalizadas já está rodando')
+    # Inicia verificação de live games (verifica se já não está rodando)
+    if not check_live_games.is_running():
+        check_live_games.start()
+        print('✅ Task de verificação de live games iniciada (a cada 3 minutos)')
+    else:
+        print('⚠️ Task de verificação de live games já está rodando')
 
-    print('⚠️ Funcionalidades de live games desabilitadas temporariamente (Spectator API V5 indisponível)')
-    print('✅ Sistema de match score funcionando normalmente pelo histórico de partidas')
+    # Inicia verificação de partidas finalizadas
+    if not check_live_games_finished.is_running():
+        check_live_games_finished.start()
+        print('✅ Task de verificação de partidas finalizadas iniciada (a cada 60s)')
+    else:
+        print('⚠️ Task de verificação de partidas finalizadas já está rodando')
 
 async def region_autocomplete(
     interaction: discord.Interaction,
