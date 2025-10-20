@@ -445,6 +445,20 @@ class RiotAPI:
             norm_vision * weights['vision']
         ) * 100
         
+        # PENALIDADE SEVERA para KDA muito baixo (evita feeders terem score alto)
+        kda_value = player_stats.get('kda', 0)
+        if kda_value < 1.0:
+            # Penalidade progressiva baseada no quão ruim é o KDA
+            if kda_value < 0.5:
+                # KDA abaixo de 0.5 (ex: 0/6/2 = 0.33) → -30 pontos
+                score = max(score - 30, 0)
+            elif kda_value < 0.75:
+                # KDA entre 0.5 e 0.75 → -20 pontos
+                score = max(score - 20, 0)
+            else:
+                # KDA entre 0.75 e 1.0 → -10 pontos
+                score = max(score - 10, 0)
+        
         # Bônus para time vitorioso (+5 pontos no MVP score)
         # Isso dá uma leve vantagem para o time que venceu
         won = player_stats.get('win', False)
