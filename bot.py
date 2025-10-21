@@ -440,53 +440,57 @@ async def contas(interaction: discord.Interaction):
     
     await interaction.followup.send(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="champban", description="🚫 Veja seus campeões banidos e tempo restante")
+@bot.tree.command(name="champban", description="🚫 Veja todos os campeões banidos do servidor")
 async def champban(interaction: discord.Interaction):
-    """Mostra todos os campeões banidos do usuário e tempo restante"""
+    """Mostra todos os campeões banidos de todos os jogadores do servidor"""
     if not await check_command_channel(interaction):
         return
     
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer()
     
-    discord_id = str(interaction.user.id)
-    accounts = db.get_user_accounts(discord_id)
+    guild_id = str(interaction.guild.id)
     
-    if not accounts:
-        await interaction.followup.send(
-            "❌ Você não tem nenhuma conta vinculada. Use `/logar` para vincular uma conta!",
-            ephemeral=True
-        )
-        return
+    conn = db.get_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT DISTINCT discord_id FROM lol_accounts
+    ''')
+    all_discord_ids = [row[0] for row in cursor.fetchall()]
+    conn.close()
     
-    # Busca banimentos de todas as contas
-    all_bans = []
-    for account in accounts:
-        bans = db.get_active_champion_bans(account['id'])
-        for ban in bans:
-            ban['account_name'] = account['summoner_name']
-            all_bans.append(ban)
+    server_bans = []
+    for discord_id in all_discord_ids:
+        member = interaction.guild.get_member(int(discord_id))
+        if not member:
+            continue
+        
+        accounts = db.get_user_accounts(discord_id)
+        for account in accounts:
+            bans = db.get_active_champion_bans(account['id'])
+            for ban in bans:
+                ban['discord_user'] = member
+                ban['account_name'] = account['summoner_name']
+                server_bans.append(ban)
     
-    if not all_bans:
+    if not server_bans:
         embed = discord.Embed(
             title="✅ Nenhum Campeão Banido",
-            description="Você não tem nenhum campeão banido no momento!\n\nContinue jogando bem para manter assim! 🎮",
+            description="Nenhum jogador do servidor tem campeões banidos no momento!\n\nParabéns a todos! 🎮",
             color=discord.Color.green()
         )
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed)
         return
     
-    # Cria embed com banimentos
     embed = discord.Embed(
-        title="🚫 Campeões Banidos",
-        description=f"Total: **{len(all_bans)}** campeão(ões) banido(s)",
+        title="🚫 Campeões Banidos do Servidor",
+        description=f"Total: **{len(server_bans)}** banimento(s) ativo(s)",
         color=discord.Color.red()
     )
     
     from datetime import datetime
     now = datetime.now()
     
-    for ban in all_bans:
-        # Calcula tempo restante
+    for ban in server_bans:
         expires_at = datetime.fromisoformat(ban['expires_at'])
         time_left = expires_at - now
         
@@ -494,7 +498,6 @@ async def champban(interaction: discord.Interaction):
         hours_left = time_left.seconds // 3600
         minutes_left = (time_left.seconds % 3600) // 60
         
-        # Formata tempo restante
         if days_left > 0:
             time_str = f"{days_left}d {hours_left}h"
         elif hours_left > 0:
@@ -502,7 +505,6 @@ async def champban(interaction: discord.Interaction):
         else:
             time_str = f"{minutes_left}m"
         
-        # Define emoji baseado no nível
         if ban['ban_level'] == 1:
             level_emoji = "⚠️"
             level_text = "Nível 1"
@@ -511,33 +513,20 @@ async def champban(interaction: discord.Interaction):
             level_text = "Nível 2"
         else:
             level_emoji = "🔴"
-            level_text = "Nível 3 (Máximo)"
+            level_text = "Nível 3"
         
         embed.add_field(
-            name=f"{level_emoji} {ban['champion_name']}",
+            name=f"{level_emoji} {ban['champion_name']} - {ban['discord_user'].display_name}",
             value=(
                 f"**Conta:** {ban['account_name']}\n"
-                f"**{level_text}** - {ban['ban_days']} dias\n"
-                f"⏱️ Tempo restante: **{time_str}**\n"
-                f"📋 Motivo: {ban['reason']}"
+                f"**{level_text}** ({ban['ban_days']} dias) | ⏱️ {time_str}\n"
+                f"📋 {ban['reason']}"
             ),
-            inline=False
+            inline=True
         )
     
-    embed.add_field(
-        name="ℹ️ Sistema de Banimento",
-        value=(
-            "**Níveis:**\n"
-            "• Nível 1: 2 dias\n"
-            "• Nível 2: 4 dias\n"
-            "• Nível 3: 1 semana\n\n"
-            "O sistema reseta após 3 dias do último banimento ou ao atingir o nível máximo."
-        ),
-        inline=False
-    )
-    
-    embed.set_footer(text="Jogue melhor para evitar banimentos!")
-    await interaction.followup.send(embed=embed, ephemeral=True)
+    embed.set_footer(text=f"Sistema de Banimento Progressivo • {interaction.guild.name}")
+    await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="champban_remove", description="🔓 [ADMIN] Remove banimento de campeão de um jogador")
 @app_commands.describe(
