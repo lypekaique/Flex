@@ -80,7 +80,7 @@ class FlexGuideView(discord.ui.View):
         )
         embed.add_field(
             name="3️⃣ Pronto!",
-            value="O bot começará a monitorar suas partidas de **Ranked Flex** automaticamente! 🎉",
+            value="O bot começará a monitorar suas partidas de **Ranked Flex e Custom Games** automaticamente! 🎉",
             inline=False
         )
         embed.set_footer(text="Você pode vincular até 3 contas!")
@@ -123,7 +123,7 @@ class FlexGuideView(discord.ui.View):
             value=(
                 "• Todos os comandos tem **auto-complete**\n"
                 "• Use a barra `/` para ver todos comandos\n"
-                "• Estatísticas são apenas de **Ranked Flex**\n"
+                "• Estatísticas de **Ranked Flex e Custom Games**\n"
                 "• Configure o canal de comandos primeiro!"
             ),
             inline=False
@@ -370,12 +370,12 @@ async def logar(interaction: discord.Interaction, riot_id: str, regiao: str = DE
                 # Busca última partida sem processar (só para marcar como vista)
                 match_ids = await riot_api.get_match_history(account['puuid'], regiao, count=5)
                 if match_ids and len(match_ids) > 0:
-                    # Procura a primeira partida de Ranked Flex
+                    # Procura a primeira partida de Ranked Flex ou Custom Game
                     for match_id in match_ids:
                         match_data = await riot_api.get_match_details(match_id, regiao)
                         if match_data:
                             queue_id = match_data.get('info', {}).get('queueId', 0)
-                            if queue_id == 440:
+                            if queue_id in [440, 0]:  # Ranked Flex ou Custom Game
                                 # Extrai stats mas NÃO envia notificações
                                 stats = riot_api.extract_player_stats(match_data, account['puuid'])
                                 if stats:
@@ -766,18 +766,16 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
         avg_visao = sum(m['vision_score'] for m in matches) / total_matches
         avg_gold = sum(m['gold_earned'] for m in matches) / total_matches
         
-        # Calcula gold per minute médio
+        
         avg_game_duration_min = sum(m['game_duration'] for m in matches) / total_matches / 60
         avg_gpm = avg_gold / avg_game_duration_min if avg_game_duration_min > 0 else 0
         
-        # Estatísticas por role
         role_count = {}
         for m in matches:
             role = m['role']
             role_count[role] = role_count.get(role, 0) + 1
         most_played_role = max(role_count, key=role_count.get) if role_count else "Unknown"
         
-        # Determina emoji baseado no MVP score
         if avg_mvp >= 90:
             emoji = "🏆"
             rank = "S+"
@@ -787,7 +785,7 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
         elif avg_mvp >= 60:
             emoji = "💎"
             rank = "A"
-        elif avg_mvp >= 50:
+        elif avg_mvp >= 50: 
             emoji = "🥈"
             rank = "B"
         elif avg_mvp >= 40:
@@ -800,7 +798,7 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
             emoji = "💀"
             rank = "F"
         
-        # Emoji por role
+
         role_emojis = {
             'Top': '⚔️',
             'Jungle': '🌳',
@@ -810,7 +808,7 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
         }
         role_emoji = role_emojis.get(most_played_role, '❓')
         
-        # Constrói texto baseado na métrica selecionada
+   
         if metrica in ['mvp'] or not metrica:
             stats_text = f"""
 {emoji} **{rank}**
@@ -906,7 +904,7 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
             inline=False
         )
     
-    footer_text = "Apenas partidas de Ranked Flex são contabilizadas"
+    footer_text = "Partidas de Ranked Flex e Custom Games são contabilizadas"
     if campeao:
         footer_text += f" • Filtrado por {campeao}"
     embed.set_footer(text=footer_text)
@@ -953,7 +951,7 @@ async def historico(interaction: discord.Interaction, conta: int = 1, quantidade
     
     embed = discord.Embed(
         title=f"📜 Histórico - {account['summoner_name']}",
-        description=f"**{len(matches)} partidas mais recentes de Ranked Flex**\n_ _",
+        description=f"**{len(matches)} partidas mais recentes (Flex/Custom)**\n_ _",
         color=discord.Color.purple()
     )
     
@@ -1039,7 +1037,7 @@ _Esta partida não conta para estatísticas_
             inline=False
         )
     
-    embed.set_footer(text=f"📊 Apenas Ranked Flex • Região: {account['region'].upper()}")
+    embed.set_footer(text=f"📊 Ranked Flex & Custom Games • Região: {account['region'].upper()}")
     await interaction.followup.send(embed=embed)
 
 # Auto-complete para tipo de configuração
@@ -1361,7 +1359,7 @@ async def tops_flex(interaction: discord.Interaction, quantidade: int = 10):
             inline=False
         )
     
-    embed.set_footer(text="Apenas Ranked Flex • Atualizado em tempo real")
+    embed.set_footer(text="Ranked Flex & Custom Games • Atualizado em tempo real")
     await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="flex", description="🎯 Guia completo do bot com botões interativos")
@@ -1373,7 +1371,7 @@ async def flex_guide(interaction: discord.Interaction):
     embed = discord.Embed(
         title="🎮 Flex dos Crias",
         description=(
-            "**O bot definitivo de tracking para Ranked Flex!**\n\n"
+            "**O bot definitivo de tracking para Ranked Flex e Custom Games!**\n\n"
             "Monitore suas partidas, acompanhe seu desempenho em tempo real,\n"
             "e descubra seu verdadeiro nível de performance com nosso sistema avançado.\n"
         ),
@@ -1879,7 +1877,7 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
                 embed.add_field(
                     name="⚠️ Partida Cancelada",
                     value=(
-                        f"**Modo:** Ranked Flex\n"
+                        f"**Modo:** {stats.get('game_mode', 'Ranked Flex')}\n"
                         f"**Invocador:** {summoner_name}\n"
                         f"**Campeão:** {stats['champion_name']}\n"
                         f"**Role:** {role_emoji} {stats['role']}\n"
@@ -1895,7 +1893,7 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
                     title=f"{result_emoji} {result_text}",
                     description=(
                         f"# {stats['champion_name']} {role_emoji}\n"
-                        f"{member.mention} terminou uma partida de **Ranked Flex**!"
+                        f"{member.mention} terminou uma partida de **{stats.get('game_mode', 'Ranked Flex')}**!"
                     ),
                     color=color,
                     timestamp=datetime.fromisoformat(stats['played_at'])
@@ -1966,7 +1964,7 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
             embed.set_thumbnail(url=member.display_avatar.url)
             
             embed.set_footer(
-                text=f"Ranked Flex • {summoner_name}",
+                text=f"{stats.get('game_mode', 'Ranked Flex')} • {summoner_name}",
                 icon_url="https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-shared-components/global/default/ranked-emblem-flex.png"
             )
             
@@ -2612,6 +2610,8 @@ async def send_live_game_notification(lol_account_id: int, live_info: Dict):
             queue_id = live_info.get('queueId', 0)
             if queue_id == 440:  # Ranked Flex
                 color = discord.Color.gold()
+            elif queue_id == 0:  # Custom Game
+                color = discord.Color.blue()
             elif queue_id == 420:  # Ranked Solo/Duo
                 color = discord.Color.purple()
             else:
@@ -2779,6 +2779,8 @@ async def send_live_game_notification_grouped(game_id: str, players: list):
         queue_id = live_info.get('queueId', 0)
         if queue_id == 440:  # Ranked Flex
             color = discord.Color.gold()
+        elif queue_id == 0:  # Custom Game
+            color = discord.Color.blue()
         elif queue_id == 420:  # Ranked Solo/Duo
             color = discord.Color.purple()
         else:
@@ -3132,18 +3134,19 @@ async def process_account_batch(account_id: int, puuid: str, region: str, riot_a
     try:
         print(f"🔍 Buscando partidas recentes para conta {account_id}...")
 
-        # Busca apenas 1 partida (otimizado)
-        flex_matches = await riot_api.get_flex_matches_batch(puuid, region, max_matches=1)
+        # Busca apenas 1 partida (Ranked Flex OU Custom Game)
+        tracked_matches = await riot_api.get_tracked_matches_batch(puuid, region, max_matches=1, 
+                                                                   include_flex=True, include_custom=True)
 
-        if not flex_matches:
-            print(f"⚠️ Nenhuma partida de flex encontrada para conta {account_id}")
+        if not tracked_matches:
+            print(f"⚠️ Nenhuma partida rastreada encontrada para conta {account_id}")
             return 0
 
-        print(f"📋 Encontrada {len(flex_matches)} partida de flex para conta {account_id}")
+        print(f"📋 Encontrada {len(tracked_matches)} partida rastreada para conta {account_id}")
         matches_processed = 0
 
         # Verifica cada partida e salva apenas as novas E recentes
-        for match_data in flex_matches:
+        for match_data in tracked_matches:
             match_id = match_data['metadata']['matchId']
 
             # Verifica se já está registrada

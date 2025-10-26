@@ -122,7 +122,7 @@ class RiotAPI:
     
     async def get_match_history(self, puuid: str, region: str = 'br1', count: int = 20,
                                 queue: int = 440) -> Optional[List[str]]:
-        """Busca histórico de partidas (queue 440 = Ranked Flex)"""
+        """Busca histórico de partidas (queue 440 = Ranked Flex, 0 = Custom)"""
         routing = self.ROUTING.get(region, 'americas')
         url = f"https://{routing}.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids"
 
@@ -170,6 +170,90 @@ class RiotAPI:
                 continue
 
         return flex_matches
+
+    async def get_custom_matches_batch(self, puuid: str, region: str = 'br1', max_matches: int = 20) -> List[Dict]:
+        """Busca múltiplas partidas personalizadas (Custom Games) do jogador"""
+        if not puuid or len(puuid) < 10:
+            print(f"⚠️ PUUID inválido: {puuid}")
+            return []
+
+        match_ids = await self.get_match_history(puuid, region, count=max_matches)
+
+        if not match_ids:
+            return []
+
+        custom_matches = []
+
+        # Verifica cada partida e coleta apenas as personalizadas (queue 0)
+        for match_id in match_ids:
+            try:
+                match_data = await self.get_match_details(match_id, region)
+
+                if match_data:
+                    queue_id = match_data.get('info', {}).get('queueId', 0)
+                    if queue_id == 0:  # Custom Game
+                        custom_matches.append(match_data)
+                        if len(custom_matches) >= max_matches:
+                            break
+
+            except Exception as e:
+                print(f"⚠️ Erro ao buscar detalhes da partida {match_id}: {e}")
+                continue
+
+        return custom_matches
+
+    async def get_tracked_matches_batch(self, puuid: str, region: str = 'br1', max_matches: int = 20, 
+                                       include_flex: bool = True, include_custom: bool = True) -> List[Dict]:
+        """
+        Busca partidas rastreadas (Ranked Flex e/ou Custom Games)
+        
+        Args:
+            puuid: PUUID do jogador
+            region: Região do servidor
+            max_matches: Número máximo de partidas a buscar
+            include_flex: Se True, inclui partidas Ranked Flex (queue 440)
+            include_custom: Se True, inclui partidas personalizadas (queue 0)
+        
+        Returns:
+            Lista de partidas que correspondem aos critérios
+        """
+        if not puuid or len(puuid) < 10:
+            print(f"⚠️ PUUID inválido: {puuid}")
+            return []
+
+        match_ids = await self.get_match_history(puuid, region, count=max_matches)
+
+        if not match_ids:
+            return []
+
+        tracked_matches = []
+        queue_ids = []
+        
+        if include_flex:
+            queue_ids.append(440)
+        if include_custom:
+            queue_ids.append(0)
+        
+        if not queue_ids:
+            return []
+
+        # Verifica cada partida e coleta as que correspondem aos critérios
+        for match_id in match_ids:
+            try:
+                match_data = await self.get_match_details(match_id, region)
+
+                if match_data:
+                    queue_id = match_data.get('info', {}).get('queueId', 0)
+                    if queue_id in queue_ids:
+                        tracked_matches.append(match_data)
+                        if len(tracked_matches) >= max_matches:
+                            break
+
+            except Exception as e:
+                print(f"⚠️ Erro ao buscar detalhes da partida {match_id}: {e}")
+                continue
+
+        return tracked_matches
 
     async def get_active_game(self, puuid: str, region: str = 'br1') -> Optional[Dict]:
         """Busca informações de partida em andamento (Spectator API)"""
@@ -225,6 +309,7 @@ class RiotAPI:
 
             # Mapeamento de game mode
             game_modes = {
+                0: 'Custom Game',
                 440: 'Ranked Flex',
                 420: 'Ranked Solo/Duo',
                 400: 'Normal Draft',
@@ -596,9 +681,21 @@ class RiotAPI:
             # Detecta se é remake (partida < 5 minutos = 300 segundos)
             is_remake = game_duration < 300
             
+            # Mapeia queueId para nome amigável do modo de jogo
+            queue_id = match_data['info'].get('queueId', 0)
+            game_mode_names = {
+                0: 'Custom Game',
+                440: 'Ranked Flex',
+                420: 'Ranked Solo/Duo',
+                400: 'Normal Draft',
+                430: 'Normal Blind',
+                450: 'ARAM',
+            }
+            game_mode_display = game_mode_names.get(queue_id, match_data['info'].get('gameMode', 'CLASSIC'))
+            
             stats = {
                 'match_id': match_data['metadata']['matchId'],
-                'game_mode': match_data['info'].get('gameMode', 'CLASSIC'),
+                'game_mode': game_mode_display,
                 'champion_name': participant.get('championName', 'Unknown'),
                 'role': role_display,
                 'kills': participant.get('kills', 0),
