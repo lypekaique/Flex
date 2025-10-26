@@ -2401,23 +2401,27 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
 
     Critérios de Proibição:
     1. 3 partidas ruins seguidas (< 45 pontos cada) - mostra todas as 3 partidas
-    2. Pelo menos 1 partida abaixo de 35 pontos - mostra apenas a(s) partida(s) < 35 pontos"""
+    2. Partida ATUAL abaixo de 35 pontos (independente das anteriores) - mostra apenas a partida atual"""
     try:
         # Busca as últimas 3 partidas com esse campeão
         matches = db.get_last_n_matches_with_champion(lol_account_id, champion_name, n=3)
 
-        # Se não tem 3 partidas ainda, não faz nada
-        if len(matches) < 3:
+        # Precisa ter pelo menos 1 partida para verificar
+        if len(matches) < 1:
             return
 
-        # CRITÉRIO 1: Sistema antigo - verifica se todas as 3 têm MVP Score abaixo de 45
-        all_bad_scores = all(match.get('mvp_score', 0) < 45 for match in matches)
+        # CRITÉRIO 2: Critério rigoroso - verifica se a PARTIDA ATUAL (primeira da lista) ficou abaixo de 35 pontos
+        # Este critério é INDEPENDENTE e não precisa de 3 partidas
+        current_match_below_35 = matches[0].get('mvp_score', 0) < 35
 
-        # CRITÉRIO 2: Critério rigoroso - verifica se QUALQUER partida individual ficou abaixo de 35 pontos
-        any_single_below_35 = any(match.get('mvp_score', 0) < 35 for match in matches)
+        # CRITÉRIO 1: Sistema antigo - verifica se todas as 3 têm MVP Score abaixo de 45
+        # Este critério SÓ é verificado se tiver 3 partidas
+        all_bad_scores = False
+        if len(matches) >= 3:
+            all_bad_scores = all(match.get('mvp_score', 0) < 45 for match in matches)
 
         # Dispara alerta se qualquer um dos critérios for atendido
-        should_alert = all_bad_scores or any_single_below_35
+        should_alert = all_bad_scores or current_match_below_35
 
         if not should_alert:
             return
@@ -2440,8 +2444,8 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
             ban_days = 2
         
         # Determina a razão do banimento
-        if any_single_below_35:
-            reason = "Partida abaixo de 35 pontos"
+        if current_match_below_35:
+            reason = "Partida atual abaixo de 35 pontos"
         else:
             reason = "3 partidas ruins seguidas (< 45 pontos)"
         
@@ -2485,7 +2489,7 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
 
             # Determina qual critério foi atendido para personalizar a mensagem
             alert_reason = ""
-            if any_single_below_35:
+            if current_match_below_35:
                 alert_reason = "• Teve uma partida abaixo de 35 pontos!"
             else:
                 alert_reason = "• 3 partidas ruins seguidas (< 45 pontos cada)!"
@@ -2511,11 +2515,11 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
             )
 
             # Filtra partidas baseado no critério atendido
-            if any_single_below_35:
-                # Mostra apenas partidas abaixo de 35 pontos
-                relevant_matches = [match for match in matches if match.get('mvp_score', 0) < 35]
-                field_title = "🎯 Partida(s) Problemática(s)"
-                field_desc = f"Partida(s) com MVP Score abaixo de 35 pontos com {champion_name}"
+            if current_match_below_35:
+                # Mostra apenas a partida atual (primeira da lista)
+                relevant_matches = [matches[0]]
+                field_title = "🎯 Partida Problemática"
+                field_desc = f"Partida atual com MVP Score abaixo de 35 pontos com {champion_name}"
             else:
                 # Mostra todas as 3 partidas ruins
                 relevant_matches = matches
