@@ -256,7 +256,13 @@ class RiotAPI:
         return tracked_matches
 
     async def get_active_game(self, puuid: str, region: str = 'br1') -> Optional[Dict]:
-        """Busca informações de partida em andamento (Spectator API)"""
+        """
+        Busca informações de partida em andamento (Spectator API - spec-v5)
+        
+        IMPORTANTE: A Spectator API (spec-v5) NÃO suporta partidas personalizadas (Custom Games, queue 0).
+        Apenas partidas em filas oficiais (Ranked, Normal, ARAM, etc.) são suportadas.
+        Partidas personalizadas devem ser detectadas apenas pela Match API (match-v5) após o término.
+        """
         if region not in self.REGIONS:
             return None
 

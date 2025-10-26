@@ -2919,9 +2919,14 @@ async def check_live_games():
                     game_id = str(game_data.get('gameId'))
                     queue_id = game_data.get('gameQueueConfigId', 0)
                     
-                    # Filtra apenas Ranked Flex (440) e Personalizadas (0)
-                    if queue_id not in [440, 0]:
-                        print(f"⚠️ [Live Games] Partida {game_id} ignorada (queueId: {queue_id} - não é Flex ou Personalizada)")
+                    # Filtra apenas Ranked Flex (440)
+                    # Partidas personalizadas (0) não são suportadas pela Spectator API (spec-v5)
+                    # e serão detectadas apenas pela Match API (match-v5)
+                    if queue_id != 440:
+                        if queue_id == 0:
+                            print(f"⚠️ [Live Games] Partida personalizada {game_id} ignorada (spec-v5 não suporta custom games)")
+                        else:
+                            print(f"⚠️ [Live Games] Partida {game_id} ignorada (queueId: {queue_id} - não é Flex)")
                         continue
 
                     # Verificação GLOBAL: se esta partida foi notificada recentemente (últimos 5 minutos), pula TUDO
