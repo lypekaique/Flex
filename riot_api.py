@@ -726,4 +726,82 @@ class RiotAPI:
         except Exception as e:
             print(f"Erro ao extrair estatísticas: {e}")
             return None
+    
+    def extract_match_score(self, match_data: Dict) -> Optional[Dict]:
+        """
+        Extrai o placar completo da partida (kills, torres, dragões, etc)
+        Funciona para qualquer tipo de partida, incluindo custom games
+        """
+        try:
+            info = match_data.get('info', {})
+            teams = info.get('teams', [])
+            
+            if len(teams) < 2:
+                return None
+            
+            # Identifica os times (100 = Blue Side, 200 = Red Side)
+            team_100 = next((t for t in teams if t['teamId'] == 100), None)
+            team_200 = next((t for t in teams if t['teamId'] == 200), None)
+            
+            if not team_100 or not team_200:
+                return None
+            
+            # Extrai objetivos de cada time
+            def get_objectives(team):
+                objectives = team.get('objectives', {})
+                return {
+                    'baron': objectives.get('baron', {}).get('kills', 0),
+                    'dragon': objectives.get('dragon', {}).get('kills', 0),
+                    'tower': objectives.get('tower', {}).get('kills', 0),
+                    'inhibitor': objectives.get('inhibitor', {}).get('kills', 0),
+                    'riftHerald': objectives.get('riftHerald', {}).get('kills', 0),
+                }
+            
+            # Calcula total de kills por time
+            participants = info.get('participants', [])
+            team_100_kills = sum(p['kills'] for p in participants if p['teamId'] == 100)
+            team_200_kills = sum(p['kills'] for p in participants if p['teamId'] == 200)
+            
+            # Extrai informações dos jogadores de cada time
+            team_100_players = []
+            team_200_players = []
+            
+            for p in participants:
+                player_info = {
+                    'summonerName': p.get('riotIdGameName', p.get('summonerName', 'Unknown')),
+                    'championName': p.get('championName', 'Unknown'),
+                    'kills': p.get('kills', 0),
+                    'deaths': p.get('deaths', 0),
+                    'assists': p.get('assists', 0),
+                    'kda': round((p.get('kills', 0) + p.get('assists', 0)) / max(p.get('deaths', 1), 1), 2)
+                }
+                
+                if p['teamId'] == 100:
+                    team_100_players.append(player_info)
+                else:
+                    team_200_players.append(player_info)
+            
+            score = {
+                'queue_id': info.get('queueId', 0),
+                'game_mode': info.get('gameMode', 'CLASSIC'),
+                'game_duration': info.get('gameDuration', 0),
+                'team_100': {
+                    'win': team_100.get('win', False),
+                    'kills': team_100_kills,
+                    'objectives': get_objectives(team_100),
+                    'players': team_100_players
+                },
+                'team_200': {
+                    'win': team_200.get('win', False),
+                    'kills': team_200_kills,
+                    'objectives': get_objectives(team_200),
+                    'players': team_200_players
+                }
+            }
+            
+            return score
+            
+        except Exception as e:
+            print(f"Erro ao extrair placar da partida: {e}")
+            return None
 

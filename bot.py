@@ -3226,10 +3226,240 @@ async def check_new_matches_error(error):
     traceback.print_exc()
     # Task loop automaticamente reinicia após erro
 
+async def send_custom_game_score(game_id: str, match_score: Dict, players: List[Dict]):
+    """Envia o placar completo de uma custom game"""
+    try:
+        # Pega o primeiro jogador para encontrar o canal
+        first_player = players[0]
+        
+        # Busca informações da conta para encontrar o servidor
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT discord_id FROM lol_accounts WHERE id = ?', (first_player['account_id'],))
+        result = cursor.fetchone()
+        conn.close()
+        
+        if not result:
+            return
+        
+        discord_id = result[0]
+        member = bot.get_user(int(discord_id))
+        if not member:
+            return
+        
+        # Encontra o servidor e canal
+        target_guild = None
+        target_channel = None
+        
+        for guild in bot.guilds:
+            if guild.get_member(int(discord_id)):
+                target_guild = guild
+                config = db.get_server_config(str(guild.id))
+                if config and config.get('match_channel_id'):
+                    target_channel = guild.get_channel(int(config['match_channel_id']))
+                break
+        
+        if not target_channel:
+            return
+        
+        # Cria embed do placar
+        team_100 = match_score['team_100']
+        team_200 = match_score['team_200']
+        
+        winner_team = "🔵 Time Azul" if team_100['win'] else "🔴 Time Vermelho"
+        
+        embed = discord.Embed(
+            title="🏆 Custom Game Finalizada!",
+            description=f"**Vencedor:** {winner_team}\n**Placar:** {team_100['kills']} x {team_200['kills']}",
+            color=discord.Color.blue() if team_100['win'] else discord.Color.red(),
+            timestamp=datetime.now()
+        )
+        
+        # Duração da partida
+        duration_minutes = match_score['game_duration'] // 60
+        duration_seconds = match_score['game_duration'] % 60
+        embed.add_field(
+            name="⏱️ Duração",
+            value=f"{duration_minutes}:{duration_seconds:02d}",
+            inline=True
+        )
+        
+        # Objetivos Time Azul
+        obj_100 = team_100['objectives']
+        embed.add_field(
+            name="🔵 Objetivos Time Azul",
+            value=f"🏰 Torres: {obj_100['tower']}\n🐉 Dragões: {obj_100['dragon']}\n👹 Barões: {obj_100['baron']}\n🦀 Arautos: {obj_100['riftHerald']}",
+            inline=True
+        )
+        
+        # Objetivos Time Vermelho
+        obj_200 = team_200['objectives']
+        embed.add_field(
+            name="🔴 Objetivos Time Vermelho",
+            value=f"🏰 Torres: {obj_200['tower']}\n🐉 Dragões: {obj_200['dragon']}\n👹 Barões: {obj_200['baron']}\n🦀 Arautos: {obj_200['riftHerald']}",
+            inline=True
+        )
+        
+        # Jogadores Time Azul
+        players_100_text = ""
+        for p in team_100['players']:
+            players_100_text += f"**{p['championName']}** - {p['summonerName']}\n`{p['kills']}/{p['deaths']}/{p['assists']}` (KDA: {p['kda']})\n"
+        
+        if players_100_text:
+            embed.add_field(
+                name="🔵 Time Azul - Jogadores",
+                value=players_100_text[:1024],
+                inline=False
+            )
+        
+        # Jogadores Time Vermelho
+        players_200_text = ""
+        for p in team_200['players']:
+            players_200_text += f"**{p['championName']}** - {p['summonerName']}\n`{p['kills']}/{p['deaths']}/{p['assists']}` (KDA: {p['kda']})\n"
+        
+        if players_200_text:
+            embed.add_field(
+                name="🔴 Time Vermelho - Jogadores",
+                value=players_200_text[:1024],
+                inline=False
+            )
+        
+        embed.set_footer(text=f"Game ID: {game_id} • Custom Game")
+        
+        # Envia o placar
+        await target_channel.send(embed=embed)
+        print(f"📊 [Custom Score] Placar enviado para custom game {game_id}")
+        
+    except Exception as e:
+        print(f"❌ [Custom Score] Erro ao enviar placar: {e}")
+        import traceback
+        traceback.print_exc()
+
+async def process_custom_games_results(custom_games: List[tuple]):
+    """Processa resultados de custom games que terminaram"""
+    # Agrupa por game_id para processar todos os jogadores de uma vez
+    games_by_id = {}
+    for game_id, account_id, puuid, summoner_name, message_id, channel_id, guild_id in custom_games:
+        if game_id not in games_by_id:
+            games_by_id[game_id] = []
+        games_by_id[game_id].append({
+            'account_id': account_id,
+            'puuid': puuid,
+            'summoner_name': summoner_name,
+            'message_id': message_id,
+            'channel_id': channel_id,
+            'guild_id': guild_id
+        })
+    
+    for game_id, players in games_by_id.items():
+        try:
+            print(f"🎮 [Custom Check] Processando custom game {game_id} com {len(players)} jogador(es)...")
+            
+            # Pega o primeiro jogador para buscar a partida
+            first_player = players[0]
+            
+            # Busca informações da conta
+            conn = db.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT region FROM lol_accounts WHERE id = ?', (first_player['account_id'],))
+            account_data = cursor.fetchone()
+            conn.close()
+            
+            if not account_data:
+                print(f"⚠️ [Custom Check] Conta {first_player['account_id']} não encontrada")
+                continue
+            
+            region = account_data[0]
+            
+            # Busca últimas partidas
+            match_ids = await riot_api.get_match_history(first_player['puuid'], region, count=5)
+            
+            if not match_ids:
+                print(f"⚠️ [Custom Check] Nenhuma partida encontrada para {first_player['summoner_name']}")
+                continue
+            
+            # Procura por uma custom game recente
+            match_found = None
+            for match_id in match_ids:
+                match_data = await riot_api.get_match_details(match_id, region)
+                if match_data:
+                    queue_id = match_data.get('info', {}).get('queueId', 0)
+                    if queue_id == 0:  # Custom Game
+                        game_end_timestamp = match_data.get('info', {}).get('gameEndTimestamp')
+                        if game_end_timestamp:
+                            from datetime import datetime, timedelta
+                            game_end = datetime.fromtimestamp(game_end_timestamp / 1000)
+                            now = datetime.now()
+                            
+                            # Se terminou há menos de 30 minutos
+                            if (now - game_end) < timedelta(minutes=30):
+                                match_found = match_data
+                                print(f"✅ [Custom Check] Custom game encontrada: {match_id} (terminou há {(now - game_end).seconds // 60} minutos)")
+                                break
+            
+            if not match_found:
+                print(f"⚠️ [Custom Check] Nenhuma custom game recente encontrada para {game_id}")
+                continue
+            
+            # Extrai o placar completo da partida
+            match_score = riot_api.extract_match_score(match_found)
+            
+            # Envia placar geral da custom game (uma vez para todos)
+            if match_score and len(players) > 1:
+                print(f"📊 [Custom Check] Enviando placar geral da custom game...")
+                await send_custom_game_score(game_id, match_score, players)
+            
+            # Processa todos os jogadores desta custom game
+            print(f"📊 [Custom Check] Processando resultados para {len(players)} jogador(es)...")
+            for player in players:
+                try:
+                    # Verifica se já foi processada
+                    last_match_id = db.get_last_match_id(player['account_id'])
+                    match_id = match_found['metadata']['matchId']
+                    
+                    if last_match_id == match_id:
+                        print(f"⏭️ [Custom Check] Partida {match_id} já processada para {player['summoner_name']}")
+                        continue
+                    
+                    # Extrai estatísticas
+                    stats = riot_api.extract_player_stats(match_found, player['puuid'])
+                    
+                    if stats:
+                        # Salva no banco
+                        db.add_match(player['account_id'], stats)
+                        print(f"✅ [Custom Check] Partida salva para {player['summoner_name']} (MVP: {stats['mvp_score']})")
+                        
+                        # Envia notificação individual
+                        await send_match_notification(player['account_id'], stats)
+                        
+                        # Verifica performance
+                        if not stats.get('is_remake', False):
+                            await check_champion_performance(player['account_id'], stats['champion_name'])
+                    
+                except Exception as e:
+                    print(f"❌ [Custom Check] Erro ao processar jogador {player['summoner_name']}: {e}")
+                    continue
+            
+            # Marca a custom game como finalizada
+            db.mark_custom_game_finished(game_id)
+            print(f"✅ [Custom Check] Custom game {game_id} marcada como finalizada")
+            
+        except Exception as e:
+            print(f"❌ [Custom Check] Erro ao processar custom game {game_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            continue
+
 @tasks.loop(seconds=60)
 async def check_live_games_finished():
     """Task que verifica a cada 60 segundos se jogos ao vivo já terminaram"""
     try:
+        # Primeiro, processa custom games não finalizadas
+        custom_games = db.get_unfinished_custom_games(hours=2)
+        if custom_games:
+            print(f"🎮 [Custom Check] Verificando {len(custom_games)} custom game(s) não finalizada(s)...")
+            await process_custom_games_results(custom_games)
+        
         # Busca todas as live games notificadas recentemente (últimas 2 horas)
         live_games = db.get_active_live_games(hours=2)
         
