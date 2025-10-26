@@ -143,7 +143,7 @@ class RiotAPI:
         return await self._make_request(url)
 
     async def get_flex_matches_batch(self, puuid: str, region: str = 'br1', max_matches: int = 20) -> List[Dict]:
-        """Busca múltiplas partidas de Ranked Flex e Personalizadas do jogador (para evitar duplicatas)"""
+        """Busca múltiplas partidas de Ranked Flex do jogador (para evitar duplicatas)"""
         if not puuid or len(puuid) < 10:
             print(f"⚠️ PUUID inválido: {puuid}")
             return []
@@ -155,14 +155,14 @@ class RiotAPI:
 
         flex_matches = []
 
-        # Verifica cada partida e coleta apenas as de flex (queue 440) e personalizadas (queue 0)
+        # Verifica cada partida e coleta apenas as de flex (queue 440)
         for match_id in match_ids:
             try:
                 match_data = await self.get_match_details(match_id, region)
 
                 if match_data:
                     queue_id = match_data.get('info', {}).get('queueId', 0)
-                    if queue_id in [440, 0]:  # Ranked Flex ou Personalizada
+                    if queue_id == 440:  # Ranked Flex
                         flex_matches.append(match_data)
 
             except Exception as e:
@@ -230,7 +230,6 @@ class RiotAPI:
                 400: 'Normal Draft',
                 430: 'Normal Blind',
                 450: 'ARAM',
-                0: 'Personalizada',
             }
 
             queue_id = game_data.get('gameQueueConfigId', 0)
@@ -597,13 +596,9 @@ class RiotAPI:
             # Detecta se é remake (partida < 5 minutos = 300 segundos)
             is_remake = game_duration < 300
             
-            # Pega queue_id para determinar o tipo de partida
-            queue_id = match_data['info'].get('queueId', 0)
-            
             stats = {
                 'match_id': match_data['metadata']['matchId'],
                 'game_mode': match_data['info'].get('gameMode', 'CLASSIC'),
-                'queue_id': queue_id,
                 'champion_name': participant.get('championName', 'Unknown'),
                 'role': role_display,
                 'kills': participant.get('kills', 0),
