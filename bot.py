@@ -80,7 +80,7 @@ class FlexGuideView(discord.ui.View):
         )
         embed.add_field(
             name="3️⃣ Pronto!",
-            value="O bot começará a monitorar suas partidas de **Ranked Flex** automaticamente! 🎉",
+            value="O bot começará a monitorar suas partidas de **Ranked Flex e Personalizadas** automaticamente! 🎉",
             inline=False
         )
         embed.set_footer(text="Você pode vincular até 3 contas!")
@@ -123,7 +123,7 @@ class FlexGuideView(discord.ui.View):
             value=(
                 "• Todos os comandos tem **auto-complete**\n"
                 "• Use a barra `/` para ver todos comandos\n"
-                "• Estatísticas são apenas de **Ranked Flex**\n"
+                "• Estatísticas são de **Ranked Flex e Personalizadas**\n"
                 "• Configure o canal de comandos primeiro!"
             ),
             inline=False
@@ -370,12 +370,12 @@ async def logar(interaction: discord.Interaction, riot_id: str, regiao: str = DE
                 # Busca última partida sem processar (só para marcar como vista)
                 match_ids = await riot_api.get_match_history(account['puuid'], regiao, count=5)
                 if match_ids and len(match_ids) > 0:
-                    # Procura a primeira partida de Ranked Flex
+                    # Procura a primeira partida de Ranked Flex ou Personalizada
                     for match_id in match_ids:
                         match_data = await riot_api.get_match_details(match_id, regiao)
                         if match_data:
                             queue_id = match_data.get('info', {}).get('queueId', 0)
-                            if queue_id == 440:
+                            if queue_id in [440, 0]:
                                 # Extrai stats mas NÃO envia notificações
                                 stats = riot_api.extract_player_stats(match_data, account['puuid'])
                                 if stats:
@@ -402,7 +402,7 @@ async def logar(interaction: discord.Interaction, riot_id: str, regiao: str = DE
             inline=True
         )
         
-        embed.set_footer(text="O bot começará a monitorar apenas suas PRÓXIMAS partidas de Flex!")
+        embed.set_footer(text="O bot começará a monitorar apenas suas PRÓXIMAS partidas de Flex e Personalizadas!")
         await interaction.followup.send(embed=embed, ephemeral=True)
     else:
         await interaction.followup.send(f"❌ {message}", ephemeral=True)
@@ -953,7 +953,7 @@ async def historico(interaction: discord.Interaction, conta: int = 1, quantidade
     
     embed = discord.Embed(
         title=f"📜 Histórico - {account['summoner_name']}",
-        description=f"**{len(matches)} partidas mais recentes de Ranked Flex**\n_ _",
+        description=f"**{len(matches)} partidas mais recentes de Ranked Flex e Personalizadas**\n_ _",
         color=discord.Color.purple()
     )
     
@@ -1039,7 +1039,7 @@ _Esta partida não conta para estatísticas_
             inline=False
         )
     
-    embed.set_footer(text=f"📊 Apenas Ranked Flex • Região: {account['region'].upper()}")
+    embed.set_footer(text=f"📊 Ranked Flex e Personalizadas • Região: {account['region'].upper()}")
     await interaction.followup.send(embed=embed)
 
 # Auto-complete para tipo de configuração
@@ -1832,6 +1832,10 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
             # Verifica se é remake
             is_remake = stats.get('is_remake', False)
             
+            # Determina o nome do modo de jogo baseado no queue_id
+            queue_id = stats.get('queue_id', 440)
+            game_mode_name = 'Ranked Flex' if queue_id == 440 else 'Personalizada'
+            
             # Determina cor baseada no resultado
             if is_remake:
                 color = discord.Color.greyple()  # Cinza para remake
@@ -1879,7 +1883,7 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
                 embed.add_field(
                     name="⚠️ Partida Cancelada",
                     value=(
-                        f"**Modo:** Ranked Flex\n"
+                        f"**Modo:** {game_mode_name}\n"
                         f"**Invocador:** {summoner_name}\n"
                         f"**Campeão:** {stats['champion_name']}\n"
                         f"**Role:** {role_emoji} {stats['role']}\n"
@@ -1895,7 +1899,7 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
                     title=f"{result_emoji} {result_text}",
                     description=(
                         f"# {stats['champion_name']} {role_emoji}\n"
-                        f"{member.mention} terminou uma partida de **Ranked Flex**!"
+                        f"{member.mention} terminou uma partida de **{game_mode_name}**!"
                     ),
                     color=color,
                     timestamp=datetime.fromisoformat(stats['played_at'])
@@ -1965,9 +1969,12 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
             # Avatar do jogador como thumbnail
             embed.set_thumbnail(url=member.display_avatar.url)
             
+            # Ícone do footer baseado no modo de jogo
+            footer_icon = "https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-shared-components/global/default/ranked-emblem-flex.png" if queue_id == 440 else "https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-shared-components/global/default/ranked-emblem.png"
+            
             embed.set_footer(
-                text=f"Ranked Flex • {summoner_name}",
-                icon_url="https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-shared-components/global/default/ranked-emblem-flex.png"
+                text=f"{game_mode_name} • {summoner_name}",
+                icon_url=footer_icon
             )
             
             # Envia nova mensagem (sempre)
@@ -2612,6 +2619,8 @@ async def send_live_game_notification(lol_account_id: int, live_info: Dict):
             queue_id = live_info.get('queueId', 0)
             if queue_id == 440:  # Ranked Flex
                 color = discord.Color.gold()
+            elif queue_id == 0:  # Personalizada
+                color = discord.Color.gold()  # Mesma cor do Flex
             elif queue_id == 420:  # Ranked Solo/Duo
                 color = discord.Color.purple()
             else:
@@ -2779,6 +2788,8 @@ async def send_live_game_notification_grouped(game_id: str, players: list):
         queue_id = live_info.get('queueId', 0)
         if queue_id == 440:  # Ranked Flex
             color = discord.Color.gold()
+        elif queue_id == 0:  # Personalizada
+            color = discord.Color.gold()  # Mesma cor do Flex
         elif queue_id == 420:  # Ranked Solo/Duo
             color = discord.Color.purple()
         else:

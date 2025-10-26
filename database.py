@@ -58,6 +58,7 @@ class Database:
                 lol_account_id INTEGER NOT NULL,
                 match_id TEXT NOT NULL,
                 game_mode TEXT,
+                queue_id INTEGER DEFAULT 440,
                 champion_name TEXT,
                 role TEXT,
                 kills INTEGER,
@@ -199,6 +200,14 @@ class Database:
             )
         ''')
         
+        # Migração: Adiciona coluna queue_id se não existir (para bancos existentes)
+        try:
+            cursor.execute("SELECT queue_id FROM matches LIMIT 1")
+        except:
+            print("⚙️ Migrando banco de dados: adicionando coluna queue_id...")
+            cursor.execute("ALTER TABLE matches ADD COLUMN queue_id INTEGER DEFAULT 440")
+            print("✅ Migração concluída!")
+        
         conn.commit()
         conn.close()
     
@@ -278,15 +287,16 @@ class Database:
             
             cursor.execute('''
                 INSERT OR IGNORE INTO matches (
-                    lol_account_id, match_id, game_mode, champion_name, role,
+                    lol_account_id, match_id, game_mode, queue_id, champion_name, role,
                     kills, deaths, assists, damage_dealt, damage_taken,
                     gold_earned, cs, vision_score, game_duration, win,
                     mvp_score, mvp_placement, kda, kill_participation, played_at, is_remake
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 lol_account_id,
                 match_data['match_id'],
                 match_data['game_mode'],
+                match_data.get('queue_id', 440),
                 match_data['champion_name'],
                 match_data.get('role', 'Unknown'),
                 match_data['kills'],
