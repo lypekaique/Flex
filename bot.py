@@ -3143,24 +3143,47 @@ async def process_account_batch(account_id: int, puuid: str, region: str, riot_a
     try:
         print(f"🔍 Buscando partidas recentes para conta {account_id}...")
 
-        # Busca apenas 1 partida (otimizado)
-        flex_matches = await riot_api.get_flex_matches_batch(puuid, region, max_matches=1)
+        # Busca últimas 3 partidas para garantir que pegue personalizadas que podem demorar
+        match_ids = await riot_api.get_match_history(puuid, region, count=3)
+        
+        if not match_ids:
+            print(f"⚠️ Nenhuma partida encontrada no histórico para conta {account_id}")
+            return 0
+        
+        print(f"📋 Histórico encontrado: {match_ids}")
+        
+        flex_matches = []
+        for match_id in match_ids:
+            match_data = await riot_api.get_match_details(match_id, region)
+            if match_data:
+                queue_id = match_data.get('info', {}).get('queueId', 0)
+                print(f"🔍 Partida {match_id}: queue_id={queue_id}")
+                if queue_id in [440, 0]:  # Flex ou Personalizada
+                    flex_matches.append(match_data)
+                    print(f"✅ Partida {'Flex' if queue_id == 440 else 'Personalizada'} adicionada: {match_id}")
 
         if not flex_matches:
-            print(f"⚠️ Nenhuma partida de flex encontrada para conta {account_id}")
+            print(f"⚠️ Nenhuma partida de Flex ou Personalizada encontrada para conta {account_id}")
             return 0
 
-        print(f"📋 Encontrada {len(flex_matches)} partida de flex para conta {account_id}")
+        print(f"📋 Encontradas {len(flex_matches)} partida(s) de Flex/Personalizada para conta {account_id}")
         matches_processed = 0
 
         # Verifica cada partida e salva apenas as novas E recentes
+        last_match_id = db.get_last_match_id(account_id)
+        print(f"📌 [Partidas] Última partida registrada para conta {account_id}: {last_match_id}")
+        
         for match_data in flex_matches:
             match_id = match_data['metadata']['matchId']
+            queue_id = match_data.get('info', {}).get('queueId', 0)
+            game_type = 'Flex' if queue_id == 440 else 'Personalizada'
 
             # Verifica se já está registrada
-            if db.get_last_match_id(account_id) == match_id:
-                print(f"⏭️ Partida {match_id} já registrada, pulando")
+            if last_match_id == match_id:
+                print(f"⏭️ Partida {game_type} {match_id} já registrada, pulando")
                 continue
+            
+            print(f"🆕 [Partidas] Nova partida {game_type} detectada: {match_id}")
 
             # Verifica se a partida acabou recentemente (última 1 hora)
             game_end_timestamp = match_data.get('info', {}).get('gameEndTimestamp')
@@ -3182,6 +3205,10 @@ async def process_account_batch(account_id: int, puuid: str, region: str, riot_a
                 stats = riot_api.extract_player_stats(match_data, puuid)
 
                 if stats:
+                    queue_id = stats.get('queue_id', 440)
+                    game_type = 'Flex' if queue_id == 440 else 'Personalizada'
+                    print(f"📊 [Partidas] Processando partida {game_type}: {match_id}")
+                    
                     # Salva automaticamente no banco
                     success = db.add_match(account_id, stats)
 
@@ -3190,15 +3217,16 @@ async def process_account_batch(account_id: int, puuid: str, region: str, riot_a
 
                         # Log diferente para remakes
                         if stats.get('is_remake', False):
-                            print(f"⚠️ [Partidas] Remake registrado: {match_id} ({stats['game_duration']}s)")
+                            print(f"⚠️ [Partidas] Remake {game_type} registrado: {match_id} ({stats['game_duration']}s)")
                         else:
-                            print(f"✅ [Partidas] Nova partida registrada: {match_id} (MVP: {stats.get('mvp_score', 0)})")
+                            print(f"✅ [Partidas] Nova partida {game_type} registrada: {match_id} (MVP: {stats.get('mvp_score', 0)})")
 
                         # Verifica performance apenas se não for remake
                         if not stats.get('is_remake', False):
                             await check_champion_performance(account_id, stats['champion_name'])
 
                         # Envia notificação automática da nova partida
+                        print(f"📤 [Partidas] Enviando notificação para partida {game_type}: {match_id}")
                         await send_match_notification(account_id, stats)
 
                     else:
