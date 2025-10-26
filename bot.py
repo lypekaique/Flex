@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from database import Database
 from riot_api import RiotAPI
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict
 import asyncio
 
 load_dotenv()
@@ -80,7 +80,7 @@ class FlexGuideView(discord.ui.View):
         )
         embed.add_field(
             name="3️⃣ Pronto!",
-            value="O bot começará a monitorar suas partidas de **Ranked Flex e Custom Games** automaticamente! 🎉",
+            value="O bot começará a monitorar suas partidas de **Ranked Flex** automaticamente! 🎉",
             inline=False
         )
         embed.set_footer(text="Você pode vincular até 3 contas!")
@@ -123,7 +123,7 @@ class FlexGuideView(discord.ui.View):
             value=(
                 "• Todos os comandos tem **auto-complete**\n"
                 "• Use a barra `/` para ver todos comandos\n"
-                "• Estatísticas de **Ranked Flex e Custom Games**\n"
+                "• Estatísticas são apenas de **Ranked Flex**\n"
                 "• Configure o canal de comandos primeiro!"
             ),
             inline=False
@@ -223,51 +223,6 @@ class FlexGuideView(discord.ui.View):
             inline=False
         )
         embed.set_footer(text="O bot verifica novas partidas a cada 5 minutos")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-    
-    @discord.ui.button(label="🎮 Partidas Personalizadas", style=discord.ButtonStyle.success, custom_id="flex_guide:custom_games")
-    async def custom_games_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = discord.Embed(
-            title="🎮 Sistema de Partidas Personalizadas",
-            description="O bot também monitora Custom Games automaticamente!",
-            color=discord.Color.purple()
-        )
-        embed.add_field(
-            name="📊 Como Funciona?",
-            value=(
-                "Quando uma **partida personalizada** terminar, o bot envia **2 mensagens no canal de partidas**:\n\n"
-                "**1️⃣ Mensagem de Resultado**\n"
-                "   • Qual time venceu (🔵 Azul ou 🔴 Vermelho)\n"
-                "   • Placar de kills\n"
-                "   • MVP da partida\n"
-                "   • Duração da partida\n\n"
-                "**2️⃣ Scores Individuais**\n"
-                "   • Performance de cada jogador (1º ao 10º)\n"
-                "   • MVP Score, KDA, Dano\n"
-                "   • Separado por times"
-            ),
-            inline=False
-        )
-        embed.add_field(
-            name="🔄 Detecção Automática",
-            value=(
-                "• O bot verifica automaticamente partidas a cada **2 minutos**\n"
-                "• Processa partidas personalizadas que terminaram nas **últimas 2 horas**\n"
-                "• Mesma tecnologia das partidas Ranked Flex!\n"
-                "• Todos os jogadores da partida são ranqueados do 1º ao 10º"
-            ),
-            inline=False
-        )
-        embed.add_field(
-            name="⚙️ Configuração Necessária",
-            value=(
-                "Os administradores precisam configurar o canal de partidas:\n"
-                "`/configurar score #canal-partidas`\n\n"
-                "💡 **Todas as mensagens de Custom Games vão para este canal!**"
-            ),
-            inline=False
-        )
-        embed.set_footer(text="Custom Games • Sistema totalmente automático após configuração")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.event
@@ -415,12 +370,12 @@ async def logar(interaction: discord.Interaction, riot_id: str, regiao: str = DE
                 # Busca última partida sem processar (só para marcar como vista)
                 match_ids = await riot_api.get_match_history(account['puuid'], regiao, count=5)
                 if match_ids and len(match_ids) > 0:
-                    # Procura a primeira partida de Ranked Flex ou Custom Game
+                    # Procura a primeira partida de Ranked Flex
                     for match_id in match_ids:
                         match_data = await riot_api.get_match_details(match_id, regiao)
                         if match_data:
                             queue_id = match_data.get('info', {}).get('queueId', 0)
-                            if queue_id in [440, 0]:  # Ranked Flex ou Custom Game
+                            if queue_id == 440:
                                 # Extrai stats mas NÃO envia notificações
                                 stats = riot_api.extract_player_stats(match_data, account['puuid'])
                                 if stats:
@@ -811,16 +766,18 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
         avg_visao = sum(m['vision_score'] for m in matches) / total_matches
         avg_gold = sum(m['gold_earned'] for m in matches) / total_matches
         
-        
+        # Calcula gold per minute médio
         avg_game_duration_min = sum(m['game_duration'] for m in matches) / total_matches / 60
         avg_gpm = avg_gold / avg_game_duration_min if avg_game_duration_min > 0 else 0
         
+        # Estatísticas por role
         role_count = {}
         for m in matches:
             role = m['role']
             role_count[role] = role_count.get(role, 0) + 1
         most_played_role = max(role_count, key=role_count.get) if role_count else "Unknown"
         
+        # Determina emoji baseado no MVP score
         if avg_mvp >= 90:
             emoji = "🏆"
             rank = "S+"
@@ -830,7 +787,7 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
         elif avg_mvp >= 60:
             emoji = "💎"
             rank = "A"
-        elif avg_mvp >= 50: 
+        elif avg_mvp >= 50:
             emoji = "🥈"
             rank = "B"
         elif avg_mvp >= 40:
@@ -843,7 +800,7 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
             emoji = "💀"
             rank = "F"
         
-
+        # Emoji por role
         role_emojis = {
             'Top': '⚔️',
             'Jungle': '🌳',
@@ -853,7 +810,7 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
         }
         role_emoji = role_emojis.get(most_played_role, '❓')
         
-   
+        # Constrói texto baseado na métrica selecionada
         if metrica in ['mvp'] or not metrica:
             stats_text = f"""
 {emoji} **{rank}**
@@ -949,7 +906,7 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
             inline=False
         )
     
-    footer_text = "Partidas de Ranked Flex e Custom Games são contabilizadas"
+    footer_text = "Apenas partidas de Ranked Flex são contabilizadas"
     if campeao:
         footer_text += f" • Filtrado por {campeao}"
     embed.set_footer(text=footer_text)
@@ -996,7 +953,7 @@ async def historico(interaction: discord.Interaction, conta: int = 1, quantidade
     
     embed = discord.Embed(
         title=f"📜 Histórico - {account['summoner_name']}",
-        description=f"**{len(matches)} partidas mais recentes (Flex/Custom)**\n_ _",
+        description=f"**{len(matches)} partidas mais recentes de Ranked Flex**\n_ _",
         color=discord.Color.purple()
     )
     
@@ -1082,7 +1039,7 @@ _Esta partida não conta para estatísticas_
             inline=False
         )
     
-    embed.set_footer(text=f"📊 Ranked Flex & Custom Games • Região: {account['region'].upper()}")
+    embed.set_footer(text=f"📊 Apenas Ranked Flex • Região: {account['region'].upper()}")
     await interaction.followup.send(embed=embed)
 
 # Auto-complete para tipo de configuração
@@ -1404,7 +1361,7 @@ async def tops_flex(interaction: discord.Interaction, quantidade: int = 10):
             inline=False
         )
     
-    embed.set_footer(text="Ranked Flex & Custom Games • Atualizado em tempo real")
+    embed.set_footer(text="Apenas Ranked Flex • Atualizado em tempo real")
     await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="flex", description="🎯 Guia completo do bot com botões interativos")
@@ -1416,7 +1373,7 @@ async def flex_guide(interaction: discord.Interaction):
     embed = discord.Embed(
         title="🎮 Flex dos Crias",
         description=(
-            "**O bot definitivo de tracking para Ranked Flex e Custom Games!**\n\n"
+            "**O bot definitivo de tracking para Ranked Flex!**\n\n"
             "Monitore suas partidas, acompanhe seu desempenho em tempo real,\n"
             "e descubra seu verdadeiro nível de performance com nosso sistema avançado.\n"
         ),
@@ -1922,7 +1879,7 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
                 embed.add_field(
                     name="⚠️ Partida Cancelada",
                     value=(
-                        f"**Modo:** {stats.get('game_mode', 'Ranked Flex')}\n"
+                        f"**Modo:** Ranked Flex\n"
                         f"**Invocador:** {summoner_name}\n"
                         f"**Campeão:** {stats['champion_name']}\n"
                         f"**Role:** {role_emoji} {stats['role']}\n"
@@ -1938,7 +1895,7 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
                     title=f"{result_emoji} {result_text}",
                     description=(
                         f"# {stats['champion_name']} {role_emoji}\n"
-                        f"{member.mention} terminou uma partida de **{stats.get('game_mode', 'Ranked Flex')}**!"
+                        f"{member.mention} terminou uma partida de **Ranked Flex**!"
                     ),
                     color=color,
                     timestamp=datetime.fromisoformat(stats['played_at'])
@@ -2009,7 +1966,7 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
             embed.set_thumbnail(url=member.display_avatar.url)
             
             embed.set_footer(
-                text=f"{stats.get('game_mode', 'Ranked Flex')} • {summoner_name}",
+                text=f"Ranked Flex • {summoner_name}",
                 icon_url="https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-shared-components/global/default/ranked-emblem-flex.png"
             )
             
@@ -2025,269 +1982,6 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
     
     except Exception as e:
         print(f"Erro ao processar notificação de partida: {e}")
-
-async def send_custom_game_result(match_data: Dict, guild_ids: List[str] = None):
-    """
-    Envia resultado de partida personalizada em 2 mensagens NO CANAL DE PARTIDAS:
-    1. Mensagem resumida com o time vencedor
-    2. Scores individuais de cada jogador
-    
-    Args:
-        match_data: Dados completos da partida da Riot API
-        guild_ids: Lista de IDs dos servidores onde enviar (se None, envia em todos)
-    """
-    try:
-        queue_id = match_data.get('info', {}).get('queueId', 0)
-        
-        # Apenas processa partidas personalizadas (queueId = 0)
-        if queue_id != 0:
-            return
-            
-        print(f"🎮 [Custom Game] Processando resultado de partida personalizada...")
-        
-        # Extrai informações da partida
-        game_info = match_data['info']
-        participants = game_info['participants']
-        game_duration = game_info.get('gameDuration', 0)
-        game_duration_min = game_duration // 60
-        game_duration_sec = game_duration % 60
-        
-        # Separa jogadores por time
-        team_100 = [p for p in participants if p['teamId'] == 100]
-        team_200 = [p for p in participants if p['teamId'] == 200]
-        
-        # Determina qual time venceu
-        team_100_won = team_100[0]['win'] if team_100 else False
-        team_200_won = team_200[0]['win'] if team_200 else False
-        
-        # ========== CALCULA MVP SCORES DE TODOS OS JOGADORES ==========
-        all_kdas = [(p['kills'] + p['assists']) / max(p['deaths'], 1) for p in participants]
-        all_damages = [p.get('totalDamageDealtToChampions', 0) for p in participants]
-        all_golds = [p.get('goldEarned', 0) for p in participants]
-        all_cs_list = [p.get('totalMinionsKilled', 0) + p.get('neutralMinionsKilled', 0) for p in participants]
-        all_visions = [p.get('visionScore', 0) for p in participants]
-        
-        team_1_kills = sum(p['kills'] for p in participants if p['teamId'] == 100)
-        team_2_kills = sum(p['kills'] for p in participants if p['teamId'] == 200)
-        all_kps = [
-            (p['kills'] + p['assists']) / max(team_1_kills if p['teamId'] == 100 else team_2_kills, 1)
-            for p in participants
-        ]
-        
-        all_players_stats = {
-            'all_kdas': all_kdas,
-            'all_kps': all_kps,
-            'all_damages': all_damages,
-            'all_golds': all_golds,
-            'all_cs': all_cs_list,
-            'all_visions': all_visions
-        }
-        
-        # Calcula score de cada jogador
-        all_players_with_scores = []
-        for p in participants:
-            p_team_id = p['teamId']
-            p_team_kills = sum(pl['kills'] for pl in participants if pl['teamId'] == p_team_id)
-            p_kda = (p['kills'] + p['assists']) / max(p['deaths'], 1)
-            p_kp = (p['kills'] + p['assists']) / max(p_team_kills, 1)
-            p_damage = p.get('totalDamageDealtToChampions', 0)
-            p_gold = p.get('goldEarned', 0)
-            p_cs = p.get('totalMinionsKilled', 0) + p.get('neutralMinionsKilled', 0)
-            p_vision = p.get('visionScore', 0)
-            p_role = p.get('teamPosition', '') or p.get('individualPosition', 'MIDDLE')
-            
-            player_stats = {
-                'kda': p_kda,
-                'kill_participation': p_kp,
-                'total_damage_to_champions': p_damage,
-                'gold_earned': p_gold,
-                'total_minions_killed': p.get('totalMinionsKilled', 0),
-                'neutral_minions_killed': p.get('neutralMinionsKilled', 0),
-                'vision_score': p_vision,
-                'win': p.get('win', False)
-            }
-            
-            mvp_score, _ = riot_api.calculate_mvp_score(player_stats, all_players_stats, p_role)
-            
-            all_players_with_scores.append({
-                'player': p,
-                'mvp_score': mvp_score,
-                'kda': p_kda,
-                'kp': p_kp * 100,
-                'cs': p_cs,
-                'damage': p_damage,
-                'puuid': p['puuid']
-            })
-        
-        # Ordena por MVP score para determinar colocações
-        for idx, player_info in enumerate(all_players_with_scores):
-            player_info['original_index'] = idx
-        
-        all_players_with_scores.sort(key=lambda x: (-x['mvp_score'], -x['damage'], x['original_index']))
-        
-        # Atribui placement único
-        for i, player_info in enumerate(all_players_with_scores, 1):
-            player_info['placement'] = i
-        
-        # MVP da partida
-        mvp = all_players_with_scores[0]
-        mvp_player = mvp['player']
-        mvp_name = mvp_player.get('riotIdGameName', mvp_player.get('summonerName', 'Unknown'))
-        mvp_champion = mvp_player.get('championName', 'Unknown')
-        
-        # Busca todos os servidores onde enviar
-        guilds_to_process = []
-        if guild_ids:
-            guilds_to_process = [bot.get_guild(int(gid)) for gid in guild_ids if bot.get_guild(int(gid))]
-        else:
-            guilds_to_process = bot.guilds
-        
-        for guild in guilds_to_process:
-            # ========== ENVIA TUDO NO CANAL DE PARTIDAS ==========
-            match_channel_id = db.get_match_channel(str(guild.id))
-            if match_channel_id:
-                match_channel = guild.get_channel(int(match_channel_id))
-                if match_channel:
-                    # ===== MENSAGEM 1: RESULTADO DA PARTIDA =====
-                    # Determina cor e emoji baseado no vencedor
-                    if team_100_won:
-                        winner_emoji = "🔵"
-                        winner_text = "TIME AZUL VENCEU!"
-                        winner_color = discord.Color.blue()
-                    else:
-                        winner_emoji = "🔴"
-                        winner_text = "TIME VERMELHO VENCEU!"
-                        winner_color = discord.Color.red()
-                    
-                    summary_embed = discord.Embed(
-                        title=f"{winner_emoji} {winner_text}",
-                        description=f"**Partida Personalizada Finalizada**\n⏱️ Duração: **{game_duration_min}:{game_duration_sec:02d}**",
-                        color=winner_color,
-                        timestamp=datetime.now()
-                    )
-                    
-                    # Mostra placar de kills
-                    team_100_kills = sum(p['player']['kills'] for p in all_players_with_scores if p['player']['teamId'] == 100)
-                    team_200_kills = sum(p['player']['kills'] for p in all_players_with_scores if p['player']['teamId'] == 200)
-                    
-                    summary_embed.add_field(
-                        name="📊 Placar",
-                        value=f"🔵 **{team_100_kills}** x **{team_200_kills}** 🔴",
-                        inline=False
-                    )
-                    
-                    # MVP da partida
-                    mvp_team_emoji = "🔵" if mvp_player['teamId'] == 100 else "🔴"
-                    summary_embed.add_field(
-                        name="👑 MVP da Partida",
-                        value=f"{mvp_team_emoji} **{mvp_name}** - {mvp_champion}\n"
-                              f"📊 Score: **{mvp['mvp_score']}/100** | KDA: **{mvp_player['kills']}/{mvp_player['deaths']}/{mvp_player['assists']}**",
-                        inline=False
-                    )
-                    
-                    summary_embed.set_footer(text="Custom Game • Scores individuais abaixo")
-                    
-                    try:
-                        await match_channel.send(embed=summary_embed)
-                        print(f"✅ [Custom Game] Mensagem de resultado enviada no canal de partidas do servidor {guild.name}")
-                    except Exception as e:
-                        print(f"❌ [Custom Game] Erro ao enviar mensagem de resultado: {e}")
-                    
-                    # ===== MENSAGEM 2: SCORES INDIVIDUAIS =====
-                    # Separa jogadores por time (já com scores calculados)
-                    team_100_players = [p for p in all_players_with_scores if p['player']['teamId'] == 100]
-                    team_200_players = [p for p in all_players_with_scores if p['player']['teamId'] == 200]
-                    
-                    # Ordena cada time por placement (melhor primeiro)
-                    team_100_players.sort(key=lambda p: p['placement'])
-                    team_200_players.sort(key=lambda p: p['placement'])
-                    
-                    # Cria embed detalhado
-                    details_embed = discord.Embed(
-                        title="📊 SCORES INDIVIDUAIS - PARTIDA PERSONALIZADA",
-                        description=f"⏱️ Duração: **{game_duration_min}:{game_duration_sec:02d}**",
-                        color=discord.Color.gold(),
-                        timestamp=datetime.now()
-                    )
-                    
-                    # Time Azul
-                    team_100_text = ""
-                    for player_info in team_100_players:
-                        p = player_info['player']
-                        p_name = p.get('riotIdGameName', p.get('summonerName', 'Unknown'))
-                        p_champion = p.get('championName', 'Unknown')
-                        placement = player_info['placement']
-                        
-                        # Emoji para colocação
-                        if placement == 1:
-                            placement_emoji = "👑"
-                        elif placement == 2:
-                            placement_emoji = "🥇"
-                        elif placement == 3:
-                            placement_emoji = "🥈"
-                        elif placement <= 5:
-                            placement_emoji = "🥉"
-                        else:
-                            placement_emoji = "📊"
-                        
-                        team_100_text += (
-                            f"{placement_emoji} **{placement}º** {p_champion} - {p_name}\n"
-                            f"   KDA: {p['kills']}/{p['deaths']}/{p['assists']} ({player_info['kda']:.1f}) | "
-                            f"MVP: {player_info['mvp_score']} | Dano: {player_info['damage']:,}\n"
-                        )
-                    
-                    details_embed.add_field(
-                        name=f"🔵 Time Azul {'(Vitória)' if team_100_won else '(Derrota)'}",
-                        value=team_100_text.strip() if team_100_text else "Nenhum dado disponível",
-                        inline=False
-                    )
-                    
-                    # Time Vermelho
-                    team_200_text = ""
-                    for player_info in team_200_players:
-                        p = player_info['player']
-                        p_name = p.get('riotIdGameName', p.get('summonerName', 'Unknown'))
-                        p_champion = p.get('championName', 'Unknown')
-                        placement = player_info['placement']
-                        
-                        # Emoji para colocação
-                        if placement == 1:
-                            placement_emoji = "👑"
-                        elif placement == 2:
-                            placement_emoji = "🥇"
-                        elif placement == 3:
-                            placement_emoji = "🥈"
-                        elif placement <= 5:
-                            placement_emoji = "🥉"
-                        else:
-                            placement_emoji = "📊"
-                        
-                        team_200_text += (
-                            f"{placement_emoji} **{placement}º** {p_champion} - {p_name}\n"
-                            f"   KDA: {p['kills']}/{p['deaths']}/{p['assists']} ({player_info['kda']:.1f}) | "
-                            f"MVP: {player_info['mvp_score']} | Dano: {player_info['damage']:,}\n"
-                        )
-                    
-                    details_embed.add_field(
-                        name=f"🔴 Time Vermelho {'(Vitória)' if team_200_won else '(Derrota)'}",
-                        value=team_200_text.strip() if team_200_text else "Nenhum dado disponível",
-                        inline=False
-                    )
-                    
-                    details_embed.set_footer(text="Custom Game • Sistema de tracking automático")
-                    
-                    try:
-                        await match_channel.send(embed=details_embed)
-                        print(f"✅ [Custom Game] Scores individuais enviados no canal de partidas do servidor {guild.name}")
-                    except Exception as e:
-                        print(f"❌ [Custom Game] Erro ao enviar scores individuais: {e}")
-        
-        print(f"✅ [Custom Game] Resultado da partida processado com sucesso!")
-        
-    except Exception as e:
-        print(f"❌ [Custom Game] Erro ao processar resultado de partida personalizada: {e}")
-        import traceback
-        traceback.print_exc()
 
 async def update_live_game_result(game_id: str, match_data: Dict):
     """
@@ -2918,8 +2612,6 @@ async def send_live_game_notification(lol_account_id: int, live_info: Dict):
             queue_id = live_info.get('queueId', 0)
             if queue_id == 440:  # Ranked Flex
                 color = discord.Color.gold()
-            elif queue_id == 0:  # Custom Game
-                color = discord.Color.blue()
             elif queue_id == 420:  # Ranked Solo/Duo
                 color = discord.Color.purple()
             else:
@@ -3087,8 +2779,6 @@ async def send_live_game_notification_grouped(game_id: str, players: list):
         queue_id = live_info.get('queueId', 0)
         if queue_id == 440:  # Ranked Flex
             color = discord.Color.gold()
-        elif queue_id == 0:  # Custom Game
-            color = discord.Color.blue()
         elif queue_id == 420:  # Ranked Solo/Duo
             color = discord.Color.purple()
         else:
@@ -3227,14 +2917,9 @@ async def check_live_games():
                     game_id = str(game_data.get('gameId'))
                     queue_id = game_data.get('gameQueueConfigId', 0)
                     
-                    # Filtra apenas Ranked Flex (440)
-                    # Partidas personalizadas (0) não são suportadas pela Spectator API (spec-v5)
-                    # e serão detectadas apenas pela Match API (match-v5)
-                    if queue_id != 440:
-                        if queue_id == 0:
-                            print(f"⚠️ [Live Games] Partida personalizada {game_id} ignorada (spec-v5 não suporta custom games)")
-                        else:
-                            print(f"⚠️ [Live Games] Partida {game_id} ignorada (queueId: {queue_id} - não é Flex)")
+                    # Filtra apenas Ranked Flex (440) e Personalizadas (0)
+                    if queue_id not in [440, 0]:
+                        print(f"⚠️ [Live Games] Partida {game_id} ignorada (queueId: {queue_id} - não é Flex ou Personalizada)")
                         continue
 
                     # Verificação GLOBAL: se esta partida foi notificada recentemente (últimos 5 minutos), pula TUDO
@@ -3447,19 +3132,18 @@ async def process_account_batch(account_id: int, puuid: str, region: str, riot_a
     try:
         print(f"🔍 Buscando partidas recentes para conta {account_id}...")
 
-        # Busca apenas 1 partida (Ranked Flex OU Custom Game)
-        tracked_matches = await riot_api.get_tracked_matches_batch(puuid, region, max_matches=1, 
-                                                                   include_flex=True, include_custom=True)
+        # Busca apenas 1 partida (otimizado)
+        flex_matches = await riot_api.get_flex_matches_batch(puuid, region, max_matches=1)
 
-        if not tracked_matches:
-            print(f"⚠️ Nenhuma partida rastreada encontrada para conta {account_id}")
+        if not flex_matches:
+            print(f"⚠️ Nenhuma partida de flex encontrada para conta {account_id}")
             return 0
 
-        print(f"📋 Encontrada {len(tracked_matches)} partida rastreada para conta {account_id}")
+        print(f"📋 Encontrada {len(flex_matches)} partida de flex para conta {account_id}")
         matches_processed = 0
 
         # Verifica cada partida e salva apenas as novas E recentes
-        for match_data in tracked_matches:
+        for match_data in flex_matches:
             match_id = match_data['metadata']['matchId']
 
             # Verifica se já está registrada
@@ -3503,13 +3187,8 @@ async def process_account_batch(account_id: int, puuid: str, region: str, riot_a
                         if not stats.get('is_remake', False):
                             await check_champion_performance(account_id, stats['champion_name'])
 
-                        # Envia notificação automática da nova partida (individual)
+                        # Envia notificação automática da nova partida
                         await send_match_notification(account_id, stats)
-                        
-                        # Se for partida personalizada, envia também o resultado geral
-                        if stats.get('game_mode') == 'Custom Game':
-                            print(f"🎮 [Custom Game] Detectada partida personalizada, enviando resultado geral...")
-                            await send_custom_game_result(match_data)
 
                     else:
                         print(f"⚠️ Falha ao salvar partida {match_id} no banco")
@@ -3726,11 +3405,6 @@ async def check_live_games_finished():
                                 # Envia notificação individual com estatísticas detalhadas
                                 print(f"📨 [Live Check] Enviando notificação individual de estatísticas para {account_id}")
                                 await send_match_notification(account_id, stats)
-                                
-                                # Se for partida personalizada, envia também o resultado geral
-                                if stats.get('game_mode') == 'Custom Game' and game_id not in processed_matches:
-                                    print(f"🎮 [Custom Game] Detectada partida personalizada finalizada, enviando resultado geral...")
-                                    await send_custom_game_result(match_data)
 
                                 # Verifica performance apenas se não for remake
                                 if not stats.get('is_remake', False):
