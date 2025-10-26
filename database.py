@@ -632,40 +632,6 @@ class Database:
             }
         return None
     
-    def get_unfinished_custom_games(self, hours: int = 2) -> List[tuple]:
-        """Busca custom games que foram notificadas mas ainda não foram finalizadas"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT DISTINCT game_id, lol_account_id, puuid, summoner_name, message_id, channel_id, guild_id
-            FROM live_games_notified
-            WHERE queue_id = 0 
-            AND (is_finished = 0 OR is_finished IS NULL)
-            AND notified_at > datetime('now', '-' || ? || ' hours')
-            ORDER BY notified_at DESC
-        ''', (hours,))
-        
-        results = cursor.fetchall()
-        conn.close()
-        return results
-    
-    def mark_custom_game_finished(self, game_id: str) -> bool:
-        """Marca uma custom game como finalizada"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                UPDATE live_games_notified
-                SET is_finished = 1, finished_at = CURRENT_TIMESTAMP
-                WHERE game_id = ? AND queue_id = 0
-            ''', (game_id,))
-            conn.commit()
-            conn.close()
-            return True
-        except Exception as e:
-            print(f"Erro ao marcar custom game como finalizada: {e}")
-            return False
-    
     def get_server_config(self, guild_id: str) -> Optional[Dict]:
         """Retorna todas as configurações de um servidor"""
         conn = self.get_connection()

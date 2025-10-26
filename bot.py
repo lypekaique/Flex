@@ -224,6 +224,51 @@ class FlexGuideView(discord.ui.View):
         )
         embed.set_footer(text="O bot verifica novas partidas a cada 5 minutos")
         await interaction.response.send_message(embed=embed, ephemeral=True)
+    
+    @discord.ui.button(label="🎮 Partidas Personalizadas", style=discord.ButtonStyle.success, custom_id="flex_guide:custom_games")
+    async def custom_games_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title="🎮 Sistema de Partidas Personalizadas",
+            description="O bot também monitora Custom Games automaticamente!",
+            color=discord.Color.purple()
+        )
+        embed.add_field(
+            name="📊 Como Funciona?",
+            value=(
+                "Quando uma **partida personalizada** terminar, o bot envia **2 mensagens no canal de partidas**:\n\n"
+                "**1️⃣ Mensagem de Resultado**\n"
+                "   • Qual time venceu (🔵 Azul ou 🔴 Vermelho)\n"
+                "   • Placar de kills\n"
+                "   • MVP da partida\n"
+                "   • Duração da partida\n\n"
+                "**2️⃣ Scores Individuais**\n"
+                "   • Performance de cada jogador (1º ao 10º)\n"
+                "   • MVP Score, KDA, Dano\n"
+                "   • Separado por times"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="🔄 Detecção Automática",
+            value=(
+                "• O bot verifica automaticamente partidas a cada **2 minutos**\n"
+                "• Processa partidas personalizadas que terminaram nas **últimas 2 horas**\n"
+                "• Mesma tecnologia das partidas Ranked Flex!\n"
+                "• Todos os jogadores da partida são ranqueados do 1º ao 10º"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="⚙️ Configuração Necessária",
+            value=(
+                "Os administradores precisam configurar o canal de partidas:\n"
+                "`/configurar score #canal-partidas`\n\n"
+                "💡 **Todas as mensagens de Custom Games vão para este canal!**"
+            ),
+            inline=False
+        )
+        embed.set_footer(text="Custom Games • Sistema totalmente automático após configuração")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.event
 async def on_ready():
@@ -1981,6 +2026,269 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
     except Exception as e:
         print(f"Erro ao processar notificação de partida: {e}")
 
+async def send_custom_game_result(match_data: Dict, guild_ids: List[str] = None):
+    """
+    Envia resultado de partida personalizada em 2 mensagens NO CANAL DE PARTIDAS:
+    1. Mensagem resumida com o time vencedor
+    2. Scores individuais de cada jogador
+    
+    Args:
+        match_data: Dados completos da partida da Riot API
+        guild_ids: Lista de IDs dos servidores onde enviar (se None, envia em todos)
+    """
+    try:
+        queue_id = match_data.get('info', {}).get('queueId', 0)
+        
+        # Apenas processa partidas personalizadas (queueId = 0)
+        if queue_id != 0:
+            return
+            
+        print(f"🎮 [Custom Game] Processando resultado de partida personalizada...")
+        
+        # Extrai informações da partida
+        game_info = match_data['info']
+        participants = game_info['participants']
+        game_duration = game_info.get('gameDuration', 0)
+        game_duration_min = game_duration // 60
+        game_duration_sec = game_duration % 60
+        
+        # Separa jogadores por time
+        team_100 = [p for p in participants if p['teamId'] == 100]
+        team_200 = [p for p in participants if p['teamId'] == 200]
+        
+        # Determina qual time venceu
+        team_100_won = team_100[0]['win'] if team_100 else False
+        team_200_won = team_200[0]['win'] if team_200 else False
+        
+        # ========== CALCULA MVP SCORES DE TODOS OS JOGADORES ==========
+        all_kdas = [(p['kills'] + p['assists']) / max(p['deaths'], 1) for p in participants]
+        all_damages = [p.get('totalDamageDealtToChampions', 0) for p in participants]
+        all_golds = [p.get('goldEarned', 0) for p in participants]
+        all_cs_list = [p.get('totalMinionsKilled', 0) + p.get('neutralMinionsKilled', 0) for p in participants]
+        all_visions = [p.get('visionScore', 0) for p in participants]
+        
+        team_1_kills = sum(p['kills'] for p in participants if p['teamId'] == 100)
+        team_2_kills = sum(p['kills'] for p in participants if p['teamId'] == 200)
+        all_kps = [
+            (p['kills'] + p['assists']) / max(team_1_kills if p['teamId'] == 100 else team_2_kills, 1)
+            for p in participants
+        ]
+        
+        all_players_stats = {
+            'all_kdas': all_kdas,
+            'all_kps': all_kps,
+            'all_damages': all_damages,
+            'all_golds': all_golds,
+            'all_cs': all_cs_list,
+            'all_visions': all_visions
+        }
+        
+        # Calcula score de cada jogador
+        all_players_with_scores = []
+        for p in participants:
+            p_team_id = p['teamId']
+            p_team_kills = sum(pl['kills'] for pl in participants if pl['teamId'] == p_team_id)
+            p_kda = (p['kills'] + p['assists']) / max(p['deaths'], 1)
+            p_kp = (p['kills'] + p['assists']) / max(p_team_kills, 1)
+            p_damage = p.get('totalDamageDealtToChampions', 0)
+            p_gold = p.get('goldEarned', 0)
+            p_cs = p.get('totalMinionsKilled', 0) + p.get('neutralMinionsKilled', 0)
+            p_vision = p.get('visionScore', 0)
+            p_role = p.get('teamPosition', '') or p.get('individualPosition', 'MIDDLE')
+            
+            player_stats = {
+                'kda': p_kda,
+                'kill_participation': p_kp,
+                'total_damage_to_champions': p_damage,
+                'gold_earned': p_gold,
+                'total_minions_killed': p.get('totalMinionsKilled', 0),
+                'neutral_minions_killed': p.get('neutralMinionsKilled', 0),
+                'vision_score': p_vision,
+                'win': p.get('win', False)
+            }
+            
+            mvp_score, _ = riot_api.calculate_mvp_score(player_stats, all_players_stats, p_role)
+            
+            all_players_with_scores.append({
+                'player': p,
+                'mvp_score': mvp_score,
+                'kda': p_kda,
+                'kp': p_kp * 100,
+                'cs': p_cs,
+                'damage': p_damage,
+                'puuid': p['puuid']
+            })
+        
+        # Ordena por MVP score para determinar colocações
+        for idx, player_info in enumerate(all_players_with_scores):
+            player_info['original_index'] = idx
+        
+        all_players_with_scores.sort(key=lambda x: (-x['mvp_score'], -x['damage'], x['original_index']))
+        
+        # Atribui placement único
+        for i, player_info in enumerate(all_players_with_scores, 1):
+            player_info['placement'] = i
+        
+        # MVP da partida
+        mvp = all_players_with_scores[0]
+        mvp_player = mvp['player']
+        mvp_name = mvp_player.get('riotIdGameName', mvp_player.get('summonerName', 'Unknown'))
+        mvp_champion = mvp_player.get('championName', 'Unknown')
+        
+        # Busca todos os servidores onde enviar
+        guilds_to_process = []
+        if guild_ids:
+            guilds_to_process = [bot.get_guild(int(gid)) for gid in guild_ids if bot.get_guild(int(gid))]
+        else:
+            guilds_to_process = bot.guilds
+        
+        for guild in guilds_to_process:
+            # ========== ENVIA TUDO NO CANAL DE PARTIDAS ==========
+            match_channel_id = db.get_match_channel(str(guild.id))
+            if match_channel_id:
+                match_channel = guild.get_channel(int(match_channel_id))
+                if match_channel:
+                    # ===== MENSAGEM 1: RESULTADO DA PARTIDA =====
+                    # Determina cor e emoji baseado no vencedor
+                    if team_100_won:
+                        winner_emoji = "🔵"
+                        winner_text = "TIME AZUL VENCEU!"
+                        winner_color = discord.Color.blue()
+                    else:
+                        winner_emoji = "🔴"
+                        winner_text = "TIME VERMELHO VENCEU!"
+                        winner_color = discord.Color.red()
+                    
+                    summary_embed = discord.Embed(
+                        title=f"{winner_emoji} {winner_text}",
+                        description=f"**Partida Personalizada Finalizada**\n⏱️ Duração: **{game_duration_min}:{game_duration_sec:02d}**",
+                        color=winner_color,
+                        timestamp=datetime.now()
+                    )
+                    
+                    # Mostra placar de kills
+                    team_100_kills = sum(p['player']['kills'] for p in all_players_with_scores if p['player']['teamId'] == 100)
+                    team_200_kills = sum(p['player']['kills'] for p in all_players_with_scores if p['player']['teamId'] == 200)
+                    
+                    summary_embed.add_field(
+                        name="📊 Placar",
+                        value=f"🔵 **{team_100_kills}** x **{team_200_kills}** 🔴",
+                        inline=False
+                    )
+                    
+                    # MVP da partida
+                    mvp_team_emoji = "🔵" if mvp_player['teamId'] == 100 else "🔴"
+                    summary_embed.add_field(
+                        name="👑 MVP da Partida",
+                        value=f"{mvp_team_emoji} **{mvp_name}** - {mvp_champion}\n"
+                              f"📊 Score: **{mvp['mvp_score']}/100** | KDA: **{mvp_player['kills']}/{mvp_player['deaths']}/{mvp_player['assists']}**",
+                        inline=False
+                    )
+                    
+                    summary_embed.set_footer(text="Custom Game • Scores individuais abaixo")
+                    
+                    try:
+                        await match_channel.send(embed=summary_embed)
+                        print(f"✅ [Custom Game] Mensagem de resultado enviada no canal de partidas do servidor {guild.name}")
+                    except Exception as e:
+                        print(f"❌ [Custom Game] Erro ao enviar mensagem de resultado: {e}")
+                    
+                    # ===== MENSAGEM 2: SCORES INDIVIDUAIS =====
+                    # Separa jogadores por time (já com scores calculados)
+                    team_100_players = [p for p in all_players_with_scores if p['player']['teamId'] == 100]
+                    team_200_players = [p for p in all_players_with_scores if p['player']['teamId'] == 200]
+                    
+                    # Ordena cada time por placement (melhor primeiro)
+                    team_100_players.sort(key=lambda p: p['placement'])
+                    team_200_players.sort(key=lambda p: p['placement'])
+                    
+                    # Cria embed detalhado
+                    details_embed = discord.Embed(
+                        title="📊 SCORES INDIVIDUAIS - PARTIDA PERSONALIZADA",
+                        description=f"⏱️ Duração: **{game_duration_min}:{game_duration_sec:02d}**",
+                        color=discord.Color.gold(),
+                        timestamp=datetime.now()
+                    )
+                    
+                    # Time Azul
+                    team_100_text = ""
+                    for player_info in team_100_players:
+                        p = player_info['player']
+                        p_name = p.get('riotIdGameName', p.get('summonerName', 'Unknown'))
+                        p_champion = p.get('championName', 'Unknown')
+                        placement = player_info['placement']
+                        
+                        # Emoji para colocação
+                        if placement == 1:
+                            placement_emoji = "👑"
+                        elif placement == 2:
+                            placement_emoji = "🥇"
+                        elif placement == 3:
+                            placement_emoji = "🥈"
+                        elif placement <= 5:
+                            placement_emoji = "🥉"
+                        else:
+                            placement_emoji = "📊"
+                        
+                        team_100_text += (
+                            f"{placement_emoji} **{placement}º** {p_champion} - {p_name}\n"
+                            f"   KDA: {p['kills']}/{p['deaths']}/{p['assists']} ({player_info['kda']:.1f}) | "
+                            f"MVP: {player_info['mvp_score']} | Dano: {player_info['damage']:,}\n"
+                        )
+                    
+                    details_embed.add_field(
+                        name=f"🔵 Time Azul {'(Vitória)' if team_100_won else '(Derrota)'}",
+                        value=team_100_text.strip() if team_100_text else "Nenhum dado disponível",
+                        inline=False
+                    )
+                    
+                    # Time Vermelho
+                    team_200_text = ""
+                    for player_info in team_200_players:
+                        p = player_info['player']
+                        p_name = p.get('riotIdGameName', p.get('summonerName', 'Unknown'))
+                        p_champion = p.get('championName', 'Unknown')
+                        placement = player_info['placement']
+                        
+                        # Emoji para colocação
+                        if placement == 1:
+                            placement_emoji = "👑"
+                        elif placement == 2:
+                            placement_emoji = "🥇"
+                        elif placement == 3:
+                            placement_emoji = "🥈"
+                        elif placement <= 5:
+                            placement_emoji = "🥉"
+                        else:
+                            placement_emoji = "📊"
+                        
+                        team_200_text += (
+                            f"{placement_emoji} **{placement}º** {p_champion} - {p_name}\n"
+                            f"   KDA: {p['kills']}/{p['deaths']}/{p['assists']} ({player_info['kda']:.1f}) | "
+                            f"MVP: {player_info['mvp_score']} | Dano: {player_info['damage']:,}\n"
+                        )
+                    
+                    details_embed.add_field(
+                        name=f"🔴 Time Vermelho {'(Vitória)' if team_200_won else '(Derrota)'}",
+                        value=team_200_text.strip() if team_200_text else "Nenhum dado disponível",
+                        inline=False
+                    )
+                    
+                    details_embed.set_footer(text="Custom Game • Sistema de tracking automático")
+                    
+                    try:
+                        await match_channel.send(embed=details_embed)
+                        print(f"✅ [Custom Game] Scores individuais enviados no canal de partidas do servidor {guild.name}")
+                    except Exception as e:
+                        print(f"❌ [Custom Game] Erro ao enviar scores individuais: {e}")
+        
+        print(f"✅ [Custom Game] Resultado da partida processado com sucesso!")
+        
+    except Exception as e:
+        print(f"❌ [Custom Game] Erro ao processar resultado de partida personalizada: {e}")
+        import traceback
+        traceback.print_exc()
+
 async def update_live_game_result(game_id: str, match_data: Dict):
     """
     Atualiza a mensagem de live game com o resultado final da partida.
@@ -3195,8 +3503,13 @@ async def process_account_batch(account_id: int, puuid: str, region: str, riot_a
                         if not stats.get('is_remake', False):
                             await check_champion_performance(account_id, stats['champion_name'])
 
-                        # Envia notificação automática da nova partida
+                        # Envia notificação automática da nova partida (individual)
                         await send_match_notification(account_id, stats)
+                        
+                        # Se for partida personalizada, envia também o resultado geral
+                        if stats.get('game_mode') == 'Custom Game':
+                            print(f"🎮 [Custom Game] Detectada partida personalizada, enviando resultado geral...")
+                            await send_custom_game_result(match_data)
 
                     else:
                         print(f"⚠️ Falha ao salvar partida {match_id} no banco")
@@ -3226,240 +3539,10 @@ async def check_new_matches_error(error):
     traceback.print_exc()
     # Task loop automaticamente reinicia após erro
 
-async def send_custom_game_score(game_id: str, match_score: Dict, players: List[Dict]):
-    """Envia o placar completo de uma custom game"""
-    try:
-        # Pega o primeiro jogador para encontrar o canal
-        first_player = players[0]
-        
-        # Busca informações da conta para encontrar o servidor
-        conn = db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT discord_id FROM lol_accounts WHERE id = ?', (first_player['account_id'],))
-        result = cursor.fetchone()
-        conn.close()
-        
-        if not result:
-            return
-        
-        discord_id = result[0]
-        member = bot.get_user(int(discord_id))
-        if not member:
-            return
-        
-        # Encontra o servidor e canal
-        target_guild = None
-        target_channel = None
-        
-        for guild in bot.guilds:
-            if guild.get_member(int(discord_id)):
-                target_guild = guild
-                config = db.get_server_config(str(guild.id))
-                if config and config.get('match_channel_id'):
-                    target_channel = guild.get_channel(int(config['match_channel_id']))
-                break
-        
-        if not target_channel:
-            return
-        
-        # Cria embed do placar
-        team_100 = match_score['team_100']
-        team_200 = match_score['team_200']
-        
-        winner_team = "🔵 Time Azul" if team_100['win'] else "🔴 Time Vermelho"
-        
-        embed = discord.Embed(
-            title="🏆 Custom Game Finalizada!",
-            description=f"**Vencedor:** {winner_team}\n**Placar:** {team_100['kills']} x {team_200['kills']}",
-            color=discord.Color.blue() if team_100['win'] else discord.Color.red(),
-            timestamp=datetime.now()
-        )
-        
-        # Duração da partida
-        duration_minutes = match_score['game_duration'] // 60
-        duration_seconds = match_score['game_duration'] % 60
-        embed.add_field(
-            name="⏱️ Duração",
-            value=f"{duration_minutes}:{duration_seconds:02d}",
-            inline=True
-        )
-        
-        # Objetivos Time Azul
-        obj_100 = team_100['objectives']
-        embed.add_field(
-            name="🔵 Objetivos Time Azul",
-            value=f"🏰 Torres: {obj_100['tower']}\n🐉 Dragões: {obj_100['dragon']}\n👹 Barões: {obj_100['baron']}\n🦀 Arautos: {obj_100['riftHerald']}",
-            inline=True
-        )
-        
-        # Objetivos Time Vermelho
-        obj_200 = team_200['objectives']
-        embed.add_field(
-            name="🔴 Objetivos Time Vermelho",
-            value=f"🏰 Torres: {obj_200['tower']}\n🐉 Dragões: {obj_200['dragon']}\n👹 Barões: {obj_200['baron']}\n🦀 Arautos: {obj_200['riftHerald']}",
-            inline=True
-        )
-        
-        # Jogadores Time Azul
-        players_100_text = ""
-        for p in team_100['players']:
-            players_100_text += f"**{p['championName']}** - {p['summonerName']}\n`{p['kills']}/{p['deaths']}/{p['assists']}` (KDA: {p['kda']})\n"
-        
-        if players_100_text:
-            embed.add_field(
-                name="🔵 Time Azul - Jogadores",
-                value=players_100_text[:1024],
-                inline=False
-            )
-        
-        # Jogadores Time Vermelho
-        players_200_text = ""
-        for p in team_200['players']:
-            players_200_text += f"**{p['championName']}** - {p['summonerName']}\n`{p['kills']}/{p['deaths']}/{p['assists']}` (KDA: {p['kda']})\n"
-        
-        if players_200_text:
-            embed.add_field(
-                name="🔴 Time Vermelho - Jogadores",
-                value=players_200_text[:1024],
-                inline=False
-            )
-        
-        embed.set_footer(text=f"Game ID: {game_id} • Custom Game")
-        
-        # Envia o placar
-        await target_channel.send(embed=embed)
-        print(f"📊 [Custom Score] Placar enviado para custom game {game_id}")
-        
-    except Exception as e:
-        print(f"❌ [Custom Score] Erro ao enviar placar: {e}")
-        import traceback
-        traceback.print_exc()
-
-async def process_custom_games_results(custom_games: List[tuple]):
-    """Processa resultados de custom games que terminaram"""
-    # Agrupa por game_id para processar todos os jogadores de uma vez
-    games_by_id = {}
-    for game_id, account_id, puuid, summoner_name, message_id, channel_id, guild_id in custom_games:
-        if game_id not in games_by_id:
-            games_by_id[game_id] = []
-        games_by_id[game_id].append({
-            'account_id': account_id,
-            'puuid': puuid,
-            'summoner_name': summoner_name,
-            'message_id': message_id,
-            'channel_id': channel_id,
-            'guild_id': guild_id
-        })
-    
-    for game_id, players in games_by_id.items():
-        try:
-            print(f"🎮 [Custom Check] Processando custom game {game_id} com {len(players)} jogador(es)...")
-            
-            # Pega o primeiro jogador para buscar a partida
-            first_player = players[0]
-            
-            # Busca informações da conta
-            conn = db.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('SELECT region FROM lol_accounts WHERE id = ?', (first_player['account_id'],))
-            account_data = cursor.fetchone()
-            conn.close()
-            
-            if not account_data:
-                print(f"⚠️ [Custom Check] Conta {first_player['account_id']} não encontrada")
-                continue
-            
-            region = account_data[0]
-            
-            # Busca últimas partidas
-            match_ids = await riot_api.get_match_history(first_player['puuid'], region, count=5)
-            
-            if not match_ids:
-                print(f"⚠️ [Custom Check] Nenhuma partida encontrada para {first_player['summoner_name']}")
-                continue
-            
-            # Procura por uma custom game recente
-            match_found = None
-            for match_id in match_ids:
-                match_data = await riot_api.get_match_details(match_id, region)
-                if match_data:
-                    queue_id = match_data.get('info', {}).get('queueId', 0)
-                    if queue_id == 0:  # Custom Game
-                        game_end_timestamp = match_data.get('info', {}).get('gameEndTimestamp')
-                        if game_end_timestamp:
-                            from datetime import datetime, timedelta
-                            game_end = datetime.fromtimestamp(game_end_timestamp / 1000)
-                            now = datetime.now()
-                            
-                            # Se terminou há menos de 30 minutos
-                            if (now - game_end) < timedelta(minutes=30):
-                                match_found = match_data
-                                print(f"✅ [Custom Check] Custom game encontrada: {match_id} (terminou há {(now - game_end).seconds // 60} minutos)")
-                                break
-            
-            if not match_found:
-                print(f"⚠️ [Custom Check] Nenhuma custom game recente encontrada para {game_id}")
-                continue
-            
-            # Extrai o placar completo da partida
-            match_score = riot_api.extract_match_score(match_found)
-            
-            # Envia placar geral da custom game (uma vez para todos)
-            if match_score and len(players) > 1:
-                print(f"📊 [Custom Check] Enviando placar geral da custom game...")
-                await send_custom_game_score(game_id, match_score, players)
-            
-            # Processa todos os jogadores desta custom game
-            print(f"📊 [Custom Check] Processando resultados para {len(players)} jogador(es)...")
-            for player in players:
-                try:
-                    # Verifica se já foi processada
-                    last_match_id = db.get_last_match_id(player['account_id'])
-                    match_id = match_found['metadata']['matchId']
-                    
-                    if last_match_id == match_id:
-                        print(f"⏭️ [Custom Check] Partida {match_id} já processada para {player['summoner_name']}")
-                        continue
-                    
-                    # Extrai estatísticas
-                    stats = riot_api.extract_player_stats(match_found, player['puuid'])
-                    
-                    if stats:
-                        # Salva no banco
-                        db.add_match(player['account_id'], stats)
-                        print(f"✅ [Custom Check] Partida salva para {player['summoner_name']} (MVP: {stats['mvp_score']})")
-                        
-                        # Envia notificação individual
-                        await send_match_notification(player['account_id'], stats)
-                        
-                        # Verifica performance
-                        if not stats.get('is_remake', False):
-                            await check_champion_performance(player['account_id'], stats['champion_name'])
-                    
-                except Exception as e:
-                    print(f"❌ [Custom Check] Erro ao processar jogador {player['summoner_name']}: {e}")
-                    continue
-            
-            # Marca a custom game como finalizada
-            db.mark_custom_game_finished(game_id)
-            print(f"✅ [Custom Check] Custom game {game_id} marcada como finalizada")
-            
-        except Exception as e:
-            print(f"❌ [Custom Check] Erro ao processar custom game {game_id}: {e}")
-            import traceback
-            traceback.print_exc()
-            continue
-
 @tasks.loop(seconds=60)
 async def check_live_games_finished():
     """Task que verifica a cada 60 segundos se jogos ao vivo já terminaram"""
     try:
-        # Primeiro, processa custom games não finalizadas
-        custom_games = db.get_unfinished_custom_games(hours=2)
-        if custom_games:
-            print(f"🎮 [Custom Check] Verificando {len(custom_games)} custom game(s) não finalizada(s)...")
-            await process_custom_games_results(custom_games)
-        
         # Busca todas as live games notificadas recentemente (últimas 2 horas)
         live_games = db.get_active_live_games(hours=2)
         
@@ -3643,6 +3726,11 @@ async def check_live_games_finished():
                                 # Envia notificação individual com estatísticas detalhadas
                                 print(f"📨 [Live Check] Enviando notificação individual de estatísticas para {account_id}")
                                 await send_match_notification(account_id, stats)
+                                
+                                # Se for partida personalizada, envia também o resultado geral
+                                if stats.get('game_mode') == 'Custom Game' and game_id not in processed_matches:
+                                    print(f"🎮 [Custom Game] Detectada partida personalizada finalizada, enviando resultado geral...")
+                                    await send_custom_game_result(match_data)
 
                                 # Verifica performance apenas se não for remake
                                 if not stats.get('is_remake', False):
