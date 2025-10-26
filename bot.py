@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from database import Database
 from riot_api import RiotAPI
 from datetime import datetime
-from typing import Dict
+from typing import Dict, List
 import asyncio
 
 load_dotenv()
