@@ -1797,6 +1797,12 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
     NÃO edita mais a mensagem de live game.
     """
     try:
+        # 🔥 NOVA VALIDAÇÃO: Verifica se já foi enviada notificação para esta partida
+        match_id = stats.get('match_id')
+        if db.was_match_notification_sent(lol_account_id, match_id):
+            print(f"⏭️ [Match Notification] Notificação já enviada para partida {match_id}, pulando...")
+            return
+        
         # Busca informações da conta
         conn = db.get_connection()
         cursor = conn.cursor()
@@ -1970,9 +1976,13 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
                 icon_url="https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-shared-components/global/default/ranked-emblem-flex.png"
             )
             
-            # Envia nova mensagem (sempre)
+            # Envia mensagem
             try:
                 await channel.send(embed=embed)
+                
+                # 🔥 Marca que a notificação foi enviada para esta partida
+                db.mark_match_notification_sent(lol_account_id, match_id)
+                
                 if is_remake:
                     print(f"⚠️ Partida enviada (REMAKE): {summoner_name} - {stats['champion_name']}")
                 else:
@@ -2394,7 +2404,9 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
 
     Critérios de Proibição:
     1. 3 partidas ruins seguidas (< 45 pontos cada) - mostra todas as 3 partidas
-    2. Partida ATUAL abaixo de 35 pontos (independente das anteriores) - mostra apenas a partida atual"""
+    2. Partida ATUAL abaixo de 35 pontos (independente das anteriores) - mostra apenas a partida atual
+    
+    IMPORTANTE: Nível de ban é ESPECÍFICO POR CAMPEÃO. Se trocar de campeão, volta para nível 1."""
     try:
         # Busca as últimas 3 partidas com esse campeão
         matches = db.get_last_n_matches_with_champion(lol_account_id, champion_name, n=3)
@@ -2413,6 +2425,12 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
         should_alert = all_bad_scores or current_match_below_35
 
         if not should_alert:
+            return
+        
+        # 🔥 NOVA VALIDAÇÃO: Verifica se já foi enviado alerta para esta partida atual com este campeão
+        current_match_id = matches[0].get('match_id')
+        if db.was_performance_alert_sent(lol_account_id, current_match_id, champion_name):
+            print(f"⏭️ [Performance Alert] Alerta já enviado para partida {current_match_id} com {champion_name}, pulando...")
             return
         
         # Determina o nível de banimento (progressivo)
@@ -2561,7 +2579,12 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
             # Envia notificação
             try:
                 await channel.send(embed=embed)
-                if any_single_below_35:
+                
+                # 🔥 Marca que o alerta foi enviado para esta partida e campeão
+                alert_type = "below_35" if current_match_below_35 else "3_bad_matches"
+                db.mark_performance_alert_sent(lol_account_id, current_match_id, champion_name, alert_type)
+                
+                if current_match_below_35:
                     print(f"⚠️ Alerta enviado: {summoner_name} com {champion_name} (partida abaixo de 35 pontos)")
                 else:
                     print(f"⚠️ Alerta enviado: {summoner_name} com {champion_name} (3 partidas ruins seguidas)")
@@ -2731,11 +2754,16 @@ async def send_live_game_notification(lol_account_id: int, live_info: Dict):
 async def update_live_game_notification(game_id: str, guild_id: str, new_players: list):
     """Atualiza uma mensagem de live game existente com novos jogadores detectados"""
     try:
+        print(f"🔍 [Update Live] Iniciando atualização para game {game_id}, guild {guild_id}")
+        print(f"🔍 [Update Live] Novos jogadores recebidos: {len(new_players)}")
+        
         # Busca a mensagem existente
         message_info = db.get_live_game_message_by_game_id(game_id, guild_id)
         if not message_info:
             print(f"⚠️ [Update Live] Mensagem não encontrada para game {game_id}")
             return False
+        
+        print(f"🔍 [Update Live] Mensagem encontrada: {message_info['message_id']}")
         
         # Busca o canal e a mensagem
         guild = bot.get_guild(int(message_info['guild_id']))
@@ -2753,7 +2781,11 @@ async def update_live_game_notification(game_id: str, guild_id: str, new_players
             return False
         
         # Busca todos os jogadores já notificados (incluindo os novos)
+        print(f"🔍 [Update Live] Buscando todos os jogadores do banco para game {game_id}, guild {guild_id}")
         all_players_data = db.get_live_game_players(game_id, guild_id)
+        print(f"🔍 [Update Live] Jogadores encontrados no banco: {len(all_players_data)}")
+        for player_data in all_players_data:
+            print(f"   📋 Player: {player_data['summoner_name']} (discord_id: {player_data['discord_id']}, champion: {player_data['champion_name']})")
         
         # Busca os members do Discord
         members = []
@@ -2765,15 +2797,27 @@ async def update_live_game_notification(game_id: str, guild_id: str, new_players
                     'summoner_name': player_data['summoner_name'],
                     'champion_name': player_data['champion_name']
                 })
+                print(f"   ✅ Member encontrado: {member.display_name} ({player_data['summoner_name']})")
+            else:
+                print(f"   ⚠️ Member NÃO encontrado para discord_id {player_data['discord_id']} ({player_data['summoner_name']})")
+        
+        print(f"🔍 [Update Live] Total de members encontrados: {len(members)}")
         
         if not members:
+            print(f"⚠️ [Update Live] Nenhum member encontrado, abortando atualização")
             return False
         
         # Pega o embed antigo e atualiza
         if not message.embeds:
+            print(f"⚠️ [Update Live] Mensagem não tem embeds")
             return False
         
         old_embed = message.embeds[0]
+        
+        print(f"🔍 [Update Live] Criando novo embed com {len(members)} jogadores")
+        print(f"🔍 [Update Live] Jogadores que serão mencionados:")
+        for m in members:
+            print(f"   👤 {m['member'].display_name} ({m['summoner_name']}) - {m['champion_name']}")
         
         # Cria novo embed mantendo as informações originais
         new_embed = discord.Embed(
@@ -2784,6 +2828,7 @@ async def update_live_game_notification(game_id: str, guild_id: str, new_players
         )
         
         # Mantém os campos originais (times, modo de jogo, etc.)
+        print(f"🔍 [Update Live] Copiando {len(old_embed.fields)} campos do embed original")
         for field in old_embed.fields:
             new_embed.add_field(name=field.name, value=field.value, inline=field.inline)
         
@@ -2794,6 +2839,7 @@ async def update_live_game_notification(game_id: str, guild_id: str, new_players
             new_embed.set_thumbnail(url=old_embed.thumbnail.url)
         
         # Edita a mensagem
+        print(f"🔍 [Update Live] Editando mensagem {message.id}...")
         await message.edit(embed=new_embed)
         print(f"✅ [Update Live] Mensagem atualizada com {len(members)} jogadores na partida {game_id}")
         return True
@@ -3084,10 +3130,13 @@ async def check_live_games():
                 if existing_message:
                     # JÁ EXISTE MENSAGEM - apenas marca novos jogadores e atualiza a mensagem
                     print(f"📝 [Live Games] Mensagem já existe para partida {game_id}, atualizando com novos jogadores...")
+                    print(f"📝 [Live Games] Mensagem existente: {existing_message['message_id']} no canal {existing_message['channel_id']}")
+                    print(f"📝 [Live Games] Novos jogadores a serem adicionados: {len(players)}")
                     
                     # Marca os novos jogadores como notificados
                     for player in players:
-                        db.mark_live_game_notified(
+                        print(f"   📝 Marcando {player['summoner_name']} (conta {player['account_id']}) como notificado")
+                        result = db.mark_live_game_notified(
                             player['account_id'],
                             game_id,
                             player['puuid'],
@@ -3098,10 +3147,18 @@ async def check_live_games():
                             existing_message['channel_id'],
                             existing_message['guild_id']
                         )
+                        if result:
+                            print(f"   ✅ {player['summoner_name']} marcado com sucesso")
+                        else:
+                            print(f"   ⚠️ Falha ao marcar {player['summoner_name']}")
                     
+                    print(f"🔄 [Live Games] Chamando update_live_game_notification...")
                     # Atualiza a mensagem com todos os jogadores (incluindo os novos)
-                    await update_live_game_notification(game_id, target_guild_id, players)
-                    print(f"✅ [Live Games] Mensagem atualizada para partida {game_id}")
+                    update_result = await update_live_game_notification(game_id, target_guild_id, players)
+                    if update_result:
+                        print(f"✅ [Live Games] Mensagem atualizada com sucesso para partida {game_id}")
+                    else:
+                        print(f"⚠️ [Live Games] Falha ao atualizar mensagem para partida {game_id}")
                     
                 else:
                     # NÃO EXISTE MENSAGEM - cria uma nova

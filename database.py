@@ -199,6 +199,32 @@ class Database:
             )
         ''')
         
+        # Tabela para rastrear alertas já enviados (evita duplicação)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS performance_alerts_sent (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                lol_account_id INTEGER NOT NULL,
+                match_id TEXT NOT NULL,
+                champion_name TEXT NOT NULL,
+                alert_type TEXT NOT NULL,
+                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (lol_account_id) REFERENCES lol_accounts(id),
+                UNIQUE(lol_account_id, match_id, champion_name)
+            )
+        ''')
+        
+        # Tabela para rastrear notificações de score já enviadas (evita duplicação)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS match_notifications_sent (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                lol_account_id INTEGER NOT NULL,
+                match_id TEXT NOT NULL,
+                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (lol_account_id) REFERENCES lol_accounts(id),
+                UNIQUE(lol_account_id, match_id)
+            )
+        ''')
+        
         conn.commit()
         conn.close()
     
@@ -1219,4 +1245,70 @@ class Database:
         except Exception as e:
             print(f"❌ Erro ao remover todos os banimentos: {e}")
             return 0
+    
+    def was_performance_alert_sent(self, lol_account_id: int, match_id: str, champion_name: str) -> bool:
+        """Verifica se já foi enviado alerta de performance para esta partida e campeão"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id FROM performance_alerts_sent
+                WHERE lol_account_id = ? AND match_id = ? AND champion_name = ?
+            ''', (lol_account_id, match_id, champion_name))
+            result = cursor.fetchone()
+            conn.close()
+            return result is not None
+        except Exception as e:
+            print(f"❌ Erro ao verificar alerta: {e}")
+            return False
+    
+    def mark_performance_alert_sent(self, lol_account_id: int, match_id: str, champion_name: str, alert_type: str) -> bool:
+        """Marca que um alerta de performance foi enviado para esta partida e campeão"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR IGNORE INTO performance_alerts_sent
+                (lol_account_id, match_id, champion_name, alert_type)
+                VALUES (?, ?, ?, ?)
+            ''', (lol_account_id, match_id, champion_name, alert_type))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"❌ Erro ao marcar alerta: {e}")
+            return False
+    
+    def was_match_notification_sent(self, lol_account_id: int, match_id: str) -> bool:
+        """Verifica se já foi enviada notificação de score para esta partida"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id FROM match_notifications_sent
+                WHERE lol_account_id = ? AND match_id = ?
+            ''', (lol_account_id, match_id))
+            result = cursor.fetchone()
+            conn.close()
+            return result is not None
+        except Exception as e:
+            print(f"❌ Erro ao verificar notificação: {e}")
+            return False
+    
+    def mark_match_notification_sent(self, lol_account_id: int, match_id: str) -> bool:
+        """Marca que uma notificação de score foi enviada para esta partida"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR IGNORE INTO match_notifications_sent
+                (lol_account_id, match_id)
+                VALUES (?, ?)
+            ''', (lol_account_id, match_id))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"❌ Erro ao marcar notificação: {e}")
+            return False
 
