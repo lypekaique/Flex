@@ -2728,6 +2728,82 @@ async def send_live_game_notification(lol_account_id: int, live_info: Dict):
     except Exception as e:
         print(f"Erro ao processar notificação de live game: {e}")
 
+async def update_live_game_notification(game_id: str, guild_id: str, new_players: list):
+    """Atualiza uma mensagem de live game existente com novos jogadores detectados"""
+    try:
+        # Busca a mensagem existente
+        message_info = db.get_live_game_message_by_game_id(game_id, guild_id)
+        if not message_info:
+            print(f"⚠️ [Update Live] Mensagem não encontrada para game {game_id}")
+            return False
+        
+        # Busca o canal e a mensagem
+        guild = bot.get_guild(int(message_info['guild_id']))
+        if not guild:
+            return False
+        
+        channel = guild.get_channel(int(message_info['channel_id']))
+        if not channel:
+            return False
+        
+        try:
+            message = await channel.fetch_message(int(message_info['message_id']))
+        except:
+            print(f"⚠️ [Update Live] Erro ao buscar mensagem {message_info['message_id']}")
+            return False
+        
+        # Busca todos os jogadores já notificados (incluindo os novos)
+        all_players_data = db.get_live_game_players(game_id, guild_id)
+        
+        # Busca os members do Discord
+        members = []
+        for player_data in all_players_data:
+            member = guild.get_member(int(player_data['discord_id']))
+            if member:
+                members.append({
+                    'member': member,
+                    'summoner_name': player_data['summoner_name'],
+                    'champion_name': player_data['champion_name']
+                })
+        
+        if not members:
+            return False
+        
+        # Pega o embed antigo e atualiza
+        if not message.embeds:
+            return False
+        
+        old_embed = message.embeds[0]
+        
+        # Cria novo embed mantendo as informações originais
+        new_embed = discord.Embed(
+            title="🔴 PARTIDA EM GRUPO AO VIVO!" if len(members) > 1 else "🔴 PARTIDA AO VIVO!",
+            description=f"**{len(members)} jogador{'es' if len(members) > 1 else ''}** em partida!\n\n" + ", ".join([m['member'].mention for m in members]),
+            color=old_embed.color,
+            timestamp=old_embed.timestamp
+        )
+        
+        # Mantém os campos originais (times, modo de jogo, etc.)
+        for field in old_embed.fields:
+            new_embed.add_field(name=field.name, value=field.value, inline=field.inline)
+        
+        # Mantém footer e thumbnail
+        if old_embed.footer:
+            new_embed.set_footer(text=old_embed.footer.text, icon_url=old_embed.footer.icon_url)
+        if old_embed.thumbnail:
+            new_embed.set_thumbnail(url=old_embed.thumbnail.url)
+        
+        # Edita a mensagem
+        await message.edit(embed=new_embed)
+        print(f"✅ [Update Live] Mensagem atualizada com {len(members)} jogadores na partida {game_id}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ [Update Live] Erro ao atualizar mensagem: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
 async def send_live_game_notification_grouped(game_id: str, players: list):
     """Envia UMA notificação para múltiplos jogadores na mesma partida"""
     try:
@@ -2973,7 +3049,7 @@ async def check_live_games():
         else:
             print(f"\n📋 [Live Games] Nenhuma nova partida detectada")
         
-        # Envia notificações agrupadas (verifica se já foi notificado globalmente)
+        # Envia notificações agrupadas (verifica se já existe mensagem)
         for game_id, players in games_map.items():
             try:
                 print(f"\n🔍 [Live Games] Processando partida {game_id} com {len(players)} jogador(es)...")
@@ -2983,46 +3059,80 @@ async def check_live_games():
                     print(f"⚠️ [Live Games] Partida {game_id} já processada nesta execução, pulando...")
                     continue
 
-                # Verificação adicional: verifica se QUALQUER jogador desta partida já foi notificado
-                already_notified = False
-                for player in players:
-                    if db.is_live_game_notified(player['account_id'], game_id):
-                        already_notified = True
-                        print(f"⚠️ [Live Games] Jogador {player['summoner_name']} (conta {player['account_id']}) já foi notificado")
-                        break
-
-                if already_notified:
-                    print(f"⚠️ [Live Games] Partida {game_id} já foi notificada, pulando...")
-                    processed_game_ids.add(game_id)  # Marca como processada mesmo assim
-                    continue
-
-                # Verificação adicional: verifica se esta partida foi notificada recentemente (últimos 5 minutos)
-                last_notification = db.get_live_game_notification_time(game_id)
-                if last_notification:
-                    from datetime import datetime, timedelta
-                    try:
-                        notification_time = datetime.fromisoformat(last_notification.replace('Z', '+00:00'))
-                        now = datetime.now(notification_time.tzinfo) if notification_time.tzinfo else datetime.now()
-                        if (now - notification_time) < timedelta(minutes=5):
-                            print(f"⚠️ [Live Games] Partida {game_id} foi notificada recentemente (há {(now - notification_time).seconds // 60} minutos), pulando...")
-                            processed_game_ids.add(game_id)  # Marca como processada mesmo assim
-                            continue
-                    except Exception as e:
-                        print(f"⚠️ [Live Games] Erro ao verificar timestamp: {e}")
-
-                # Marca como processada antes de enviar notificação
+                # Marca como processada antes de processar
                 processed_game_ids.add(game_id)
 
-                print(f"✅ [Live Games] Partida {game_id} pronta para notificar - {len(players)} jogador(es)")
+                # Determina o guild_id a ser usado (pega do primeiro jogador)
+                target_guild_id = None
+                for guild in bot.guilds:
+                    member = guild.get_member(int(players[0]['discord_id']))
+                    if member:
+                        channel_id = db.get_live_game_channel(str(guild.id))
+                        if not channel_id:
+                            channel_id = db.get_match_channel(str(guild.id))
+                        if channel_id:
+                            target_guild_id = str(guild.id)
+                            break
+                
+                if not target_guild_id:
+                    print(f"⚠️ [Live Games] Nenhum servidor válido encontrado para partida {game_id}")
+                    continue
 
-                if len(players) > 1:
-                    print(f"🎮 [Live Games] {len(players)} jogadores na mesma partida {game_id}")
-                    # Múltiplos jogadores na mesma partida - envia UMA notificação
-                    message_info = await send_live_game_notification_grouped(game_id, players)
+                # Verifica se JÁ EXISTE uma mensagem para esta partida
+                existing_message = db.get_live_game_message_by_game_id(game_id, target_guild_id)
+                
+                if existing_message:
+                    # JÁ EXISTE MENSAGEM - apenas marca novos jogadores e atualiza a mensagem
+                    print(f"📝 [Live Games] Mensagem já existe para partida {game_id}, atualizando com novos jogadores...")
+                    
+                    # Marca os novos jogadores como notificados
+                    for player in players:
+                        db.mark_live_game_notified(
+                            player['account_id'],
+                            game_id,
+                            player['puuid'],
+                            player['summoner_name'],
+                            player['live_info']['championId'],
+                            player['live_info']['champion'],
+                            existing_message['message_id'],
+                            existing_message['channel_id'],
+                            existing_message['guild_id']
+                        )
+                    
+                    # Atualiza a mensagem com todos os jogadores (incluindo os novos)
+                    await update_live_game_notification(game_id, target_guild_id, players)
+                    print(f"✅ [Live Games] Mensagem atualizada para partida {game_id}")
+                    
+                else:
+                    # NÃO EXISTE MENSAGEM - cria uma nova
+                    print(f"📤 [Live Games] Criando nova mensagem para partida {game_id}...")
+                    
+                    if len(players) > 1:
+                        print(f"🎮 [Live Games] {len(players)} jogadores na mesma partida {game_id}")
+                        # Múltiplos jogadores na mesma partida - envia UMA notificação
+                        message_info = await send_live_game_notification_grouped(game_id, players)
 
-                    # Marca TODOS como notificados com a mesma mensagem
-                    if message_info:
-                        for player in players:
+                        # Marca TODOS como notificados com a mesma mensagem
+                        if message_info:
+                            for player in players:
+                                db.mark_live_game_notified(
+                                    player['account_id'],
+                                    game_id,
+                                    player['puuid'],
+                                    player['summoner_name'],
+                                    player['live_info']['championId'],
+                                    player['live_info']['champion'],
+                                    message_info.get('message_id'),
+                                    message_info.get('channel_id'),
+                                    message_info.get('guild_id')
+                                )
+                            print(f"✅ [Live Games] Nova mensagem criada para partida {game_id}")
+                    else:
+                        # Apenas 1 jogador - envia notificação individual normal
+                        player = players[0]
+                        message_info = await send_live_game_notification(player['account_id'], player['live_info'])
+
+                        if message_info:
                             db.mark_live_game_notified(
                                 player['account_id'],
                                 game_id,
@@ -3034,25 +3144,12 @@ async def check_live_games():
                                 message_info.get('channel_id'),
                                 message_info.get('guild_id')
                             )
-                else:
-                    # Apenas 1 jogador - envia notificação individual normal
-                    player = players[0]
-                    message_info = await send_live_game_notification(player['account_id'], player['live_info'])
-
-                    if message_info:
-                        db.mark_live_game_notified(
-                            player['account_id'],
-                            game_id,
-                            player['puuid'],
-                            player['summoner_name'],
-                            player['live_info']['championId'],
-                            player['live_info']['champion'],
-                            message_info.get('message_id'),
-                            message_info.get('channel_id'),
-                            message_info.get('guild_id')
-                        )
+                            print(f"✅ [Live Games] Nova mensagem criada para partida {game_id}")
+                            
             except Exception as e:
                 print(f"❌ [Live Games] Erro ao enviar notificação para game {game_id}: {e}")
+                import traceback
+                traceback.print_exc()
                 continue
         
         print("✅ [Live Games] Verificação concluída")

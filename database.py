@@ -632,6 +632,71 @@ class Database:
             }
         return None
     
+    def get_live_game_message_by_game_id(self, game_id: str, guild_id: str = None) -> Optional[Dict]:
+        """Busca a mensagem de uma partida ao vivo pelo game_id"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        if guild_id:
+            cursor.execute('''
+                SELECT message_id, channel_id, guild_id
+                FROM live_games_notified
+                WHERE game_id = ? AND guild_id = ? AND message_id IS NOT NULL
+                LIMIT 1
+            ''', (game_id, guild_id))
+        else:
+            cursor.execute('''
+                SELECT message_id, channel_id, guild_id
+                FROM live_games_notified
+                WHERE game_id = ? AND message_id IS NOT NULL
+                LIMIT 1
+            ''', (game_id,))
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result:
+            return {
+                'message_id': result[0],
+                'channel_id': result[1],
+                'guild_id': result[2]
+            }
+        return None
+    
+    def get_live_game_players(self, game_id: str, guild_id: str = None) -> List[Dict]:
+        """Retorna todos os jogadores já notificados de uma partida ao vivo"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        if guild_id:
+            cursor.execute('''
+                SELECT la.discord_id, lg.summoner_name, lg.champion_name, lg.puuid, lg.lol_account_id
+                FROM live_games_notified lg
+                JOIN lol_accounts la ON lg.lol_account_id = la.id
+                WHERE lg.game_id = ? AND lg.guild_id = ?
+            ''', (game_id, guild_id))
+        else:
+            cursor.execute('''
+                SELECT la.discord_id, lg.summoner_name, lg.champion_name, lg.puuid, lg.lol_account_id
+                FROM live_games_notified lg
+                JOIN lol_accounts la ON lg.lol_account_id = la.id
+                WHERE lg.game_id = ?
+            ''', (game_id,))
+        
+        results = cursor.fetchall()
+        conn.close()
+        
+        players = []
+        for row in results:
+            players.append({
+                'discord_id': row[0],
+                'summoner_name': row[1],
+                'champion_name': row[2],
+                'puuid': row[3],
+                'lol_account_id': row[4]
+            })
+        return players
+    
     def get_server_config(self, guild_id: str) -> Optional[Dict]:
         """Retorna todas as configurações de um servidor"""
         conn = self.get_connection()
