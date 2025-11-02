@@ -2411,12 +2411,12 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
         # Busca as últimas 3 partidas com esse campeão
         matches = db.get_last_n_matches_with_champion(lol_account_id, champion_name, n=3)
 
-        # Se não tem 3 partidas ainda, não faz nada
-        if len(matches) < 3:
+        # Se não tem nenhuma partida, não faz nada
+        if len(matches) == 0:
             return
 
-        # CRITÉRIO 1: Sistema antigo - verifica se todas as 3 têm MVP Score abaixo de 45
-        all_bad_scores = all(match.get('mvp_score', 0) < 45 for match in matches)
+        # CRITÉRIO 1: Sistema antigo - verifica se todas as 3 têm MVP Score abaixo de 45 (requer 3 partidas)
+        all_bad_scores = len(matches) >= 3 and all(match.get('mvp_score', 0) < 45 for match in matches)
 
         # CRITÉRIO 2: Critério rigoroso - verifica se a PARTIDA ATUAL (primeira da lista) ficou abaixo de 35 pontos
         current_match_below_35 = matches[0].get('mvp_score', 0) < 35
@@ -2492,7 +2492,7 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
                 continue
             
             # Calcula média dos MVP Scores
-            avg_mvp_score = sum(m.get('mvp_score', 0) for m in matches) / 3
+            avg_mvp_score = sum(m.get('mvp_score', 0) for m in matches) / len(matches)
 
             # Determina qual critério foi atendido para personalizar a mensagem
             alert_reason = ""
