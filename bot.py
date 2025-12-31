@@ -3054,6 +3054,7 @@ async def send_live_game_notification_grouped(game_id: str, players: List[Dict])
         # Pega o primeiro jogador para determinar o servidor
         first_player = players[0]
         discord_id = first_player['discord_id']
+        region = first_player.get('region', 'br1')
         
         # Busca servidor e canal
         for guild in bot.guilds:
@@ -3072,37 +3073,72 @@ async def send_live_game_notification_grouped(game_id: str, players: List[Dict])
             if not channel:
                 continue
             
-            # Cria embed de partida em grupo
-            player_mentions = [f"<@{p['discord_id']}>" for p in players]
+            # Monta lista de menções dos jogadores
+            player_mentions = ", ".join([f"<@{p['discord_id']}>" for p in players])
+            
+            # Descrição com jogadores em partida
+            description = f"**{len(players)} jogadores** em partida!\n\n{player_mentions}"
             
             embed = discord.Embed(
                 title="🔴 PARTIDA EM GRUPO AO VIVO!",
-                description=f"**{len(players)} jogadores** entraram na mesma partida de **Ranked Flex**!\n\n{' • '.join(player_mentions)}",
+                description=description,
                 color=discord.Color.blue()
             )
             
-            # Lista de jogadores com campeões
-            players_info = ""
+            # Modo de Jogo e Tempo de Jogo (lado a lado)
+            embed.add_field(
+                name="🎮 Modo de Jogo",
+                value="Ranked Flex",
+                inline=True
+            )
+            embed.add_field(
+                name="⏱️ Tempo de Jogo",
+                value="00:00",
+                inline=True
+            )
+            
+            # Separa jogadores por time (se tiver info de time)
+            blue_team = []
+            red_team = []
+            
             for p in players:
-                champion = p['live_info'].get('champion', 'Unknown')
-                players_info += f"• **{p['summoner_name']}** - {champion}\n"
+                live_info = p.get('live_info', {})
+                team_id = live_info.get('teamId', 100)
+                champion = live_info.get('champion', 'Unknown')
+                summoner = p['summoner_name']
+                
+                player_line = f"• **{champion}** - {summoner}"
+                
+                if team_id == 100:
+                    blue_team.append(player_line)
+                else:
+                    red_team.append(player_line)
             
-            embed.add_field(
-                name="🎮 Jogadores",
-                value=players_info,
-                inline=False
-            )
+            # Se não conseguiu separar por time, coloca todos no azul
+            if not blue_team and not red_team:
+                for p in players:
+                    champion = p['live_info'].get('champion', 'Unknown')
+                    blue_team.append(f"• **{champion}** - {p['summoner_name']}")
             
-            # Links para o primeiro jogador (como referência)
-            region = first_player.get('region', 'br1')
-            summoner_encoded = first_player['summoner_name'].replace('#', '-')
-            embed.add_field(
-                name="🔗 Acompanhar Partida",
-                value=f"[Porofessor](https://porofessor.gg/live/{region}/{summoner_encoded})",
-                inline=False
-            )
+            # Time Azul
+            if blue_team:
+                embed.add_field(
+                    name="🔵 Time Azul",
+                    value="\n".join(blue_team),
+                    inline=True
+                )
             
-            embed.set_footer(text="A mensagem será atualizada quando a partida terminar!")
+            # Time Vermelho
+            if red_team:
+                embed.add_field(
+                    name="🔴 Time Vermelho",
+                    value="\n".join(red_team),
+                    inline=True
+                )
+            
+            # Footer com Game ID e timestamp
+            now = datetime.now()
+            embed.set_footer(text=f"Game ID: {game_id} • {region.upper()} • {now.strftime('%d/%m às %H:%M')}")
             
             message = await channel.send(embed=embed)
             
