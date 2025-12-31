@@ -528,16 +528,6 @@ async def deslogar(interaction: discord.Interaction, conta: str):
             ephemeral=True
         )
 
-@champban_remove.error
-async def champban_remove_error(interaction: discord.Interaction, error):
-    """Tratamento de erro para comando champban_remove"""
-    if isinstance(error, app_commands.errors.MissingPermissions):
-        await interaction.response.send_message(
-            "❌ Você precisa ser **Administrador** para usar este comando!",
-            ephemeral=True
-        )
-
-
 @bot.tree.command(name="historico", description="📜 Veja seu histórico detalhado de partidas por data")
 @app_commands.describe(
     data="Data para ver partidas (formato: DD/MM/AAAA ou DD/MM). Padrão: hoje",
