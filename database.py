@@ -421,6 +421,97 @@ class Database:
         conn.close()
         return result[0] if result else None
     
+    def get_matches_by_date(self, lol_account_id: int, date_str: str) -> List[Dict]:
+        """Retorna todas as partidas de uma data específica (formato: YYYY-MM-DD)"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT match_id, game_mode, champion_name, role, kills, deaths, assists,
+                   damage_dealt, damage_taken, gold_earned, cs, vision_score,
+                   game_duration, win, kda, kill_participation, played_at, is_remake,
+                   mvp_score, mvp_placement
+            FROM matches
+            WHERE lol_account_id = ?
+              AND date(played_at) = ?
+            ORDER BY played_at DESC
+        ''', (lol_account_id, date_str))
+        
+        matches = []
+        for row in cursor.fetchall():
+            matches.append({
+                'match_id': row[0],
+                'game_mode': row[1],
+                'champion_name': row[2],
+                'role': row[3],
+                'kills': row[4],
+                'deaths': row[5],
+                'assists': row[6],
+                'damage_dealt': row[7],
+                'damage_taken': row[8],
+                'gold_earned': row[9],
+                'cs': row[10],
+                'vision_score': row[11],
+                'game_duration': row[12],
+                'win': row[13],
+                'kda': row[14],
+                'kill_participation': row[15],
+                'played_at': row[16],
+                'is_remake': row[17] if row[17] else False,
+                'mvp_score': row[18] if row[18] else 0,
+                'mvp_placement': row[19] if row[19] else 0
+            })
+        
+        conn.close()
+        return matches
+    
+    def get_all_matches_by_date(self, discord_id: str, date_str: str) -> List[Dict]:
+        """Retorna todas as partidas de todas as contas de um usuário em uma data específica"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT m.match_id, m.game_mode, m.champion_name, m.role, m.kills, m.deaths, m.assists,
+                   m.damage_dealt, m.damage_taken, m.gold_earned, m.cs, m.vision_score,
+                   m.game_duration, m.win, m.kda, m.kill_participation, m.played_at, m.is_remake,
+                   m.mvp_score, m.mvp_placement, la.summoner_name, la.id as account_id
+            FROM matches m
+            JOIN lol_accounts la ON m.lol_account_id = la.id
+            WHERE la.discord_id = ?
+              AND date(m.played_at) = ?
+            ORDER BY m.played_at DESC
+        ''', (discord_id, date_str))
+        
+        matches = []
+        for row in cursor.fetchall():
+            matches.append({
+                'match_id': row[0],
+                'game_mode': row[1],
+                'champion_name': row[2],
+                'role': row[3],
+                'kills': row[4],
+                'deaths': row[5],
+                'assists': row[6],
+                'damage_dealt': row[7],
+                'damage_taken': row[8],
+                'gold_earned': row[9],
+                'cs': row[10],
+                'vision_score': row[11],
+                'game_duration': row[12],
+                'win': row[13],
+                'kda': row[14],
+                'kill_participation': row[15],
+                'played_at': row[16],
+                'is_remake': row[17] if row[17] else False,
+                'mvp_score': row[18] if row[18] else 0,
+                'mvp_placement': row[19] if row[19] else 0,
+                'summoner_name': row[20],
+                'account_id': row[21]
+            })
+        
+        conn.close()
+        return matches
+    
     def set_notification_channel(self, guild_id: str, channel_id: str) -> bool:
         """Define o canal de notificações para um servidor"""
         try:
@@ -1094,9 +1185,10 @@ class Database:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            expires_at = datetime.now() + timedelta(days=ban_days)
+            # Formata a data de expiração como string ISO para consistência com SQLite
+            expires_at = (datetime.now() + timedelta(days=ban_days)).strftime('%Y-%m-%d %H:%M:%S')
             
-            # Verifica se já existe um banimento ativo
+            # Verifica se já existe um banimento (ativo ou não) para este campeão
             cursor.execute('''
                 SELECT id, ban_level FROM champion_bans
                 WHERE lol_account_id = ? AND champion_name = ?
@@ -1112,18 +1204,22 @@ class Database:
                         expires_at = ?, reason = ?
                     WHERE lol_account_id = ? AND champion_name = ?
                 ''', (ban_level, ban_days, expires_at, reason, lol_account_id, champion_name))
+                print(f"🔄 [ChampBan] Atualizado banimento: {champion_name} -> Nível {ban_level}, expira em {expires_at}")
             else:
                 # Cria novo banimento
                 cursor.execute('''
                     INSERT INTO champion_bans (lol_account_id, champion_name, ban_level, ban_days, expires_at, reason)
                     VALUES (?, ?, ?, ?, ?, ?)
                 ''', (lol_account_id, champion_name, ban_level, ban_days, expires_at, reason))
+                print(f"✅ [ChampBan] Novo banimento: {champion_name} -> Nível {ban_level}, expira em {expires_at}")
             
             conn.commit()
             conn.close()
             return True
         except Exception as e:
             print(f"❌ Erro ao adicionar banimento: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def get_active_champion_bans(self, lol_account_id: int) -> List[Dict]:

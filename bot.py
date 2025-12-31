@@ -912,13 +912,13 @@ async def media(interaction: discord.Interaction, campeao: str = None, metrica: 
     embed.set_footer(text=footer_text)
     await interaction.followup.send(embed=embed)
 
-@bot.tree.command(name="historico", description="📜 Veja seu histórico detalhado de partidas recentes")
+@bot.tree.command(name="historico", description="📜 Veja seu histórico detalhado de partidas por data")
 @app_commands.describe(
-    conta="Número da conta (1, 2 ou 3)",
-    quantidade="Quantidade de partidas para mostrar (padrão: 5)"
+    data="Data para ver partidas (formato: DD/MM/AAAA ou DD/MM). Padrão: hoje",
+    conta="Número da conta (1, 2 ou 3). Se não informar, mostra todas as contas"
 )
-async def historico(interaction: discord.Interaction, conta: int = 1, quantidade: int = 5):
-    """Mostra histórico detalhado de partidas"""
+async def historico(interaction: discord.Interaction, data: str = None, conta: int = None):
+    """Mostra histórico detalhado de partidas por data"""
     if not await check_command_channel(interaction):
         return
     
@@ -933,32 +933,66 @@ async def historico(interaction: discord.Interaction, conta: int = 1, quantidade
         )
         return
     
-    if conta < 1 or conta > len(accounts):
-        await interaction.followup.send(
-            f"❌ Conta inválida! Você tem {len(accounts)} conta(s) vinculada(s)."
-        )
-        return
-    
-    account = accounts[conta - 1]
+    # Processa a data
     now = datetime.now()
-    matches = db.get_monthly_matches(account['id'], now.year, now.month)
+    if data:
+        try:
+            # Tenta formato DD/MM/AAAA
+            if len(data.split('/')) == 3:
+                day, month, year = data.split('/')
+                date_obj = datetime(int(year), int(month), int(day))
+            # Tenta formato DD/MM (usa ano atual)
+            elif len(data.split('/')) == 2:
+                day, month = data.split('/')
+                date_obj = datetime(now.year, int(month), int(day))
+            else:
+                await interaction.followup.send("❌ Formato de data inválido! Use DD/MM/AAAA ou DD/MM")
+                return
+        except ValueError:
+            await interaction.followup.send("❌ Data inválida! Use DD/MM/AAAA ou DD/MM")
+            return
+    else:
+        date_obj = now
+    
+    date_str = date_obj.strftime('%Y-%m-%d')
+    date_display = date_obj.strftime('%d/%m/%Y')
+    
+    # Busca partidas
+    if conta:
+        if conta < 1 or conta > len(accounts):
+            await interaction.followup.send(
+                f"❌ Conta inválida! Você tem {len(accounts)} conta(s) vinculada(s)."
+            )
+            return
+        account = accounts[conta - 1]
+        matches = db.get_matches_by_date(account['id'], date_str)
+        title_suffix = f" - {account['summoner_name']}"
+    else:
+        # Busca de todas as contas
+        matches = db.get_all_matches_by_date(discord_id, date_str)
+        title_suffix = ""
     
     if not matches:
         await interaction.followup.send(
-            f"❌ Nenhuma partida encontrada para **{account['summoner_name']}** este mês."
+            f"❌ Nenhuma partida encontrada em **{date_display}**{title_suffix}."
         )
         return
     
-    matches = matches[:min(quantidade, 10)]
+    # Título do embed
+    if conta:
+        embed_title = f"📜 Histórico - {account['summoner_name']}"
+    else:
+        embed_title = f"📜 Histórico - {interaction.user.display_name}"
     
     embed = discord.Embed(
-        title=f"📜 Histórico - {account['summoner_name']}",
-        description=f"**{len(matches)} partidas mais recentes de Ranked Flex**\n_ _",
+        title=embed_title,
+        description=f"**{len(matches)} partida(s) em {date_display}**\n_ _",
         color=discord.Color.purple()
     )
     
     for i, match in enumerate(matches, 1):
         is_remake = match.get('is_remake', False)
+        summoner_info = f" ({match['summoner_name']})" if not conta and 'summoner_name' in match else ""
         
         if is_remake:
             # Layout especial para remakes
@@ -975,11 +1009,11 @@ async def historico(interaction: discord.Interaction, conta: int = 1, quantidade
             game_duration_sec = match['game_duration'] % 60
             
             match_info = f"""
-**{match['champion_name']}** {role_emoji} {match['role']}
+**{match['champion_name']}** {role_emoji} {match['role']}{summoner_info}
 ━━━━━━━━━━━━━━━━━━━━━
 ⚠️ **REMAKE** - Partida cancelada
 ⏱️ Duração: **{game_duration_min}:{game_duration_sec:02d}**
-📅 {match['played_at'][:10]} às {match['played_at'][11:16]}
+📅 {match['played_at'][11:16]}
 
 _Esta partida não conta para estatísticas_
             """
@@ -1023,14 +1057,14 @@ _Esta partida não conta para estatísticas_
             role_emoji = role_emojis.get(match['role'], '❓')
             
             match_info = f"""
-**{match['champion_name']}** {role_emoji} {match['role']} • {result}
+**{match['champion_name']}** {role_emoji} {match['role']} • {result}{summoner_info}
 ━━━━━━━━━━━━━━━━━━━━━
 {mvp_emoji} **MVP Score: {mvp_score}/100** ({rank_text})
 ⚔️ KDA: **{kda_ratio}** ({match['kda']:.2f})
 🎯 Kill Participation: **{match['kill_participation']:.0f}%**
 🗡️ Dano: **{match['damage_dealt']:,}**
 🌾 CS: **{match['cs']}** • 👁️ Vision: **{match['vision_score']}**
-📅 {match['played_at'][:10]} às {match['played_at'][11:16]}
+📅 {match['played_at'][11:16]}
             """
         
         embed.add_field(
@@ -1039,7 +1073,7 @@ _Esta partida não conta para estatísticas_
             inline=False
         )
     
-    embed.set_footer(text=f"📊 Apenas Ranked Flex • Região: {account['region'].upper()}")
+    embed.set_footer(text=f"📊 Apenas Ranked Flex • {date_display}")
     await interaction.followup.send(embed=embed)
 
 # Auto-complete para tipo de configuração
@@ -2564,6 +2598,15 @@ async def check_champion_performance(lol_account_id: int, champion_name: str):
         # Registra o banimento no banco
         db.add_champion_ban(lol_account_id, champion_name, ban_days, new_level, reason)
         
+        # Registra pintado de ouro (+1) quando recebe banimento
+        current_match = matches[0] if matches else None
+        if current_match:
+            match_id = current_match.get('match_id', f"ban_{champion_name}_{datetime.now().timestamp()}")
+            mvp_score = current_match.get('mvp_score', 0)
+            role = current_match.get('role', 'Unknown')
+            db.add_gold_medal(lol_account_id, champion_name, role, match_id, mvp_score)
+            print(f"🎨 [Pintado de Ouro] {champion_name} - Banimento aplicado!")
+        
         # Busca informações da conta
         conn = db.get_connection()
         cursor = conn.cursor()
@@ -3441,18 +3484,6 @@ async def process_account_batch(account_id: int, puuid: str, region: str, riot_a
                             print(f"⚠️ [Partidas] Remake registrado: {match_id} ({stats['game_duration']}s)")
                         else:
                             print(f"✅ [Partidas] Nova partida registrada: {match_id} (MVP: {stats.get('mvp_score', 0)})")
-                            
-                            # Registra pintado de ouro se teve nota abaixo de 35 pontos
-                            mvp_score = stats.get('mvp_score', 0)
-                            if mvp_score < 35:
-                                db.add_gold_medal(
-                                    account_id, 
-                                    stats['champion_name'], 
-                                    stats.get('role', 'Unknown'), 
-                                    match_id,
-                                    mvp_score
-                                )
-                                print(f"🎨 [Pintado de Ouro] {stats['champion_name']} - Nota: {mvp_score}")
 
                         # Verifica performance apenas se não for remake
                         if not stats.get('is_remake', False):
@@ -3672,18 +3703,6 @@ async def check_live_games_finished():
                                     print(f"⚠️ [Live Check] Remake detectado: {match_id} ({stats['game_duration']}s)")
                                 else:
                                     print(f"✅ [Live Check] Partida terminada detectada: {match_id} (MVP: {stats.get('mvp_score', 0)})")
-                                    
-                                    # Registra pintado de ouro se teve nota abaixo de 35 pontos
-                                    mvp_score = stats.get('mvp_score', 0)
-                                    if mvp_score < 35:
-                                        db.add_gold_medal(
-                                            account_id, 
-                                            stats['champion_name'], 
-                                            stats.get('role', 'Unknown'), 
-                                            match_id,
-                                            mvp_score
-                                        )
-                                        print(f"🎨 [Pintado de Ouro] {stats['champion_name']} - Nota: {mvp_score}")
 
                                 # Envia notificação individual com estatísticas detalhadas
                                 print(f"📨 [Live Check] Enviando notificação individual de estatísticas para {account_id}")
