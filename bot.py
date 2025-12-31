@@ -619,307 +619,6 @@ async def champban_remove_error(interaction: discord.Interaction, error):
         )
 
 
-async def champion_autocomplete(
-    interaction: discord.Interaction,
-    current: str,
-) -> list[app_commands.Choice[str]]:
-    """Auto-complete para campeões jogados pelo usuário"""
-    discord_id = str(interaction.user.id)
-    accounts = db.get_user_accounts(discord_id)
-    
-    if not accounts:
-        return []
-    
-    # Busca todos os campeões jogados este mês
-    now = datetime.now()
-    all_champions = set()
-    for account in accounts:
-        champions = db.get_all_champions_played(account['id'], now.year, now.month)
-        all_champions.update(champions)
-    
-    # Filtra por texto digitado
-    filtered = [champ for champ in sorted(all_champions) if current.lower() in champ.lower()]
-    
-    return [
-        app_commands.Choice(name=champ, value=champ)
-        for champ in filtered[:25]  # Discord limita a 25
-    ]
-
-# Auto-complete para métricas
-async def metric_autocomplete(
-    interaction: discord.Interaction,
-    current: str,
-) -> list[app_commands.Choice[str]]:
-    """Auto-complete para métricas disponíveis"""
-    metrics = [
-        ('🏆 MVP Score', 'mvp'),
-        ('⚔️ KDA', 'kda'),
-        ('🗡️ Dano aos Campeões', 'dano'),
-        ('🌾 CS (Farm)', 'cs'),
-        ('👁️ Vision Score', 'visao'),
-        ('🎯 Kill Participation', 'kp'),
-        ('💰 Gold por Minuto', 'gold'),
-        ('📊 Todas as Métricas', 'todas'),
-    ]
-    
-    return [
-        app_commands.Choice(name=name, value=value)
-        for name, value in metrics
-        if current.lower() in name.lower() or current.lower() in value.lower()
-    ]
-
-@bot.tree.command(name="media", description="📊 Veja estatísticas detalhadas de desempenho no Flex")
-@app_commands.describe(
-    campeao="Filtrar por campeão específico (deixe vazio para ver todos)",
-    metrica="Métrica específica para analisar (mvp, kda, dano, cs, visao, kp, gold)",
-    usuario="Ver estatísticas de outro jogador (mencione ou digite o nome)",
-    conta="Número da conta (1, 2 ou 3). Deixe vazio para ver todas"
-)
-@app_commands.autocomplete(campeao=champion_autocomplete, metrica=metric_autocomplete)
-async def media(interaction: discord.Interaction, campeao: str = None, metrica: str = None, 
-                usuario: discord.User = None, conta: int = None):
-    """Calcula estatísticas e média de desempenho do mês atual"""
-    if not await check_command_channel(interaction):
-        return
-    
-    await interaction.response.defer()
-    
-    # Define qual usuário buscar
-    target_user = usuario if usuario else interaction.user
-    discord_id = str(target_user.id)
-    accounts = db.get_user_accounts(discord_id)
-    
-    if not accounts:
-        if usuario:
-            await interaction.followup.send(
-                f"❌ {target_user.mention} não tem nenhuma conta vinculada ao bot."
-            )
-        else:
-            await interaction.followup.send(
-                "❌ Você não tem nenhuma conta vinculada. Use `/logar` para vincular uma conta!"
-            )
-        return
-    
-    # Se especificou uma conta, valida
-    if conta is not None:
-        if conta < 1 or conta > len(accounts):
-            await interaction.followup.send(
-                f"❌ Conta inválida! {'Esse usuário tem' if usuario else 'Você tem'} {len(accounts)} conta(s) vinculada(s)."
-            )
-            return
-        accounts = [accounts[conta - 1]]
-    
-    # Pega mês e ano atual
-    now = datetime.now()
-    month = now.month
-    year = now.year
-    
-    # Define título do embed baseado nos filtros
-    title_parts = ["📊 Estatísticas"]
-    if campeao:
-        title_parts.append(f"- {campeao}")
-    if metrica and metrica != 'todas':
-        metric_names = {
-            'mvp': 'MVP Score',
-            'kda': 'KDA',
-            'dano': 'Dano',
-            'cs': 'CS',
-            'visao': 'Visão',
-            'kp': 'Kill Participation',
-            'gold': 'Gold'
-        }
-        title_parts.append(f"- {metric_names.get(metrica, metrica.upper())}")
-    title_parts.append(f"- {now.strftime('%B/%Y')}")
-    
-    embed = discord.Embed(
-        title=" ".join(title_parts),
-        color=discord.Color.gold()
-    )
-    
-    if usuario:
-        embed.set_author(name=f"Estatísticas de {target_user.display_name}", icon_url=target_user.display_avatar.url)
-    
-    for account in accounts:
-        # Busca partidas (filtradas por campeão se especificado, excluindo remakes)
-        if campeao:
-            matches = db.get_monthly_matches_by_champion(account['id'], year, month, campeao)
-        else:
-            matches = db.get_monthly_matches(account['id'], year, month, include_remakes=False)
-        
-        if not matches:
-            msg = f"Nenhuma partida de Flex"
-            if campeao:
-                msg += f" com **{campeao}**"
-            msg += " registrada este mês."
-            embed.add_field(
-                name=f"⚠️ {account['summoner_name']}",
-                value=msg,
-                inline=False
-            )
-            continue
-        
-        # Calcula estatísticas
-        total_matches = len(matches)
-        avg_mvp = sum(m.get('mvp_score', 0) for m in matches) / total_matches
-        wins = sum(1 for m in matches if m['win'])
-        win_rate = (wins / total_matches) * 100
-        
-        avg_kills = sum(m['kills'] for m in matches) / total_matches
-        avg_deaths = sum(m['deaths'] for m in matches) / total_matches
-        avg_assists = sum(m['assists'] for m in matches) / total_matches
-        avg_kda_calc = (avg_kills + avg_assists) / max(avg_deaths, 1)
-        avg_kp = sum(m['kill_participation'] for m in matches) / total_matches
-        avg_dano = sum(m['damage_dealt'] for m in matches) / total_matches
-        avg_cs = sum(m['cs'] for m in matches) / total_matches
-        avg_visao = sum(m['vision_score'] for m in matches) / total_matches
-        avg_gold = sum(m['gold_earned'] for m in matches) / total_matches
-        
-        # Calcula gold per minute médio
-        avg_game_duration_min = sum(m['game_duration'] for m in matches) / total_matches / 60
-        avg_gpm = avg_gold / avg_game_duration_min if avg_game_duration_min > 0 else 0
-        
-        # Estatísticas por role
-        role_count = {}
-        for m in matches:
-            role = m['role']
-            role_count[role] = role_count.get(role, 0) + 1
-        most_played_role = max(role_count, key=role_count.get) if role_count else "Unknown"
-        
-        # Determina emoji baseado no MVP score
-        if avg_mvp >= 90:
-            emoji = "🏆"
-            rank = "S+"
-        elif avg_mvp >= 75:
-            emoji = "⭐"
-            rank = "S"
-        elif avg_mvp >= 60:
-            emoji = "💎"
-            rank = "A"
-        elif avg_mvp >= 50:
-            emoji = "🥈"
-            rank = "B"
-        elif avg_mvp >= 40:
-            emoji = "📊"
-            rank = "C"
-        elif avg_mvp >= 25:
-            emoji = "📉"
-            rank = "D"
-        else:
-            emoji = "💀"
-            rank = "F"
-        
-        # Emoji por role
-        role_emojis = {
-            'Top': '⚔️',
-            'Jungle': '🌳',
-            'Mid': '✨',
-            'ADC': '🏹',
-            'Support': '🛡️'
-        }
-        role_emoji = role_emojis.get(most_played_role, '❓')
-        
-        # Constrói texto baseado na métrica selecionada
-        if metrica in ['mvp'] or not metrica:
-            stats_text = f"""
-{emoji} **{rank}**
-📈 MVP Score Médio: **{int(avg_mvp)}/100**
-🎮 Partidas: **{total_matches}** • ✅ WR: **{win_rate:.1f}%**
-⚔️ KDA: **{avg_kda_calc:.2f}** ({avg_kills:.1f}/{avg_deaths:.1f}/{avg_assists:.1f})
-🎯 Kill Participation: **{avg_kp:.1f}%**
-{role_emoji} Role Mais Jogada: **{most_played_role}** ({role_count[most_played_role]}x)
-            """
-        elif metrica == 'kda':
-            stats_text = f"""
-⚔️ **Análise de KDA**
-📈 KDA Médio: **{avg_kda_calc:.2f}**
-💀 K/D/A: **{avg_kills:.1f}** / **{avg_deaths:.1f}** / **{avg_assists:.1f}**
-🎯 Kill Participation: **{avg_kp:.1f}%**
-🎮 Partidas: **{total_matches}** • ✅ WR: **{win_rate:.1f}%**
-{emoji} MVP Score: **{int(avg_mvp)}/100**
-            """
-        elif metrica == 'dano':
-            stats_text = f"""
-🗡️ **Análise de Dano**
-💥 Dano Médio aos Campeões: **{int(avg_dano):,}**
-📊 Dano por Partida: **{int(avg_dano):,}**
-🎮 Partidas: **{total_matches}** • ✅ WR: **{win_rate:.1f}%**
-⚔️ KDA: **{avg_kda_calc:.2f}**
-{emoji} MVP Score: **{int(avg_mvp)}/100**
-            """
-        elif metrica == 'cs':
-            avg_cspm = avg_cs / avg_game_duration_min if avg_game_duration_min > 0 else 0
-            stats_text = f"""
-🌾 **Análise de Farm (CS)**
-📊 CS Médio por Partida: **{int(avg_cs)}**
-⏱️ CS por Minuto: **{avg_cspm:.1f}**
-💰 Gold Médio: **{int(avg_gold):,}**
-🎮 Partidas: **{total_matches}** • ✅ WR: **{win_rate:.1f}%**
-{emoji} MVP Score: **{int(avg_mvp)}/100**
-            """
-        elif metrica == 'visao':
-            avg_vision_pm = avg_visao / avg_game_duration_min if avg_game_duration_min > 0 else 0
-            stats_text = f"""
-👁️ **Análise de Visão**
-📊 Vision Score Médio: **{int(avg_visao)}**
-⏱️ Vision Score por Minuto: **{avg_vision_pm:.2f}**
-🎮 Partidas: **{total_matches}** • ✅ WR: **{win_rate:.1f}%**
-⚔️ KDA: **{avg_kda_calc:.2f}**
-{emoji} MVP Score: **{int(avg_mvp)}/100**
-            """
-        elif metrica == 'kp':
-            stats_text = f"""
-🎯 **Análise de Kill Participation**
-📊 KP Médio: **{avg_kp:.1f}%**
-💀 Kills: **{avg_kills:.1f}** • Assists: **{avg_assists:.1f}**
-🎮 Partidas: **{total_matches}** • ✅ WR: **{win_rate:.1f}%**
-⚔️ KDA: **{avg_kda_calc:.2f}**
-{emoji} MVP Score: **{int(avg_mvp)}/100**
-            """
-        elif metrica == 'gold':
-            stats_text = f"""
-💰 **Análise de Gold**
-📊 Gold Médio por Partida: **{int(avg_gold):,}**
-⏱️ Gold por Minuto (GPM): **{int(avg_gpm)}**
-🌾 CS Médio: **{int(avg_cs)}**
-🎮 Partidas: **{total_matches}** • ✅ WR: **{win_rate:.1f}%**
-{emoji} MVP Score: **{int(avg_mvp)}/100**
-            """
-        else:  # metrica == 'todas'
-            avg_cspm = avg_cs / avg_game_duration_min if avg_game_duration_min > 0 else 0
-            stats_text = f"""
-{emoji} **{rank}** - MVP Score: **{int(avg_mvp)}/100**
-🎮 **{total_matches}** partidas • ✅ **{win_rate:.1f}%** WR
-
-**⚔️ Combate:**
-• KDA: **{avg_kda_calc:.2f}** ({avg_kills:.1f}/{avg_deaths:.1f}/{avg_assists:.1f})
-• KP: **{avg_kp:.1f}%** • Dano: **{int(avg_dano):,}**
-
-**💰 Economia:**
-• CS: **{int(avg_cs)}** ({avg_cspm:.1f}/min)
-• Gold: **{int(avg_gold):,}** ({int(avg_gpm)} GPM)
-
-**🎯 Utility:**
-• Vision Score: **{int(avg_visao)}**
-• {role_emoji} Role: **{most_played_role}** ({role_count[most_played_role]}x)
-            """
-        
-        # Nome do campo
-        field_name = f"🎯 {account['summoner_name']} ({account['region'].upper()})"
-        if campeao:
-            field_name += f" - {campeao}"
-        
-        embed.add_field(
-            name=field_name,
-            value=stats_text.strip(),
-            inline=False
-        )
-    
-    footer_text = "Apenas partidas de Ranked Flex são contabilizadas"
-    if campeao:
-        footer_text += f" • Filtrado por {campeao}"
-    embed.set_footer(text=footer_text)
-    await interaction.followup.send(embed=embed)
-
 @bot.tree.command(name="historico", description="📜 Veja seu histórico detalhado de partidas por data")
 @app_commands.describe(
     data="Data para ver partidas (formato: DD/MM/AAAA ou DD/MM). Padrão: hoje",
@@ -1523,6 +1222,24 @@ async def perfil(interaction: discord.Interaction, usuario: discord.User = None,
     carry_score = db.get_total_carry_score(discord_id, year)
     ranking_stats = db.get_player_average_position(discord_id)
     
+    # Calcula semana atual para posição atual
+    from datetime import timedelta
+    today = datetime.now()
+    days_since_monday = today.weekday()
+    week_start = (today - timedelta(days=days_since_monday)).replace(hour=0, minute=0, second=0, microsecond=0)
+    week_end = (week_start + timedelta(days=6)).replace(hour=23, minute=59, second=59)
+    week_start_str = week_start.strftime('%Y-%m-%d')
+    week_end_str = week_end.strftime('%Y-%m-%d')
+    
+    # Busca posição atual na semana
+    current_week_pos = db.get_player_current_week_position(discord_id, week_start_str, week_end_str)
+    
+    # Carry Score com posição atual
+    if current_week_pos['position'] > 0:
+        carry_text = f"🏆 **Carry Score:** {carry_score} (**{current_week_pos['position']}º** de {current_week_pos['total_participants']})"
+    else:
+        carry_text = f"🏆 **Carry Score:** {carry_score}"
+    
     # Médias gerais
     embed.add_field(
         name="📈 Médias por Partida",
@@ -1532,15 +1249,15 @@ async def perfil(interaction: discord.Interaction, usuario: discord.User = None,
             f"💰 **Gold:** {int(profile_stats['avg_gold']):,}\n"
             f"🌾 **CS:** {profile_stats['avg_cs']:.1f}\n"
             f"👁️ **Visão:** {profile_stats['avg_vision']:.1f}\n"
-            f"🏆 **Carry Score:** {carry_score}"
+            f"{carry_text}"
         ),
         inline=True
     )
     
-    # Estatísticas de ranking semanal
+    # Estatísticas de ranking semanal (histórico)
     if ranking_stats['weeks_played'] > 0:
         embed.add_field(
-            name="📊 Ranking Semanal",
+            name="📊 Histórico Semanal",
             value=(
                 f"📅 **Semanas:** {ranking_stats['weeks_played']}\n"
                 f"📍 **Média Posição:** {ranking_stats['avg_position']}º\n"
@@ -1614,7 +1331,162 @@ async def perfil(interaction: discord.Interaction, usuario: discord.User = None,
             inline=False
         )
     
-    embed.set_footer(text=f"Ranked Flex • Season {year} • Use /media para estatísticas detalhadas")
+    embed.set_footer(text=f"Ranked Flex • Season {year} • Use /tops_flex para ver o ranking semanal")
+    
+    await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="champinfo", description="🎮 Veja estatísticas detalhadas de um campeão específico")
+@app_commands.describe(
+    usuario="Usuário para ver estatísticas",
+    campeao="Nome do campeão (ex: Kayn, Aatrox, Jinx)"
+)
+async def champinfo(interaction: discord.Interaction, usuario: discord.User, campeao: str):
+    """Mostra estatísticas detalhadas de um campeão específico de um jogador"""
+    if not await check_command_channel(interaction):
+        return
+    
+    await interaction.response.defer()
+    
+    discord_id = str(usuario.id)
+    current_year = datetime.now().year
+    
+    # Busca estatísticas do campeão
+    champ_stats = db.get_champion_stats(discord_id, campeao, current_year)
+    
+    if not champ_stats:
+        await interaction.followup.send(
+            f"❌ **{usuario.display_name}** não tem partidas registradas com **{campeao}** em {current_year}.",
+            ephemeral=True
+        )
+        return
+    
+    # Busca pintados de ouro do campeão
+    gold_medals = db.get_gold_medals_by_champion(discord_id, campeao, current_year)
+    
+    # Busca Carry Score e posição atual
+    from datetime import timedelta
+    today = datetime.now()
+    days_since_monday = today.weekday()
+    week_start = (today - timedelta(days=days_since_monday)).replace(hour=0, minute=0, second=0, microsecond=0)
+    week_end = (week_start + timedelta(days=6)).replace(hour=23, minute=59, second=59)
+    week_start_str = week_start.strftime('%Y-%m-%d')
+    week_end_str = week_end.strftime('%Y-%m-%d')
+    
+    carry_score = db.get_total_carry_score(discord_id, current_year)
+    current_week_pos = db.get_player_current_week_position(discord_id, week_start_str, week_end_str)
+    
+    # Formata tempo de jogo
+    total_seconds = champ_stats['total_time_seconds']
+    hours = int(total_seconds // 3600)
+    minutes = int((total_seconds % 3600) // 60)
+    
+    # Determina cor baseada no winrate
+    winrate = champ_stats['winrate']
+    if winrate >= 60:
+        color = discord.Color.gold()
+    elif winrate >= 50:
+        color = discord.Color.green()
+    elif winrate >= 45:
+        color = discord.Color.orange()
+    else:
+        color = discord.Color.red()
+    
+    # URL da imagem do campeão (Data Dragon)
+    champ_name_formatted = campeao.replace(" ", "").replace("'", "")
+    # Casos especiais de nomes
+    special_names = {
+        "wukong": "MonkeyKing",
+        "reksai": "RekSai",
+        "kogmaw": "KogMaw",
+        "khazix": "Khazix",
+        "chogath": "Chogath",
+        "velkoz": "Velkoz",
+        "kaisa": "Kaisa",
+        "belveth": "Belveth",
+        "renataglasc": "Renata",
+        "drmundo": "DrMundo",
+        "jarvaniv": "JarvanIV",
+        "leesin": "LeeSin",
+        "masteryi": "MasterYi",
+        "missfortune": "MissFortune",
+        "twistedfate": "TwistedFate",
+        "xinzhao": "XinZhao",
+        "aurelionsol": "AurelionSol",
+        "tahmkench": "TahmKench",
+        "nunuwillump": "Nunu"
+    }
+    champ_key = champ_name_formatted.lower()
+    if champ_key in special_names:
+        champ_name_formatted = special_names[champ_key]
+    else:
+        champ_name_formatted = champ_name_formatted.capitalize()
+    
+    champ_image_url = f"https://ddragon.leagueoflegends.com/cdn/14.1.1/img/champion/{champ_name_formatted}.png"
+    
+    # Cria embed
+    embed = discord.Embed(
+        title=f"🎮 {campeao} - {usuario.display_name}",
+        description=f"Estatísticas de **{campeao}** em Ranked Flex • Season {current_year}",
+        color=color
+    )
+    
+    # Thumbnail do campeão
+    embed.set_thumbnail(url=champ_image_url)
+    
+    # Estatísticas gerais
+    embed.add_field(
+        name="📊 Estatísticas Gerais",
+        value=(
+            f"🎮 **Partidas:** {champ_stats['games']}\n"
+            f"✅ **Vitórias:** {champ_stats['wins']} ({champ_stats['winrate']}%)\n"
+            f"❌ **Derrotas:** {champ_stats['losses']}\n"
+            f"⏱️ **Tempo de Jogo:** {hours}h {minutes}min"
+        ),
+        inline=True
+    )
+    
+    # Estatísticas de combate
+    embed.add_field(
+        name="⚔️ Combate",
+        value=(
+            f"🗡️ **KDA:** {champ_stats['avg_kda']:.2f}\n"
+            f"💀 **K/D/A:** {champ_stats['avg_kills']}/{champ_stats['avg_deaths']}/{champ_stats['avg_assists']}\n"
+            f"🎯 **KP:** {champ_stats['avg_kp']}%\n"
+            f"💥 **Dano:** {int(champ_stats['avg_damage']):,}"
+        ),
+        inline=True
+    )
+    
+    # Economia e visão
+    embed.add_field(
+        name="💰 Economia",
+        value=(
+            f"🌾 **CS:** {champ_stats['avg_cs']}\n"
+            f"💰 **Gold:** {int(champ_stats['avg_gold']):,}\n"
+            f"👁️ **Visão:** {champ_stats['avg_vision']}"
+        ),
+        inline=True
+    )
+    
+    # Carry Score com posição
+    if current_week_pos['position'] > 0:
+        carry_text = f"🏆 **Carry Score:** {carry_score} (**{current_week_pos['position']}º** de {current_week_pos['total_participants']})"
+    else:
+        carry_text = f"🏆 **Carry Score:** {carry_score}"
+    
+    # Pintados de ouro do campeão
+    if gold_medals > 0:
+        gold_text = f"🎨 **Pintados de Ouro:** {gold_medals}x com {campeao}"
+    else:
+        gold_text = f"🎨 **Pintados de Ouro:** Nenhum com {campeao}"
+    
+    embed.add_field(
+        name="🏅 Performance",
+        value=f"{carry_text}\n{gold_text}",
+        inline=False
+    )
+    
+    embed.set_footer(text=f"Ranked Flex • Season {current_year}")
     
     await interaction.followup.send(embed=embed)
 
@@ -1743,15 +1615,14 @@ async def flex_guide(interaction: discord.Interaction):
     )
     
     embed.add_field(
-        name="🏆 **SISTEMA DE MVP SCORE**",
+        name="🏆 **SISTEMA DE CARRY SCORE**",
         value=(
-            "**Pontuação de 0 a 100 - Sistema EXIGENTE:**\n"
-            "⚔️ **Top/Mid**: Foco em KDA\n"
-            "🌳 **Jungle**: Kill Participation + Objetivos\n"
-            "🏹 **ADC**: Farm + Dano aos campeões\n"
-            "🛡️ **Support**: Visão + Kill Participation\n\n"
-            "**Penalidades por muitas mortes ou baixa participação!**\n"
-            "**Apenas performances excepcionais recebem S/S+!**"
+            "**Vote no MVP após cada partida!**\n"
+            "🗳️ Votação automática quando a partida termina\n"
+            "👑 **Voto unânime:** +5 Carry Score\n"
+            "🥇 **1º lugar:** +3 Carry Score\n"
+            "🥈 **2º lugar:** +2 Carry Score\n\n"
+            "**Ranking semanal com premiação de cargo!**"
         ),
         inline=False
     )
@@ -1766,9 +1637,10 @@ async def flex_guide(interaction: discord.Interaction):
         name="📊 **COMANDOS PRINCIPAIS**",
         value=(
             "`/logar` • Vincule sua conta do LOL (até 3 contas)\n"
-            "`/media` • Estatísticas detalhadas por campeão/métrica\n"
+            "`/perfil` • Veja seu perfil completo com estatísticas\n"
+            "`/champinfo` • Estatísticas detalhadas de um campeão\n"
+            "`/tops_flex` • Ranking semanal de Carry Score\n"
             "`/historico` • Veja suas últimas partidas\n"
-            "`/tops_flex` • Ranking dos melhores jogadores\n"
             "`/contas` • Gerencie suas contas vinculadas"
         ),
         inline=False
@@ -1783,10 +1655,10 @@ async def flex_guide(interaction: discord.Interaction):
     embed.add_field(
         name="⚡ **DESTAQUES**",
         value=(
-            "🔄 Verificação automática a cada **5 minutos**\n"
-            "🚀 Detecção de partidas finalizadas em **10 segundos**\n"
-            "📈 Análise por campeão, role e métrica específica\n"
-            "⚠️ Alertas inteligentes de performance\n"
+            "🔄 Verificação automática a cada **3 minutos**\n"
+            "🚀 Detecção de partidas finalizadas em **60 segundos**\n"
+            "🗳️ Votação de MVP após cada partida\n"
+            "🏆 Reset semanal **segunda às 12h** com cargo\n"
             "🌍 Suporte a **todas as regiões** da Riot"
         ),
         inline=False
@@ -2705,6 +2577,7 @@ async def update_live_game_result(game_id: str, match_data: Dict):
                     # Envia votação de MVP se for a primeira mensagem processada
                     if processed_count == 1:
                         # Coleta jogadores que participaram da partida (apenas os que estão no bot)
+                        # Inclui informações da partida para exibir na votação
                         voting_players = []
                         for puuid in match_puuids:
                             cursor.execute('''
@@ -2715,10 +2588,40 @@ async def update_live_game_result(game_id: str, match_data: Dict):
                             ''', (puuid,))
                             player_info = cursor.fetchone()
                             if player_info:
-                                voting_players.append({
-                                    'discord_id': player_info[1],
-                                    'summoner_name': player_info[2]
-                                })
+                                # Busca dados da partida deste jogador
+                                player_match_data = next(
+                                    (p for p in all_players_with_scores if p['puuid'] == puuid), 
+                                    None
+                                )
+                                if player_match_data:
+                                    p = player_match_data['player']
+                                    voting_players.append({
+                                        'discord_id': player_info[1],
+                                        'summoner_name': player_info[2],
+                                        'champion': p.get('championName', 'Unknown'),
+                                        'kills': p.get('kills', 0),
+                                        'deaths': p.get('deaths', 0),
+                                        'assists': p.get('assists', 0),
+                                        'kda': player_match_data['kda'],
+                                        'damage': player_match_data['damage'],
+                                        'mvp_score': player_match_data['mvp_score'],
+                                        'win': p.get('win', False),
+                                        'placement': player_match_data['placement']
+                                    })
+                                else:
+                                    voting_players.append({
+                                        'discord_id': player_info[1],
+                                        'summoner_name': player_info[2],
+                                        'champion': 'Unknown',
+                                        'kills': 0,
+                                        'deaths': 0,
+                                        'assists': 0,
+                                        'kda': 0,
+                                        'damage': 0,
+                                        'mvp_score': 0,
+                                        'win': False,
+                                        'placement': 0
+                                    })
                         
                         if len(voting_players) >= 2:
                             print(f"🗳️ [Votação] Enviando votação com {len(voting_players)} jogadores")
@@ -2779,34 +2682,54 @@ async def send_mvp_voting(game_id: str, guild: discord.Guild, players: List[Dict
             print(f"⚠️ [Votação] Menos de 2 jogadores na partida, pulando votação")
             return
         
-        # Cria lista de jogadores para votação
+        # Cria lista de jogadores para votação (salva apenas discord_id e summoner_name)
         players_json = json.dumps([{'discord_id': p['discord_id'], 'summoner_name': p['summoner_name']} for p in players])
         
         # Cria votação pendente (expira em 5 minutos)
         db.create_pending_vote(game_id, str(guild.id), players_json, expires_minutes=5)
-
-        mentions = ", ".join([f"<@{p['discord_id']}>" for p in players])
+        
+        # Ordena jogadores por MVP Score (melhor primeiro)
+        sorted_players = sorted(players, key=lambda x: x.get('mvp_score', 0), reverse=True)
+        
+        # Determina resultado da partida
+        first_player = sorted_players[0] if sorted_players else None
+        result_emoji = "✅ VITÓRIA" if first_player and first_player.get('win', False) else "❌ DERROTA"
+        result_color = discord.Color.green() if first_player and first_player.get('win', False) else discord.Color.red()
         
         # Cria embed de votação
         embed = discord.Embed(
-            title="🗳️ VOTAÇÃO DE MVP",
+            title=f"🗳️ VOTAÇÃO DE MVP - {result_emoji}",
             description=(
-                f"**Partida finalizada!**\n"
-                f"Vote em quem você acha que foi o MVP da partida.\n\n"
-                f"**Jogadores:** {mentions}\n\n"
-                f"⏱️ Votação expira em **5 minutos**\n"
-                f"❌ Você **não pode votar em si mesmo**"
+                f"**Partida finalizada!** Vote em quem foi o MVP.\n"
+                f"⏱️ Votação expira em **5 minutos** | ❌ Não pode votar em si mesmo"
             ),
-            color=discord.Color.gold()
+            color=result_color
+        )
+        
+        # Adiciona informações de cada jogador
+        players_info = ""
+        for i, p in enumerate(sorted_players, 1):
+            win_emoji = "✅" if p.get('win', False) else "❌"
+            kda_text = f"{p.get('kills', 0)}/{p.get('deaths', 0)}/{p.get('assists', 0)}"
+            mvp_score = p.get('mvp_score', 0)
+            damage = p.get('damage', 0)
+            champion = p.get('champion', 'Unknown')
+            
+            players_info += (
+                f"**{i}º** <@{p['discord_id']}> ({champion}) {win_emoji}\n"
+                f"   ⚔️ KDA: **{kda_text}** ({p.get('kda', 0):.2f}) | 🗡️ Dano: **{damage:,}** | 🎯 MVP: **{int(mvp_score)}**\n\n"
+            )
+        
+        embed.add_field(
+            name="📊 Performance dos Jogadores",
+            value=players_info if players_info else "Sem dados",
+            inline=False
         )
         
         embed.add_field(
             name="🏆 Premiação",
             value=(
-                "• **Voto unânime (todos votam na mesma pessoa):** +5 Carry Score\n"
-                "• **1º lugar em votos:** +3 Carry Score\n"
-                "• **2º lugar em votos:** +2 Carry Score\n"
-                "• **Empate no 1º lugar:** +2 cada"
+                "👑 **Voto unânime:** +5 | 🥇 **1º lugar:** +3 | 🥈 **2º lugar:** +2"
             ),
             inline=False
         )
@@ -3713,6 +3636,27 @@ async def check_live_games():
 
                 # Marca como processada antes de processar
                 processed_game_ids.add(game_id)
+                
+                # VERIFICAÇÃO GLOBAL: Verifica se já existe mensagem para este game_id em QUALQUER servidor
+                existing_global = db.get_live_game_message_by_game_id(game_id, None)
+                if existing_global:
+                    print(f"📝 [Live Games] Já existe mensagem global para partida {game_id}, apenas marcando jogadores...")
+                    # Apenas marca os jogadores como notificados
+                    for player in players:
+                        db.mark_live_game_notified(
+                            player['account_id'],
+                            game_id,
+                            player['puuid'],
+                            player['summoner_name'],
+                            player['live_info']['championId'],
+                            player['live_info']['champion'],
+                            existing_global['message_id'],
+                            existing_global['channel_id'],
+                            existing_global['guild_id']
+                        )
+                    # Atualiza a mensagem existente
+                    await update_live_game_notification(game_id, existing_global['guild_id'], players)
+                    continue
 
                 # Determina o guild_id a ser usado (pega do primeiro jogador)
                 target_guild_id = None

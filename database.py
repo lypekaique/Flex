@@ -2088,6 +2088,41 @@ class Database:
         conn.close()
         return ranking
     
+    def get_player_current_week_position(self, discord_id: str, week_start: str, week_end: str) -> Dict:
+        """Retorna a posição atual do jogador no ranking da semana"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Busca ranking completo da semana
+        cursor.execute('''
+            SELECT discord_id, SUM(score) as total_score
+            FROM carry_scores
+            WHERE date(earned_at) >= ? AND date(earned_at) <= ?
+            GROUP BY discord_id
+            ORDER BY total_score DESC
+        ''', (week_start, week_end))
+        
+        ranking = cursor.fetchall()
+        conn.close()
+        
+        total_participants = len(ranking)
+        
+        # Encontra a posição do jogador
+        for position, (player_id, score) in enumerate(ranking, 1):
+            if player_id == discord_id:
+                return {
+                    'position': position,
+                    'total_score': score,
+                    'total_participants': total_participants
+                }
+        
+        # Jogador não está no ranking
+        return {
+            'position': 0,
+            'total_score': 0,
+            'total_participants': total_participants
+        }
+    
     def set_top_flex_role(self, guild_id: str, role_id: str) -> bool:
         """Define o cargo de premiação do top_flex para um servidor"""
         try:
@@ -2240,3 +2275,85 @@ class Database:
             'top3_count': 0,
             'avg_score': 0
         }
+
+    def get_champion_stats(self, discord_id: str, champion_name: str, year: int = None) -> Optional[Dict]:
+        """Retorna estatísticas detalhadas de um campeão específico para um jogador"""
+        from datetime import datetime
+        if year is None:
+            year = datetime.now().year
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT 
+                COUNT(*) as games,
+                SUM(CASE WHEN m.win = 1 THEN 1 ELSE 0 END) as wins,
+                AVG(m.kills) as avg_kills,
+                AVG(m.deaths) as avg_deaths,
+                AVG(m.assists) as avg_assists,
+                AVG(m.kda) as avg_kda,
+                AVG(m.damage_dealt) as avg_damage,
+                AVG(m.gold_earned) as avg_gold,
+                AVG(m.cs) as avg_cs,
+                AVG(m.vision_score) as avg_vision,
+                AVG(m.mvp_score) as avg_mvp_score,
+                AVG(m.kill_participation) as avg_kp,
+                SUM(m.game_duration) as total_time
+            FROM matches m
+            JOIN lol_accounts la ON m.lol_account_id = la.id
+            WHERE la.discord_id = ?
+              AND LOWER(m.champion_name) = LOWER(?)
+              AND (m.is_remake = 0 OR m.is_remake IS NULL)
+              AND strftime('%Y', m.played_at) = ?
+        ''', (discord_id, champion_name, str(year)))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row or row[0] == 0:
+            return None
+        
+        games = row[0]
+        wins = row[1] or 0
+        winrate = (wins / games * 100) if games > 0 else 0
+        
+        return {
+            'champion_name': champion_name,
+            'games': games,
+            'wins': wins,
+            'losses': games - wins,
+            'winrate': round(winrate, 1),
+            'avg_kills': round(row[2] or 0, 1),
+            'avg_deaths': round(row[3] or 0, 1),
+            'avg_assists': round(row[4] or 0, 1),
+            'avg_kda': round(row[5] or 0, 2),
+            'avg_damage': round(row[6] or 0, 0),
+            'avg_gold': round(row[7] or 0, 0),
+            'avg_cs': round(row[8] or 0, 1),
+            'avg_vision': round(row[9] or 0, 1),
+            'avg_mvp_score': round(row[10] or 0, 1),
+            'avg_kp': round(row[11] or 0, 1),
+            'total_time_seconds': row[12] or 0
+        }
+    
+    def get_gold_medals_by_champion(self, discord_id: str, champion_name: str, year: int = None) -> int:
+        """Retorna quantidade de pintados de ouro de um campeão específico"""
+        from datetime import datetime
+        if year is None:
+            year = datetime.now().year
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT COUNT(*) 
+            FROM gold_medals gm
+            JOIN lol_accounts la ON gm.lol_account_id = la.id
+            WHERE la.discord_id = ? 
+              AND LOWER(gm.champion_name) = LOWER(?)
+              AND gm.year = ?
+        ''', (discord_id, champion_name, year))
+        
+        result = cursor.fetchone()[0]
+        conn.close()
+        return result
