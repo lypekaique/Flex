@@ -278,7 +278,7 @@ async def on_ready():
     # Inicia verificação de partidas finalizadas
     if not check_live_games_finished.is_running():
         check_live_games_finished.start()
-        print('✅ Task de verificação de partidas finalizadas iniciada (a cada 60s)')
+        print('✅ Task de verificação de partidas finalizadas iniciada (a cada 20s)')
     else:
         print('⚠️ Task de verificação de partidas finalizadas já está rodando')
     
@@ -289,12 +289,6 @@ async def on_ready():
     else:
         print('⚠️ Task de reset semanal Top Flex já está rodando')
     
-    # Inicia radar de live track
-    if not live_track_radar.is_running():
-        live_track_radar.start()
-        print('✅ Task de radar de live track iniciada (a cada 15 minutos)')
-    else:
-        print('⚠️ Task de radar de live track já está rodando')
 
 async def region_autocomplete(
     interaction: discord.Interaction,
@@ -3949,9 +3943,9 @@ async def check_new_matches_error(error):
     traceback.print_exc()
     # Task loop automaticamente reinicia após erro
 
-@tasks.loop(seconds=60)
+@tasks.loop(seconds=20)
 async def check_live_games_finished():
-    """Task que verifica a cada 60 segundos se jogos ao vivo já terminaram"""
+    """Task que verifica a cada 20 segundos se jogos ao vivo já terminaram"""
     try:
         # Busca todas as live games notificadas recentemente (últimas 2 horas)
         live_games = db.get_active_live_games(hours=2)
@@ -4163,7 +4157,7 @@ async def before_check_live_games_finished():
     """Espera o bot estar pronto"""
     print("⏳ [Live Check] Aguardando bot estar pronto...")
     await bot.wait_until_ready()
-    print("✅ [Live Check] Iniciando verificação rápida de partidas finalizadas (10s)...")
+    print("✅ [Live Check] Iniciando verificação rápida de partidas finalizadas (20s)...")
 
 @check_live_games_finished.error
 async def check_live_games_finished_error(error):
@@ -4305,148 +4299,6 @@ async def check_weekly_reset():
 
 @check_weekly_reset.before_loop
 async def before_weekly_reset():
-    await bot.wait_until_ready()
-
-@tasks.loop(minutes=15)
-async def live_track_radar():
-    """Radar de live track - verifica partidas ao vivo que não foram notificadas"""
-    try:
-        print("\n📡 [Live Radar] Iniciando verificação de partidas não notificadas...")
-        
-        # Busca todas as contas ativas
-        accounts = db.get_all_lol_accounts()
-        
-        if not accounts:
-            print("📡 [Live Radar] Nenhuma conta encontrada")
-            return
-        
-        # Agrupa partidas por game_id
-        games_found = {}
-        
-        for account in accounts:
-            account_id = account['id']
-            puuid = account['puuid']
-            region = account['region']
-            discord_id = account['discord_id']
-            summoner_name = account['summoner_name']
-            
-            try:
-                # Verifica se está em partida ao vivo
-                game_data = await riot_api.get_live_game(puuid, region)
-                
-                if game_data:
-                    game_id = str(game_data.get('gameId', ''))
-                    
-                    if not game_id:
-                        continue
-                    
-                    # Verifica se já existe mensagem para esta partida
-                    existing_message = db.get_live_game_message_by_game_id(game_id, None)
-                    
-                    # Se existe registro no banco, verifica se a mensagem ainda existe no Discord
-                    message_exists = False
-                    if existing_message:
-                        try:
-                            guild = bot.get_guild(int(existing_message['guild_id']))
-                            if guild:
-                                channel = guild.get_channel(int(existing_message['channel_id']))
-                                if channel:
-                                    await channel.fetch_message(int(existing_message['message_id']))
-                                    message_exists = True
-                        except discord.NotFound:
-                            # Mensagem foi excluída - limpa registros do banco
-                            print(f"📡 [Live Radar] Mensagem {existing_message['message_id']} foi excluída, limpando registros...")
-                            db.clear_live_game_notifications(game_id)
-                            existing_message = None
-                        except Exception as e:
-                            print(f"📡 [Live Radar] Erro ao verificar mensagem: {e}")
-                    
-                    if existing_message and message_exists:
-                        # Já existe mensagem, verifica se este jogador está marcado
-                        if not db.is_live_game_notified(account_id, game_id):
-                            # Marca o jogador como notificado
-                            live_info = riot_api.extract_live_game_info(game_data, puuid)
-                            if live_info:
-                                db.mark_live_game_notified(
-                                    account_id, game_id, puuid, summoner_name,
-                                    live_info['championId'], live_info['champion'],
-                                    existing_message['message_id'],
-                                    existing_message['channel_id'],
-                                    existing_message['guild_id']
-                                )
-                                print(f"📡 [Live Radar] Jogador {summoner_name} marcado na partida {game_id}")
-                    else:
-                        # Não existe mensagem - agrupa para criar
-                        if game_id not in games_found:
-                            games_found[game_id] = []
-                        
-                        # Verifica se já foi notificado
-                        if not db.is_live_game_notified(account_id, game_id):
-                            live_info = riot_api.extract_live_game_info(game_data, puuid)
-                            if live_info:
-                                games_found[game_id].append({
-                                    'account_id': account_id,
-                                    'puuid': puuid,
-                                    'region': region,
-                                    'discord_id': discord_id,
-                                    'summoner_name': summoner_name,
-                                    'live_info': live_info
-                                })
-                
-                # Delay entre verificações
-                await asyncio.sleep(0.5)
-                
-            except Exception as e:
-                continue
-        
-        # Envia notificações para partidas não notificadas
-        for game_id, players in games_found.items():
-            if not players:
-                continue
-            
-            print(f"📡 [Live Radar] Partida {game_id} encontrada com {len(players)} jogador(es) não notificados")
-            
-            try:
-                if len(players) > 1:
-                    # Múltiplos jogadores - envia notificação agrupada
-                    message_info = await send_live_game_notification_grouped(game_id, players)
-                    if message_info:
-                        for player in players:
-                            db.mark_live_game_notified(
-                                player['account_id'], game_id, player['puuid'],
-                                player['summoner_name'], player['live_info']['championId'],
-                                player['live_info']['champion'],
-                                message_info.get('message_id'),
-                                message_info.get('channel_id'),
-                                message_info.get('guild_id')
-                            )
-                        print(f"📡 [Live Radar] Notificação enviada para partida {game_id}")
-                else:
-                    # Apenas 1 jogador
-                    player = players[0]
-                    message_info = await send_live_game_notification(player['account_id'], player['live_info'])
-                    if message_info:
-                        db.mark_live_game_notified(
-                            player['account_id'], game_id, player['puuid'],
-                            player['summoner_name'], player['live_info']['championId'],
-                            player['live_info']['champion'],
-                            message_info.get('message_id'),
-                            message_info.get('channel_id'),
-                            message_info.get('guild_id')
-                        )
-                        print(f"📡 [Live Radar] Notificação enviada para partida {game_id}")
-            except Exception as e:
-                print(f"📡 [Live Radar] Erro ao enviar notificação: {e}")
-        
-        print(f"📡 [Live Radar] Verificação concluída - {len(games_found)} partida(s) encontrada(s)")
-        
-    except Exception as e:
-        print(f"❌ [Live Radar] Erro: {e}")
-        import traceback
-        traceback.print_exc()
-
-@live_track_radar.before_loop
-async def before_live_radar():
     await bot.wait_until_ready()
 
 if __name__ == "__main__":
