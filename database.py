@@ -241,6 +241,56 @@ class Database:
             )
         ''')
         
+        # Tabela de votação de MVP após partida
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS mvp_votes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id TEXT NOT NULL,
+                voter_discord_id TEXT NOT NULL,
+                voted_discord_id TEXT NOT NULL,
+                voted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(game_id, voter_discord_id)
+            )
+        ''')
+        
+        # Tabela de carry score acumulado
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS carry_scores (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                discord_id TEXT NOT NULL,
+                game_id TEXT NOT NULL,
+                score INTEGER NOT NULL,
+                reason TEXT,
+                year INTEGER NOT NULL,
+                earned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(discord_id, game_id)
+            )
+        ''')
+        
+        # Tabela para rastrear votações pendentes
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS pending_votes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id TEXT NOT NULL,
+                message_id TEXT,
+                channel_id TEXT,
+                guild_id TEXT,
+                players TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP NOT NULL,
+                closed INTEGER DEFAULT 0,
+                UNIQUE(game_id, guild_id)
+            )
+        ''')
+        
+        # Migração: Adiciona coluna voting_channel_id em server_configs
+        try:
+            cursor.execute("SELECT voting_channel_id FROM server_configs LIMIT 1")
+        except sqlite3.OperationalError:
+            print("🔄 Migrando banco: adicionando coluna voting_channel_id...")
+            cursor.execute('ALTER TABLE server_configs ADD COLUMN voting_channel_id TEXT')
+            print("✅ Migração voting_channel_id concluída!")
+        
         conn.commit()
         conn.close()
     
@@ -835,7 +885,7 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT notification_channel_id, match_channel_id, command_channel_id, live_game_channel_id FROM server_configs
+            SELECT notification_channel_id, match_channel_id, command_channel_id, live_game_channel_id, voting_channel_id FROM server_configs
             WHERE guild_id = ?
         ''', (guild_id,))
         
@@ -847,7 +897,8 @@ class Database:
                 'notification_channel_id': result[0],
                 'match_channel_id': result[1],
                 'command_channel_id': result[2],
-                'live_game_channel_id': result[3]
+                'live_game_channel_id': result[3],
+                'voting_channel_id': result[4] if len(result) > 4 else None
             }
         return None
     
@@ -1769,4 +1820,208 @@ class Database:
         
         conn.close()
         return roles
-
+    
+    # ==================== SISTEMA DE VOTAÇÃO MVP ====================
+    
+    def set_voting_channel(self, guild_id: str, channel_id: str) -> bool:
+        """Define o canal de votação para um servidor"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO server_configs (guild_id, voting_channel_id, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(guild_id) DO UPDATE SET voting_channel_id = ?, updated_at = CURRENT_TIMESTAMP
+            ''', (guild_id, channel_id, channel_id))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Erro ao configurar canal de votação: {e}")
+            return False
+    
+    def get_voting_channel(self, guild_id: str) -> Optional[str]:
+        """Retorna o canal de votação configurado"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT voting_channel_id FROM server_configs WHERE guild_id = ?', (guild_id,))
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else None
+    
+    def create_pending_vote(self, game_id: str, guild_id: str, players: str, message_id: str = None, channel_id: str = None, expires_minutes: int = 5) -> bool:
+        """Cria uma votação pendente para uma partida"""
+        try:
+            from datetime import datetime, timedelta
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            expires_at = (datetime.now() + timedelta(minutes=expires_minutes)).strftime('%Y-%m-%d %H:%M:%S')
+            
+            cursor.execute('''
+                INSERT OR REPLACE INTO pending_votes (game_id, message_id, channel_id, guild_id, players, expires_at, closed)
+                VALUES (?, ?, ?, ?, ?, ?, 0)
+            ''', (game_id, message_id, channel_id, guild_id, players, expires_at))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Erro ao criar votação pendente: {e}")
+            return False
+    
+    def get_pending_vote(self, game_id: str, guild_id: str) -> Optional[Dict]:
+        """Retorna uma votação pendente"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, game_id, message_id, channel_id, guild_id, players, created_at, expires_at, closed
+            FROM pending_votes
+            WHERE game_id = ? AND guild_id = ? AND closed = 0
+        ''', (game_id, guild_id))
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result:
+            return {
+                'id': result[0],
+                'game_id': result[1],
+                'message_id': result[2],
+                'channel_id': result[3],
+                'guild_id': result[4],
+                'players': result[5],
+                'created_at': result[6],
+                'expires_at': result[7],
+                'closed': result[8]
+            }
+        return None
+    
+    def close_pending_vote(self, game_id: str, guild_id: str) -> bool:
+        """Fecha uma votação pendente"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE pending_votes SET closed = 1 WHERE game_id = ? AND guild_id = ?
+            ''', (game_id, guild_id))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Erro ao fechar votação: {e}")
+            return False
+    
+    def add_mvp_vote(self, game_id: str, voter_discord_id: str, voted_discord_id: str) -> bool:
+        """Adiciona um voto de MVP"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR REPLACE INTO mvp_votes (game_id, voter_discord_id, voted_discord_id)
+                VALUES (?, ?, ?)
+            ''', (game_id, voter_discord_id, voted_discord_id))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Erro ao adicionar voto: {e}")
+            return False
+    
+    def get_votes_for_game(self, game_id: str) -> List[Dict]:
+        """Retorna todos os votos de uma partida"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT voter_discord_id, voted_discord_id FROM mvp_votes WHERE game_id = ?
+        ''', (game_id,))
+        
+        votes = []
+        for row in cursor.fetchall():
+            votes.append({
+                'voter': row[0],
+                'voted': row[1]
+            })
+        conn.close()
+        return votes
+    
+    def get_vote_count_for_game(self, game_id: str) -> Dict[str, int]:
+        """Retorna contagem de votos por jogador"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT voted_discord_id, COUNT(*) as votes
+            FROM mvp_votes
+            WHERE game_id = ?
+            GROUP BY voted_discord_id
+            ORDER BY votes DESC
+        ''', (game_id,))
+        
+        counts = {}
+        for row in cursor.fetchall():
+            counts[row[0]] = row[1]
+        conn.close()
+        return counts
+    
+    def add_carry_score(self, discord_id: str, game_id: str, score: int, reason: str = None) -> bool:
+        """Adiciona carry score para um jogador"""
+        try:
+            from datetime import datetime
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            year = datetime.now().year
+            
+            cursor.execute('''
+                INSERT OR REPLACE INTO carry_scores (discord_id, game_id, score, reason, year)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (discord_id, game_id, score, reason, year))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Erro ao adicionar carry score: {e}")
+            return False
+    
+    def get_total_carry_score(self, discord_id: str, year: int = None) -> int:
+        """Retorna o carry score total de um jogador (filtrado por ano)"""
+        from datetime import datetime
+        if year is None:
+            year = datetime.now().year
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT COALESCE(SUM(score), 0) FROM carry_scores
+            WHERE discord_id = ? AND year = ?
+        ''', (discord_id, year))
+        
+        result = cursor.fetchone()[0]
+        conn.close()
+        return result
+    
+    def get_carry_score_ranking(self, guild_id: str = None, limit: int = 10, year: int = None) -> List[Dict]:
+        """Retorna ranking de carry score"""
+        from datetime import datetime
+        if year is None:
+            year = datetime.now().year
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Busca todos os carry scores do ano
+        cursor.execute('''
+            SELECT discord_id, SUM(score) as total_score, COUNT(*) as games
+            FROM carry_scores
+            WHERE year = ?
+            GROUP BY discord_id
+            ORDER BY total_score DESC
+            LIMIT ?
+        ''', (year, limit))
+        
+        ranking = []
+        for row in cursor.fetchall():
+            ranking.append({
+                'discord_id': row[0],
+                'total_score': row[1],
+                'games': row[2]
+            })
+        conn.close()
+        return ranking

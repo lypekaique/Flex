@@ -6,8 +6,9 @@ from dotenv import load_dotenv
 from database import Database
 from riot_api import RiotAPI
 from datetime import datetime
-from typing import Dict
+from typing import Dict, List
 import asyncio
+import json
 
 load_dotenv()
 
@@ -1087,6 +1088,7 @@ async def config_type_autocomplete(
         ('📊 Score - Avaliações individuais (MVP)', 'score'),
         ('💬 Comandos - Canal onde usuários podem usar comandos', 'comandos'),
         ('🔴 Live - Notificações de partidas ao vivo', 'live'),
+        ('🗳️ Votação - Canal para votação de MVP após partida', 'votacao'),
     ]
     return [
         app_commands.Choice(name=name, value=value)
@@ -1169,6 +1171,19 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
                     value="❌ Não configurado",
                     inline=False
                 )
+            
+            if config.get('voting_channel_id'):
+                embed.add_field(
+                    name="🗳️ Canal de Votação",
+                    value=f"<#{config['voting_channel_id']}>\nVotação de MVP após partida (Carry Score)",
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="🗳️ Canal de Votação",
+                    value="❌ Não configurado",
+                    inline=False
+                )
         else:
             embed.description = "❌ Nenhuma configuração encontrada para este servidor."
         
@@ -1188,9 +1203,9 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
     channel_id = str(canal.id)
     tipo = tipo.lower()
     
-    if tipo not in ['alertas', 'score', 'comandos', 'live']:
+    if tipo not in ['alertas', 'score', 'comandos', 'live', 'votacao']:
         await interaction.followup.send(
-            "❌ Tipo inválido! Use: `alertas`, `score`, `comandos` ou `live`",
+            "❌ Tipo inválido! Use: `alertas`, `score`, `comandos`, `live` ou `votacao`",
             ephemeral=True
         )
         return
@@ -1263,7 +1278,7 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
             await interaction.followup.send("❌ Erro ao configurar canal.", ephemeral=True)
             return
     
-    else:  # live
+    elif tipo == 'live':
         success = db.set_live_game_channel(guild_id, channel_id)
         if success:
             embed = discord.Embed(
@@ -1285,6 +1300,32 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
                     "💡 **Recomendação:** Configure ambos os canais:\n"
                     "• `live` - Para acompanhar partidas em grupo\n"
                     "• `score` - Para avaliações individuais"
+                ),
+                inline=False
+            )
+        else:
+            await interaction.followup.send("❌ Erro ao configurar canal.", ephemeral=True)
+            return
+    
+    else:  # votacao
+        success = db.set_voting_channel(guild_id, channel_id)
+        if success:
+            embed = discord.Embed(
+                title="✅ Canal de Votação Configurado!",
+                description=f"Votações de MVP serão enviadas em {canal.mention}",
+                color=discord.Color.gold()
+            )
+            embed.add_field(
+                name="🗳️ Como funciona?",
+                value=(
+                    "**Sistema de Votação MVP:**\n"
+                    "• Quando uma partida termina, os jogadores podem votar no MVP\n"
+                    "• Cada jogador vota em quem carregou a partida (não pode votar em si)\n"
+                    "• **Voto unânime (4 votos):** +5 Carry Score\n"
+                    "• **1º lugar:** +3 Carry Score\n"
+                    "• **2º lugar:** +2 Carry Score\n"
+                    "• **Empate:** +2 cada\n\n"
+                    "O Carry Score acumula durante o ano!"
                 ),
                 inline=False
             )
@@ -2505,6 +2546,31 @@ async def update_live_game_result(game_id: str, match_data: Dict):
                     print(f"🏁 [Live Update] Game ID: {game_id} - Resultado: {result_text}")
                     print(f"🏁 [Live Update] Mensagem ID: {message_id} no servidor: {guild.name}")
                     processed_count += 1
+                    
+                    # Envia votação de MVP se for a primeira mensagem processada
+                    if processed_count == 1:
+                        # Coleta jogadores que participaram da partida (apenas os que estão no bot)
+                        voting_players = []
+                        for puuid in match_puuids:
+                            cursor.execute('''
+                                SELECT la.id, u.discord_id, la.summoner_name
+                                FROM lol_accounts la
+                                JOIN users u ON la.discord_id = u.discord_id
+                                WHERE la.puuid = ?
+                            ''', (puuid,))
+                            player_info = cursor.fetchone()
+                            if player_info:
+                                voting_players.append({
+                                    'discord_id': player_info[1],
+                                    'summoner_name': player_info[2]
+                                })
+                        
+                        if len(voting_players) >= 2:
+                            print(f"🗳️ [Votação] Enviando votação com {len(voting_players)} jogadores")
+                            await send_mvp_voting(game_id, guild, voting_players)
+                        else:
+                            print(f"⚠️ [Votação] Apenas {len(voting_players)} jogador(es) no bot, pulando votação")
+                            
                 except discord.errors.Forbidden:
                     print(f"❌ [Live Update] Sem permissão para editar mensagem {message_id}")
                 except discord.errors.NotFound:
@@ -2535,6 +2601,241 @@ async def update_live_game_result(game_id: str, match_data: Dict):
         print(f"❌ [Live Update] Erro geral ao atualizar resultado: {e}")
         import traceback
         traceback.print_exc()
+
+async def send_mvp_voting(game_id: str, guild: discord.Guild, players: List[Dict]):
+    """Envia votação de MVP para o canal configurado após partida finalizada
+    
+    players: Lista de dicts com 'discord_id' e 'summoner_name' dos jogadores da partida
+    """
+    try:
+        # Verifica se há canal de votação configurado
+        voting_channel_id = db.get_voting_channel(str(guild.id))
+        if not voting_channel_id:
+            print(f"⚠️ [Votação] Canal de votação não configurado para {guild.name}")
+            return
+        
+        channel = guild.get_channel(int(voting_channel_id))
+        if not channel:
+            print(f"❌ [Votação] Canal de votação não encontrado: {voting_channel_id}")
+            return
+        
+        # Precisa de pelo menos 2 jogadores para votar
+        if len(players) < 2:
+            print(f"⚠️ [Votação] Menos de 2 jogadores na partida, pulando votação")
+            return
+        
+        # Cria lista de jogadores para votação
+        players_json = json.dumps([{'discord_id': p['discord_id'], 'summoner_name': p['summoner_name']} for p in players])
+        
+        # Cria votação pendente (expira em 5 minutos)
+        db.create_pending_vote(game_id, str(guild.id), players_json, expires_minutes=5)
+        
+        # Cria embed de votação
+        embed = discord.Embed(
+            title="🗳️ VOTAÇÃO DE MVP",
+            description=(
+                f"**Partida finalizada!**\n"
+                f"Vote em quem você acha que foi o MVP da partida.\n\n"
+                f"**Jogadores:** {', '.join([f'<@{p['discord_id']}>' for p in players])}\n\n"
+                f"⏱️ Votação expira em **5 minutos**\n"
+                f"❌ Você **não pode votar em si mesmo**"
+            ),
+            color=discord.Color.gold()
+        )
+        
+        embed.add_field(
+            name="🏆 Premiação",
+            value=(
+                "• **Voto unânime (todos votam na mesma pessoa):** +5 Carry Score\n"
+                "• **1º lugar em votos:** +3 Carry Score\n"
+                "• **2º lugar em votos:** +2 Carry Score\n"
+                "• **Empate no 1º lugar:** +2 cada"
+            ),
+            inline=False
+        )
+        
+        # Cria view com botões de votação
+        view = MVPVotingView(game_id, players, str(guild.id))
+        
+        message = await channel.send(embed=embed, view=view)
+        
+        # Atualiza votação pendente com message_id
+        db.create_pending_vote(game_id, str(guild.id), players_json, str(message.id), str(channel.id), expires_minutes=5)
+        
+        print(f"✅ [Votação] Votação enviada para partida {game_id} em {guild.name}")
+        
+    except Exception as e:
+        print(f"❌ [Votação] Erro ao enviar votação: {e}")
+        import traceback
+        traceback.print_exc()
+
+class MVPVotingView(discord.ui.View):
+    """View com botões para votação de MVP"""
+    
+    def __init__(self, game_id: str, players: List[Dict], guild_id: str):
+        super().__init__(timeout=300)  # 5 minutos
+        self.game_id = game_id
+        self.players = players
+        self.guild_id = guild_id
+        
+        # Adiciona um botão para cada jogador
+        for i, player in enumerate(players):
+            button = discord.ui.Button(
+                label=player['summoner_name'][:20],  # Limita nome a 20 chars
+                style=discord.ButtonStyle.primary,
+                custom_id=f"vote_{game_id}_{player['discord_id']}"
+            )
+            button.callback = self.create_vote_callback(player['discord_id'], player['summoner_name'])
+            self.add_item(button)
+    
+    def create_vote_callback(self, voted_discord_id: str, summoner_name: str):
+        async def callback(interaction: discord.Interaction):
+            voter_id = str(interaction.user.id)
+            
+            # Verifica se o votante está na lista de jogadores
+            player_ids = [p['discord_id'] for p in self.players]
+            if voter_id not in player_ids:
+                await interaction.response.send_message(
+                    "❌ Apenas jogadores que participaram da partida podem votar!",
+                    ephemeral=True
+                )
+                return
+            
+            # Verifica se está votando em si mesmo
+            if voter_id == voted_discord_id:
+                await interaction.response.send_message(
+                    "❌ Você não pode votar em si mesmo!",
+                    ephemeral=True
+                )
+                return
+            
+            # Registra o voto
+            db.add_mvp_vote(self.game_id, voter_id, voted_discord_id)
+            
+            await interaction.response.send_message(
+                f"✅ Você votou em **{summoner_name}** como MVP!",
+                ephemeral=True
+            )
+            
+            # Verifica se todos votaram
+            votes = db.get_votes_for_game(self.game_id)
+            total_players = len(self.players)
+            
+            if len(votes) >= total_players:
+                await self.finalize_voting(interaction)
+        
+        return callback
+    
+    async def finalize_voting(self, interaction: discord.Interaction):
+        """Finaliza a votação e distribui carry score"""
+        try:
+            vote_counts = db.get_vote_count_for_game(self.game_id)
+            
+            if not vote_counts:
+                return
+            
+            # Ordena por quantidade de votos
+            sorted_votes = sorted(vote_counts.items(), key=lambda x: x[1], reverse=True)
+            total_voters = len(self.players)
+            
+            results_text = "**Resultado da Votação:**\n\n"
+            
+            # Verifica se é voto unânime (todos votaram na mesma pessoa)
+            if len(sorted_votes) == 1 and sorted_votes[0][1] == total_voters:
+                # Voto unânime - +5 carry score
+                winner_id = sorted_votes[0][0]
+                db.add_carry_score(winner_id, self.game_id, 5, "Voto unânime de MVP")
+                
+                try:
+                    winner = await bot.fetch_user(int(winner_id))
+                    results_text += f"👑 **VOTO UNÂNIME!** <@{winner_id}> recebeu **+5 Carry Score**!"
+                except:
+                    results_text += f"👑 **VOTO UNÂNIME!** <@{winner_id}> recebeu **+5 Carry Score**!"
+            else:
+                # Distribui pontos normalmente
+                first_place_votes = sorted_votes[0][1] if sorted_votes else 0
+                
+                # Encontra todos os empatados em primeiro
+                first_place_winners = [v[0] for v in sorted_votes if v[1] == first_place_votes]
+                
+                if len(first_place_winners) > 1:
+                    # Empate no primeiro lugar - +2 cada
+                    for winner_id in first_place_winners:
+                        db.add_carry_score(winner_id, self.game_id, 2, "Empate em 1º lugar MVP")
+                        results_text += f"🥇 <@{winner_id}> - **{first_place_votes} votos** → **+2 Carry Score** (empate)\n"
+                else:
+                    # Primeiro lugar único - +3
+                    winner_id = first_place_winners[0]
+                    db.add_carry_score(winner_id, self.game_id, 3, "1º lugar MVP")
+                    results_text += f"🥇 <@{winner_id}> - **{first_place_votes} votos** → **+3 Carry Score**\n"
+                    
+                    # Segundo lugar (se existir e não for empate)
+                    if len(sorted_votes) > 1:
+                        second_place_votes = sorted_votes[1][1]
+                        second_place_winners = [v[0] for v in sorted_votes if v[1] == second_place_votes and v[0] not in first_place_winners]
+                        
+                        for second_id in second_place_winners:
+                            db.add_carry_score(second_id, self.game_id, 2, "2º lugar MVP")
+                            results_text += f"🥈 <@{second_id}> - **{second_place_votes} votos** → **+2 Carry Score**\n"
+            
+            # Fecha a votação
+            db.close_pending_vote(self.game_id, self.guild_id)
+            
+            # Atualiza a mensagem original
+            embed = discord.Embed(
+                title="🏆 VOTAÇÃO ENCERRADA",
+                description=results_text,
+                color=discord.Color.green()
+            )
+            
+            # Desabilita todos os botões
+            for item in self.children:
+                item.disabled = True
+            
+            await interaction.message.edit(embed=embed, view=self)
+            
+            print(f"✅ [Votação] Votação finalizada para partida {self.game_id}")
+            
+        except Exception as e:
+            print(f"❌ [Votação] Erro ao finalizar votação: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    async def on_timeout(self):
+        """Chamado quando a votação expira"""
+        try:
+            vote_counts = db.get_vote_count_for_game(self.game_id)
+            
+            if vote_counts:
+                # Processa votos mesmo com timeout
+                sorted_votes = sorted(vote_counts.items(), key=lambda x: x[1], reverse=True)
+                
+                results_text = "**Votação encerrada por tempo:**\n\n"
+                
+                if sorted_votes:
+                    first_place_votes = sorted_votes[0][1]
+                    first_place_winners = [v[0] for v in sorted_votes if v[1] == first_place_votes]
+                    
+                    if len(first_place_winners) > 1:
+                        for winner_id in first_place_winners:
+                            db.add_carry_score(winner_id, self.game_id, 2, "Empate em 1º lugar MVP (timeout)")
+                            results_text += f"🥇 <@{winner_id}> - **{first_place_votes} votos** → **+2 Carry Score**\n"
+                    else:
+                        winner_id = first_place_winners[0]
+                        db.add_carry_score(winner_id, self.game_id, 3, "1º lugar MVP (timeout)")
+                        results_text += f"🥇 <@{winner_id}> - **{first_place_votes} votos** → **+3 Carry Score**\n"
+                
+                # Fecha a votação
+                db.close_pending_vote(self.game_id, self.guild_id)
+                
+                print(f"⏱️ [Votação] Votação expirada para partida {self.game_id}, votos processados")
+            else:
+                results_text = "**Votação encerrada - Nenhum voto recebido**"
+                db.close_pending_vote(self.game_id, self.guild_id)
+                print(f"⏱️ [Votação] Votação expirada para partida {self.game_id}, sem votos")
+            
+        except Exception as e:
+            print(f"❌ [Votação] Erro no timeout: {e}")
 
 async def check_champion_performance(lol_account_id: int, champion_name: str):
     """Sistema de PROIBIÇÃO PROGRESSIVA - Verifica se o jogador teve performances ruins com o mesmo campeão
