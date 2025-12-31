@@ -98,9 +98,9 @@ class FlexGuideView(discord.ui.View):
             value=(
                 "`/logar` - Vincular sua conta do LoL\n"
                 "`/contas` - Ver suas contas vinculadas\n"
+                "`/perfil` - Ver perfil completo com pintados de ouro\n"
                 "`/media` - Ver estatísticas (por campeão, métrica, outro jogador)\n"
                 "`/historico` - Ver histórico de partidas\n"
-                "`/tops_flex` - Ver ranking dos melhores\n"
                 "`/flex` - Ver este guia novamente"
             ),
             inline=False
@@ -1286,82 +1286,187 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
     embed.set_footer(text="Use /configurar para ver todas as configurações")
     await interaction.followup.send(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="tops_flex", description="🏆 Veja o ranking dos melhores jogadores de Flex do mês")
+@bot.tree.command(name="perfil", description="👤 Veja seu perfil completo com estatísticas e pintados de ouro")
 @app_commands.describe(
-    quantidade="Quantidade de jogadores no ranking (padrão: 10)"
+    usuario="Ver perfil de outro jogador (opcional)",
+    ano="Ano/Season para ver estatísticas (padrão: ano atual)"
 )
-async def tops_flex(interaction: discord.Interaction, quantidade: int = 10):
-    """Mostra o ranking dos melhores jogadores por MVP score"""
+async def perfil(interaction: discord.Interaction, usuario: discord.User = None, ano: int = None):
+    """Mostra o perfil completo do jogador com estatísticas e pintados de ouro"""
     if not await check_command_channel(interaction):
         return
     
     await interaction.response.defer()
     
-    quantidade = max(5, min(quantidade, 25))
+    # Define o ano (padrão: ano atual)
+    current_year = datetime.now().year
+    year = ano if ano else current_year
     
-    ranking = db.get_top_players_by_mvp(limit=quantidade, min_games=5)
+    # Define o usuário alvo
+    target_user = usuario or interaction.user
+    discord_id = str(target_user.id)
     
-    if not ranking:
+    # Busca contas vinculadas
+    accounts = db.get_user_accounts(discord_id)
+    
+    if not accounts:
+        if usuario:
+            await interaction.followup.send(
+                f"❌ **{target_user.display_name}** não tem nenhuma conta vinculada.",
+                ephemeral=True
+            )
+        else:
+            await interaction.followup.send(
+                "❌ Você não tem nenhuma conta vinculada.\n"
+                "Use `/logar` para vincular sua conta do LoL!",
+                ephemeral=True
+            )
+        return
+    
+    # Busca estatísticas do perfil (filtrado por ano)
+    profile_stats = db.get_profile_stats(discord_id, year)
+    
+    if profile_stats['total_matches'] == 0:
         await interaction.followup.send(
-            "❌ Ainda não há jogadores suficientes no ranking.\n"
-            "**Mínimo:** 5 partidas de Flex no mês."
+            f"❌ {'**' + target_user.display_name + '**' if usuario else 'Você'} não tem partidas registradas em **{year}**.\n"
+            "Jogue algumas partidas de Ranked Flex para ver suas estatísticas!",
+            ephemeral=True
         )
         return
     
-    now = datetime.now()
+    # Busca top 3 campeões (filtrado por ano)
+    top_champions = db.get_top_champions(discord_id, limit=3, year=year)
+    
+    # Busca estatísticas por role (filtrado por ano)
+    role_stats = db.get_role_stats(discord_id, year)
+    
+    # Busca pintados de ouro (filtrado por ano)
+    total_gold_medals = db.get_total_gold_medals_by_discord(discord_id, year)
+    gold_by_champion = db.get_gold_medals_by_champion_all_accounts(discord_id, year)
+    gold_by_role = db.get_gold_medals_by_role_all_accounts(discord_id, year)
+    
+    # Formata tempo de jogo
+    total_seconds = profile_stats['total_time_seconds']
+    hours = int(total_seconds // 3600)
+    minutes = int((total_seconds % 3600) // 60)
+    
+    # Determina cor baseada no winrate
+    winrate = profile_stats['winrate']
+    if winrate >= 60:
+        color = discord.Color.gold()
+    elif winrate >= 50:
+        color = discord.Color.green()
+    elif winrate >= 45:
+        color = discord.Color.orange()
+    else:
+        color = discord.Color.red()
+    
+    # Título com indicação de ano
+    year_text = f" • Season {year}" if year != current_year else ""
+    
+    # Cria embed principal
     embed = discord.Embed(
-        title="🏆 TOP FLEX PLAYERS - RANKING",
-        description=f"**{now.strftime('%B/%Y')}** • Mínimo: 5 partidas\n_Ordenado por MVP Score_",
-        color=discord.Color.gold()
+        title=f"👤 Perfil de {target_user.display_name}{year_text}",
+        description=f"**Contas vinculadas:** {len(accounts)}\n" + 
+                    " • ".join([f"`{acc['summoner_name']}`" for acc in accounts]),
+        color=color
     )
     
-    # Emojis de medalha
-    medals = ["🥇", "🥈", "🥉"]
+    # Avatar do usuário
+    embed.set_thumbnail(url=target_user.display_avatar.url)
     
-    for i, player in enumerate(ranking, 1):
-        # Emoji da posição
-        if i <= 3:
-            position_emoji = medals[i-1]
-        else:
-            position_emoji = f"**#{i}**"
-        
-        # Determina rank baseado no MVP score
-        avg_mvp = player['avg_mvp']
-        
-        if avg_mvp >= 90:
-            rank_emoji = "👑"
-        elif avg_mvp >= 80:
-            rank_emoji = "⭐"
-        elif avg_mvp >= 70:
-            rank_emoji = "💎"
-        elif avg_mvp >= 60:
-            rank_emoji = "🥈"
-        elif avg_mvp >= 50:
-            rank_emoji = "📊"
-        else:
-            rank_emoji = "📉"
-        
-        # Busca usuário do Discord
-        try:
-            user = await bot.fetch_user(int(player['discord_id']))
-            player_name = f"{user.mention}"
-        except:
-            player_name = player['summoner_name']
-        
-        player_info = f"""
-{position_emoji} {player_name} • {rank_emoji}
-👑 **MVP Score:** {int(avg_mvp)}/100
-🎮 Jogos: **{player['total_games']}** | ✅ WR: **{player['win_rate']:.1f}%**
-⚔️ KDA: **{player['avg_kda']:.2f}** | 🎯 KP: **{player['avg_kp']:.1f}%**
-        """
+    # Estatísticas gerais
+    embed.add_field(
+        name="📊 Estatísticas Gerais",
+        value=(
+            f"🎮 **Partidas:** {profile_stats['total_matches']}\n"
+            f"✅ **Vitórias:** {profile_stats['wins']} ({profile_stats['winrate']}%)\n"
+            f"❌ **Derrotas:** {profile_stats['losses']}\n"
+            f"⏱️ **Tempo de Jogo:** {hours}h {minutes}min\n"
+            f"🎨 **Pintados de Ouro:** {total_gold_medals}"
+        ),
+        inline=True
+    )
+    
+    # Médias gerais
+    embed.add_field(
+        name="📈 Médias por Partida",
+        value=(
+            f"⚔️ **KDA:** {profile_stats['avg_kda']:.2f}\n"
+            f"🗡️ **Dano:** {int(profile_stats['avg_damage']):,}\n"
+            f"💰 **Gold:** {int(profile_stats['avg_gold']):,}\n"
+            f"🌾 **CS:** {profile_stats['avg_cs']:.1f}\n"
+            f"👁️ **Visão:** {profile_stats['avg_vision']:.1f}\n"
+            f"🎯 **MVP Score:** {profile_stats['avg_mvp_score']:.1f}"
+        ),
+        inline=True
+    )
+    
+    # Top 3 campeões
+    if top_champions:
+        champ_text = ""
+        medals = ["🥇", "🥈", "🥉"]
+        for i, champ in enumerate(top_champions):
+            medal = medals[i] if i < 3 else "•"
+            champ_text += (
+                f"{medal} **{champ['champion_name']}** ({champ['games']} jogos)\n"
+                f"   WR: {champ['winrate']}% | KDA: {champ['avg_kda']:.2f} | Dano: {int(champ['avg_damage']):,}\n"
+            )
         
         embed.add_field(
-            name=f"{player['summoner_name']} ({player['region'].upper()})",
-            value=player_info.strip(),
+            name="🏆 Top 3 Campeões Mais Jogados",
+            value=champ_text,
             inline=False
         )
     
-    embed.set_footer(text="Apenas Ranked Flex • Atualizado em tempo real")
+    # Pintados de ouro por campeão (top 5)
+    if gold_by_champion:
+        gold_champ_text = ""
+        for i, medal in enumerate(gold_by_champion[:5]):
+            gold_champ_text += f"🎨 **{medal['champion_name']}:** {medal['count']}x\n"
+        
+        embed.add_field(
+            name="🎨 Pintados de Ouro por Campeão",
+            value=gold_champ_text if gold_champ_text else "Nenhum ainda",
+            inline=True
+        )
+    
+    # Pintados de ouro por role
+    if gold_by_role:
+        role_emojis = {
+            'Top': '⚔️', 'Jungle': '🌳', 'Mid': '✨', 
+            'ADC': '🏹', 'Support': '🛡️', 'Unknown': '❓'
+        }
+        gold_role_text = ""
+        for medal in gold_by_role:
+            role_emoji = role_emojis.get(medal['role'], '❓')
+            gold_role_text += f"{role_emoji} **{medal['role']}:** {medal['count']}x\n"
+        
+        embed.add_field(
+            name="🎨 Pintados de Ouro por Lane",
+            value=gold_role_text if gold_role_text else "Nenhum ainda",
+            inline=True
+        )
+    
+    # Estatísticas por role
+    if role_stats:
+        role_emojis = {
+            'Top': '⚔️', 'Jungle': '🌳', 'Mid': '✨', 
+            'ADC': '🏹', 'Support': '🛡️', 'Unknown': '❓'
+        }
+        role_text = ""
+        for role in role_stats[:5]:  # Top 5 roles
+            role_emoji = role_emojis.get(role['role'], '❓')
+            role_text += f"{role_emoji} **{role['role']}:** {role['games']} jogos ({role['winrate']}% WR)\n"
+        
+        embed.add_field(
+            name="🎭 Partidas por Lane",
+            value=role_text,
+            inline=False
+        )
+    
+    embed.set_footer(text=f"Ranked Flex • Season {year} • Use /media para estatísticas detalhadas")
+    
     await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="flex", description="🎯 Guia completo do bot com botões interativos")
@@ -3336,6 +3441,18 @@ async def process_account_batch(account_id: int, puuid: str, region: str, riot_a
                             print(f"⚠️ [Partidas] Remake registrado: {match_id} ({stats['game_duration']}s)")
                         else:
                             print(f"✅ [Partidas] Nova partida registrada: {match_id} (MVP: {stats.get('mvp_score', 0)})")
+                            
+                            # Registra pintado de ouro se teve nota abaixo de 35 pontos
+                            mvp_score = stats.get('mvp_score', 0)
+                            if mvp_score < 35:
+                                db.add_gold_medal(
+                                    account_id, 
+                                    stats['champion_name'], 
+                                    stats.get('role', 'Unknown'), 
+                                    match_id,
+                                    mvp_score
+                                )
+                                print(f"🎨 [Pintado de Ouro] {stats['champion_name']} - Nota: {mvp_score}")
 
                         # Verifica performance apenas se não for remake
                         if not stats.get('is_remake', False):
@@ -3555,6 +3672,18 @@ async def check_live_games_finished():
                                     print(f"⚠️ [Live Check] Remake detectado: {match_id} ({stats['game_duration']}s)")
                                 else:
                                     print(f"✅ [Live Check] Partida terminada detectada: {match_id} (MVP: {stats.get('mvp_score', 0)})")
+                                    
+                                    # Registra pintado de ouro se teve nota abaixo de 35 pontos
+                                    mvp_score = stats.get('mvp_score', 0)
+                                    if mvp_score < 35:
+                                        db.add_gold_medal(
+                                            account_id, 
+                                            stats['champion_name'], 
+                                            stats.get('role', 'Unknown'), 
+                                            match_id,
+                                            mvp_score
+                                        )
+                                        print(f"🎨 [Pintado de Ouro] {stats['champion_name']} - Nota: {mvp_score}")
 
                                 # Envia notificação individual com estatísticas detalhadas
                                 print(f"📨 [Live Check] Enviando notificação individual de estatísticas para {account_id}")

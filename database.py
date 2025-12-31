@@ -225,6 +225,22 @@ class Database:
             )
         ''')
         
+        # Tabela de estatísticas de pintado de ouro (notas baixas - abaixo da média)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS gold_medals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                lol_account_id INTEGER NOT NULL,
+                champion_name TEXT NOT NULL,
+                role TEXT NOT NULL,
+                match_id TEXT NOT NULL,
+                mvp_score REAL DEFAULT 0,
+                year INTEGER NOT NULL,
+                earned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (lol_account_id) REFERENCES lol_accounts(id),
+                UNIQUE(lol_account_id, match_id)
+            )
+        ''')
+        
         conn.commit()
         conn.close()
     
@@ -1311,4 +1327,350 @@ class Database:
         except Exception as e:
             print(f"❌ Erro ao marcar notificação: {e}")
             return False
+    
+    # ==================== SISTEMA DE PINTADO DE OURO (NOTAS BAIXAS) ====================
+    
+    def add_gold_medal(self, lol_account_id: int, champion_name: str, role: str, match_id: str, mvp_score: float, year: int = None) -> bool:
+        """Adiciona um pintado de ouro (nota baixa - abaixo da média) para uma conta"""
+        try:
+            from datetime import datetime
+            if year is None:
+                year = datetime.now().year
+            
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR IGNORE INTO gold_medals
+                (lol_account_id, champion_name, role, match_id, mvp_score, year)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (lol_account_id, champion_name, role, match_id, mvp_score, year))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"❌ Erro ao adicionar pintado de ouro: {e}")
+            return False
+    
+    def get_gold_medals_by_champion(self, lol_account_id: int, year: int = None) -> List[Dict]:
+        """Retorna contagem de pintados de ouro por campeão (filtrado por ano)"""
+        from datetime import datetime
+        if year is None:
+            year = datetime.now().year
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT champion_name, COUNT(*) as count
+            FROM gold_medals
+            WHERE lol_account_id = ? AND year = ?
+            GROUP BY champion_name
+            ORDER BY count DESC
+        ''', (lol_account_id, year))
+        
+        results = []
+        for row in cursor.fetchall():
+            results.append({
+                'champion_name': row[0],
+                'count': row[1]
+            })
+        
+        conn.close()
+        return results
+    
+    def get_gold_medals_by_role(self, lol_account_id: int, year: int = None) -> List[Dict]:
+        """Retorna contagem de pintados de ouro por role/lane (filtrado por ano)"""
+        from datetime import datetime
+        if year is None:
+            year = datetime.now().year
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT role, COUNT(*) as count
+            FROM gold_medals
+            WHERE lol_account_id = ? AND year = ?
+            GROUP BY role
+            ORDER BY count DESC
+        ''', (lol_account_id, year))
+        
+        results = []
+        for row in cursor.fetchall():
+            results.append({
+                'role': row[0],
+                'count': row[1]
+            })
+        
+        conn.close()
+        return results
+    
+    def get_total_gold_medals(self, lol_account_id: int, year: int = None) -> int:
+        """Retorna total de pintados de ouro de uma conta (filtrado por ano)"""
+        from datetime import datetime
+        if year is None:
+            year = datetime.now().year
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT COUNT(*) FROM gold_medals
+            WHERE lol_account_id = ? AND year = ?
+        ''', (lol_account_id, year))
+        
+        result = cursor.fetchone()[0]
+        conn.close()
+        return result
+    
+    def get_total_gold_medals_by_discord(self, discord_id: str, year: int = None) -> int:
+        """Retorna total de pintados de ouro de todas as contas de um usuário Discord (filtrado por ano)"""
+        from datetime import datetime
+        if year is None:
+            year = datetime.now().year
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT COUNT(*) FROM gold_medals gm
+            JOIN lol_accounts la ON gm.lol_account_id = la.id
+            WHERE la.discord_id = ? AND gm.year = ?
+        ''', (discord_id, year))
+        
+        result = cursor.fetchone()[0]
+        conn.close()
+        return result
+    
+    def get_gold_medals_by_champion_all_accounts(self, discord_id: str, year: int = None) -> List[Dict]:
+        """Retorna contagem de pintados de ouro por campeão de todas as contas (filtrado por ano)"""
+        from datetime import datetime
+        if year is None:
+            year = datetime.now().year
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT gm.champion_name, COUNT(*) as count
+            FROM gold_medals gm
+            JOIN lol_accounts la ON gm.lol_account_id = la.id
+            WHERE la.discord_id = ? AND gm.year = ?
+            GROUP BY gm.champion_name
+            ORDER BY count DESC
+        ''', (discord_id, year))
+        
+        results = []
+        for row in cursor.fetchall():
+            results.append({
+                'champion_name': row[0],
+                'count': row[1]
+            })
+        
+        conn.close()
+        return results
+    
+    def get_gold_medals_by_role_all_accounts(self, discord_id: str, year: int = None) -> List[Dict]:
+        """Retorna contagem de pintados de ouro por role de todas as contas (filtrado por ano)"""
+        from datetime import datetime
+        if year is None:
+            year = datetime.now().year
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT gm.role, COUNT(*) as count
+            FROM gold_medals gm
+            JOIN lol_accounts la ON gm.lol_account_id = la.id
+            WHERE la.discord_id = ? AND gm.year = ?
+            GROUP BY gm.role
+            ORDER BY count DESC
+        ''', (discord_id, year))
+        
+        results = []
+        for row in cursor.fetchall():
+            results.append({
+                'role': row[0],
+                'count': row[1]
+            })
+        
+        conn.close()
+        return results
+    
+    # ==================== ESTATÍSTICAS DO PERFIL ====================
+    
+    def get_profile_stats(self, discord_id: str, year: int = None) -> Dict:
+        """Retorna estatísticas completas do perfil de um usuário (todas as contas, filtrado por ano)"""
+        from datetime import datetime
+        if year is None:
+            year = datetime.now().year
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Total de partidas, tempo de jogo, vitórias (filtrado por ano)
+        cursor.execute('''
+            SELECT 
+                COUNT(*) as total_matches,
+                SUM(m.game_duration) as total_time,
+                SUM(CASE WHEN m.win = 1 THEN 1 ELSE 0 END) as wins,
+                AVG(m.kills) as avg_kills,
+                AVG(m.deaths) as avg_deaths,
+                AVG(m.assists) as avg_assists,
+                AVG(m.kda) as avg_kda,
+                AVG(m.damage_dealt) as avg_damage,
+                AVG(m.gold_earned) as avg_gold,
+                AVG(m.cs) as avg_cs,
+                AVG(m.vision_score) as avg_vision,
+                AVG(m.mvp_score) as avg_mvp_score
+            FROM matches m
+            JOIN lol_accounts la ON m.lol_account_id = la.id
+            WHERE la.discord_id = ?
+              AND (m.is_remake = 0 OR m.is_remake IS NULL)
+              AND strftime('%Y', m.played_at) = ?
+        ''', (discord_id, str(year)))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row or row[0] == 0:
+            return {
+                'total_matches': 0,
+                'total_time_seconds': 0,
+                'wins': 0,
+                'losses': 0,
+                'winrate': 0,
+                'avg_kills': 0,
+                'avg_deaths': 0,
+                'avg_assists': 0,
+                'avg_kda': 0,
+                'avg_damage': 0,
+                'avg_gold': 0,
+                'avg_cs': 0,
+                'avg_vision': 0,
+                'avg_mvp_score': 0
+            }
+        
+        total_matches = row[0] or 0
+        wins = row[2] or 0
+        losses = total_matches - wins
+        winrate = (wins / total_matches * 100) if total_matches > 0 else 0
+        
+        return {
+            'total_matches': total_matches,
+            'total_time_seconds': row[1] or 0,
+            'wins': wins,
+            'losses': losses,
+            'winrate': round(winrate, 1),
+            'avg_kills': round(row[3] or 0, 1),
+            'avg_deaths': round(row[4] or 0, 1),
+            'avg_assists': round(row[5] or 0, 1),
+            'avg_kda': round(row[6] or 0, 2),
+            'avg_damage': round(row[7] or 0, 0),
+            'avg_gold': round(row[8] or 0, 0),
+            'avg_cs': round(row[9] or 0, 1),
+            'avg_vision': round(row[10] or 0, 1),
+            'avg_mvp_score': round(row[11] or 0, 1)
+        }
+    
+    def get_top_champions(self, discord_id: str, limit: int = 3, year: int = None) -> List[Dict]:
+        """Retorna os campeões mais jogados com estatísticas detalhadas (filtrado por ano)"""
+        from datetime import datetime
+        if year is None:
+            year = datetime.now().year
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT 
+                m.champion_name,
+                COUNT(*) as games,
+                SUM(CASE WHEN m.win = 1 THEN 1 ELSE 0 END) as wins,
+                AVG(m.kills) as avg_kills,
+                AVG(m.deaths) as avg_deaths,
+                AVG(m.assists) as avg_assists,
+                AVG(m.kda) as avg_kda,
+                AVG(m.damage_dealt) as avg_damage,
+                AVG(m.gold_earned) as avg_gold,
+                AVG(m.cs) as avg_cs,
+                AVG(m.vision_score) as avg_vision,
+                AVG(m.mvp_score) as avg_mvp_score,
+                AVG(m.kill_participation) as avg_kp
+            FROM matches m
+            JOIN lol_accounts la ON m.lol_account_id = la.id
+            WHERE la.discord_id = ?
+              AND (m.is_remake = 0 OR m.is_remake IS NULL)
+              AND strftime('%Y', m.played_at) = ?
+            GROUP BY m.champion_name
+            ORDER BY games DESC
+            LIMIT ?
+        ''', (discord_id, str(year), limit))
+        
+        champions = []
+        for row in cursor.fetchall():
+            games = row[1]
+            wins = row[2]
+            winrate = (wins / games * 100) if games > 0 else 0
+            
+            champions.append({
+                'champion_name': row[0],
+                'games': games,
+                'wins': wins,
+                'losses': games - wins,
+                'winrate': round(winrate, 1),
+                'avg_kills': round(row[3] or 0, 1),
+                'avg_deaths': round(row[4] or 0, 1),
+                'avg_assists': round(row[5] or 0, 1),
+                'avg_kda': round(row[6] or 0, 2),
+                'avg_damage': round(row[7] or 0, 0),
+                'avg_gold': round(row[8] or 0, 0),
+                'avg_cs': round(row[9] or 0, 1),
+                'avg_vision': round(row[10] or 0, 1),
+                'avg_mvp_score': round(row[11] or 0, 1),
+                'avg_kp': round(row[12] or 0, 1)
+            })
+        
+        conn.close()
+        return champions
+    
+    def get_role_stats(self, discord_id: str, year: int = None) -> List[Dict]:
+        """Retorna estatísticas por role/lane (filtrado por ano)"""
+        from datetime import datetime
+        if year is None:
+            year = datetime.now().year
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT 
+                m.role,
+                COUNT(*) as games,
+                SUM(CASE WHEN m.win = 1 THEN 1 ELSE 0 END) as wins,
+                AVG(m.kda) as avg_kda,
+                AVG(m.mvp_score) as avg_mvp_score
+            FROM matches m
+            JOIN lol_accounts la ON m.lol_account_id = la.id
+            WHERE la.discord_id = ?
+              AND (m.is_remake = 0 OR m.is_remake IS NULL)
+              AND m.role IS NOT NULL
+              AND m.role != 'Unknown'
+              AND strftime('%Y', m.played_at) = ?
+            GROUP BY m.role
+            ORDER BY games DESC
+        ''', (discord_id, str(year)))
+        
+        roles = []
+        for row in cursor.fetchall():
+            games = row[1]
+            wins = row[2]
+            winrate = (wins / games * 100) if games > 0 else 0
+            
+            roles.append({
+                'role': row[0],
+                'games': games,
+                'wins': wins,
+                'winrate': round(winrate, 1),
+                'avg_kda': round(row[3] or 0, 2),
+                'avg_mvp_score': round(row[4] or 0, 1)
+            })
+        
+        conn.close()
+        return roles
 
