@@ -12,6 +12,27 @@ import json
 
 load_dotenv()
 
+# Lista de campeões do League of Legends para autocomplete
+CHAMPIONS_LIST = [
+    "Aatrox", "Ahri", "Akali", "Akshan", "Alistar", "Ambessa", "Amumu", "Anivia", "Annie", "Aphelios",
+    "Ashe", "Aurelion Sol", "Aurora", "Azir", "Bard", "Bel'Veth", "Blitzcrank", "Brand", "Braum", "Briar",
+    "Caitlyn", "Camille", "Cassiopeia", "Cho'Gath", "Corki", "Darius", "Diana", "Dr. Mundo", "Draven",
+    "Ekko", "Elise", "Evelynn", "Ezreal", "Fiddlesticks", "Fiora", "Fizz", "Galio", "Gangplank", "Garen",
+    "Gnar", "Gragas", "Graves", "Gwen", "Hecarim", "Heimerdinger", "Hwei", "Illaoi", "Irelia", "Ivern",
+    "Janna", "Jarvan IV", "Jax", "Jayce", "Jhin", "Jinx", "K'Sante", "Kai'Sa", "Kalista", "Karma",
+    "Karthus", "Kassadin", "Katarina", "Kayle", "Kayn", "Kennen", "Kha'Zix", "Kindred", "Kled", "Kog'Maw",
+    "LeBlanc", "Lee Sin", "Leona", "Lillia", "Lissandra", "Lucian", "Lulu", "Lux", "Malphite", "Malzahar",
+    "Maokai", "Master Yi", "Mel", "Milio", "Miss Fortune", "Mordekaiser", "Morgana", "Naafiri", "Nami", "Nasus",
+    "Nautilus", "Neeko", "Nidalee", "Nilah", "Nocturne", "Nunu & Willump", "Olaf", "Orianna", "Ornn", "Pantheon",
+    "Poppy", "Pyke", "Qiyana", "Quinn", "Rakan", "Rammus", "Rek'Sai", "Rell", "Renata Glasc", "Renekton",
+    "Rengar", "Riven", "Rumble", "Ryze", "Samira", "Sejuani", "Senna", "Seraphine", "Sett", "Shaco",
+    "Shen", "Shyvana", "Singed", "Sion", "Sivir", "Skarner", "Smolder", "Sona", "Soraka", "Swain",
+    "Sylas", "Syndra", "Tahm Kench", "Taliyah", "Talon", "Taric", "Teemo", "Thresh", "Tristana", "Trundle",
+    "Tryndamere", "Twisted Fate", "Twitch", "Udyr", "Urgot", "Varus", "Vayne", "Veigar", "Vel'Koz", "Vex",
+    "Vi", "Viego", "Viktor", "Vladimir", "Volibear", "Warwick", "Wukong", "Xayah", "Xerath", "Xin Zhao",
+    "Yasuo", "Yone", "Yorick", "Yuumi", "Zac", "Zed", "Zeri", "Ziggs", "Zilean", "Zoe", "Zyra"
+]
+
 TOKEN = os.getenv('DISCORD_TOKEN')
 RIOT_API_KEY = os.getenv('RIOT_API_KEY')
 DEFAULT_REGION = os.getenv('DEFAULT_REGION', 'br1')
@@ -267,6 +288,13 @@ async def on_ready():
         print('✅ Task de reset semanal Top Flex iniciada (verifica a cada minuto)')
     else:
         print('⚠️ Task de reset semanal Top Flex já está rodando')
+    
+    # Inicia radar de live track
+    if not live_track_radar.is_running():
+        live_track_radar.start()
+        print('✅ Task de radar de live track iniciada (a cada 15 minutos)')
+    else:
+        print('⚠️ Task de radar de live track já está rodando')
 
 async def region_autocomplete(
     interaction: discord.Interaction,
@@ -1335,11 +1363,28 @@ async def perfil(interaction: discord.Interaction, usuario: discord.User = None,
     
     await interaction.followup.send(embed=embed)
 
+async def champion_autocomplete(interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
+    """Autocomplete para nomes de campeões"""
+    if not current:
+        # Retorna os primeiros 25 campeões se não houver input
+        return [app_commands.Choice(name=champ, value=champ) for champ in CHAMPIONS_LIST[:25]]
+    
+    # Filtra campeões que começam com o texto digitado (case insensitive)
+    matches = [champ for champ in CHAMPIONS_LIST if champ.lower().startswith(current.lower())]
+    
+    # Se não encontrar, busca por conteúdo
+    if not matches:
+        matches = [champ for champ in CHAMPIONS_LIST if current.lower() in champ.lower()]
+    
+    # Retorna no máximo 25 resultados
+    return [app_commands.Choice(name=champ, value=champ) for champ in matches[:25]]
+
 @bot.tree.command(name="champinfo", description="🎮 Veja estatísticas detalhadas de um campeão específico")
 @app_commands.describe(
     usuario="Usuário para ver estatísticas",
     campeao="Nome do campeão (ex: Kayn, Aatrox, Jinx)"
 )
+@app_commands.autocomplete(campeao=champion_autocomplete)
 async def champinfo(interaction: discord.Interaction, usuario: discord.User, campeao: str):
     """Mostra estatísticas detalhadas de um campeão específico de um jogador"""
     if not await check_command_channel(interaction):
@@ -4278,6 +4323,130 @@ async def check_weekly_reset():
 
 @check_weekly_reset.before_loop
 async def before_weekly_reset():
+    await bot.wait_until_ready()
+
+@tasks.loop(minutes=15)
+async def live_track_radar():
+    """Radar de live track - verifica partidas ao vivo que não foram notificadas"""
+    try:
+        print("\n📡 [Live Radar] Iniciando verificação de partidas não notificadas...")
+        
+        # Busca todas as contas ativas
+        accounts = db.get_all_lol_accounts()
+        
+        if not accounts:
+            print("📡 [Live Radar] Nenhuma conta encontrada")
+            return
+        
+        # Agrupa partidas por game_id
+        games_found = {}
+        
+        for account in accounts:
+            account_id = account['id']
+            puuid = account['puuid']
+            region = account['region']
+            discord_id = account['discord_id']
+            summoner_name = account['summoner_name']
+            
+            try:
+                # Verifica se está em partida ao vivo
+                game_data = await riot_api.get_live_game(puuid, region)
+                
+                if game_data:
+                    game_id = str(game_data.get('gameId', ''))
+                    
+                    if not game_id:
+                        continue
+                    
+                    # Verifica se já existe mensagem para esta partida
+                    existing_message = db.get_live_game_message_by_game_id(game_id, None)
+                    
+                    if existing_message:
+                        # Já existe mensagem, verifica se este jogador está marcado
+                        if not db.is_live_game_notified(account_id, game_id):
+                            # Marca o jogador como notificado
+                            live_info = riot_api.extract_live_game_info(game_data, puuid)
+                            if live_info:
+                                db.mark_live_game_notified(
+                                    account_id, game_id, puuid, summoner_name,
+                                    live_info['championId'], live_info['champion'],
+                                    existing_message['message_id'],
+                                    existing_message['channel_id'],
+                                    existing_message['guild_id']
+                                )
+                                print(f"📡 [Live Radar] Jogador {summoner_name} marcado na partida {game_id}")
+                    else:
+                        # Não existe mensagem - agrupa para criar
+                        if game_id not in games_found:
+                            games_found[game_id] = []
+                        
+                        # Verifica se já foi notificado
+                        if not db.is_live_game_notified(account_id, game_id):
+                            live_info = riot_api.extract_live_game_info(game_data, puuid)
+                            if live_info:
+                                games_found[game_id].append({
+                                    'account_id': account_id,
+                                    'puuid': puuid,
+                                    'region': region,
+                                    'discord_id': discord_id,
+                                    'summoner_name': summoner_name,
+                                    'live_info': live_info
+                                })
+                
+                # Delay entre verificações
+                await asyncio.sleep(0.5)
+                
+            except Exception as e:
+                continue
+        
+        # Envia notificações para partidas não notificadas
+        for game_id, players in games_found.items():
+            if not players:
+                continue
+            
+            print(f"📡 [Live Radar] Partida {game_id} encontrada com {len(players)} jogador(es) não notificados")
+            
+            try:
+                if len(players) > 1:
+                    # Múltiplos jogadores - envia notificação agrupada
+                    message_info = await send_live_game_notification_grouped(game_id, players)
+                    if message_info:
+                        for player in players:
+                            db.mark_live_game_notified(
+                                player['account_id'], game_id, player['puuid'],
+                                player['summoner_name'], player['live_info']['championId'],
+                                player['live_info']['champion'],
+                                message_info.get('message_id'),
+                                message_info.get('channel_id'),
+                                message_info.get('guild_id')
+                            )
+                        print(f"📡 [Live Radar] Notificação enviada para partida {game_id}")
+                else:
+                    # Apenas 1 jogador
+                    player = players[0]
+                    message_info = await send_live_game_notification(player['account_id'], player['live_info'])
+                    if message_info:
+                        db.mark_live_game_notified(
+                            player['account_id'], game_id, player['puuid'],
+                            player['summoner_name'], player['live_info']['championId'],
+                            player['live_info']['champion'],
+                            message_info.get('message_id'),
+                            message_info.get('channel_id'),
+                            message_info.get('guild_id')
+                        )
+                        print(f"📡 [Live Radar] Notificação enviada para partida {game_id}")
+            except Exception as e:
+                print(f"📡 [Live Radar] Erro ao enviar notificação: {e}")
+        
+        print(f"📡 [Live Radar] Verificação concluída - {len(games_found)} partida(s) encontrada(s)")
+        
+    except Exception as e:
+        print(f"❌ [Live Radar] Erro: {e}")
+        import traceback
+        traceback.print_exc()
+
+@live_track_radar.before_loop
+async def before_live_radar():
     await bot.wait_until_ready()
 
 if __name__ == "__main__":
