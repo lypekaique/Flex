@@ -3088,7 +3088,7 @@ async def send_live_game_notification_grouped(game_id: str, players: List[Dict])
             embed = discord.Embed(
                 title="🔴 PARTIDA EM GRUPO AO VIVO!",
                 description=description,
-                color=discord.Color.blue()
+                color=discord.Color.gold()
             )
             
             # Hora de Início com fuso do Brasil (UTC-3)
@@ -3101,6 +3101,13 @@ async def send_live_game_notification_grouped(game_id: str, players: List[Dict])
             embed.add_field(
                 name="🕐 Início",
                 value=now_brazil.strftime("%H:%M"),
+                inline=True
+            )
+
+            # Campo vazio para completar a linha (evita que o Time Azul fique na 1ª linha)
+            embed.add_field(
+                name="\u200b",
+                value="\u200b",
                 inline=True
             )
             
