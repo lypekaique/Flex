@@ -2629,6 +2629,8 @@ async def send_mvp_voting(game_id: str, guild: discord.Guild, players: List[Dict
         
         # Cria votação pendente (expira em 5 minutos)
         db.create_pending_vote(game_id, str(guild.id), players_json, expires_minutes=5)
+
+        mentions = ", ".join([f"<@{p['discord_id']}>" for p in players])
         
         # Cria embed de votação
         embed = discord.Embed(
@@ -2636,7 +2638,7 @@ async def send_mvp_voting(game_id: str, guild: discord.Guild, players: List[Dict
             description=(
                 f"**Partida finalizada!**\n"
                 f"Vote em quem você acha que foi o MVP da partida.\n\n"
-                f"**Jogadores:** {', '.join([f'<@{p['discord_id']}>' for p in players])}\n\n"
+                f"**Jogadores:** {mentions}\n\n"
                 f"⏱️ Votação expira em **5 minutos**\n"
                 f"❌ Você **não pode votar em si mesmo**"
             ),
