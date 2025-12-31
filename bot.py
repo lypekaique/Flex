@@ -1153,12 +1153,6 @@ async def perfil(interaction: discord.Interaction, usuario: discord.User = None,
     else:
         carry_text = f"🏆 **Carry Score:** {carry_score}"
     
-    # Pintados de ouro do campeão
-    if gold_medals > 0:
-        gold_text = f"🎨 **Pintados de Ouro:** {gold_medals}x com {campeao}"
-    else:
-        gold_text = f"🎨 **Pintados de Ouro:** Nenhum com {campeao}"
-    
     embed.add_field(
         name="📈 Médias por Partida",
         value=(
@@ -3496,7 +3490,17 @@ async def process_account_batch(account_id: int, puuid: str, region: str, riot_a
 
             # Verifica se já está registrada
             if db.get_last_match_id(account_id) == match_id:
-                print(f"⏭️ Partida {match_id} já registrada, pulando")
+                # Partida já registrada - mas verifica se notificação foi enviada
+                if not db.was_match_notification_sent(account_id, match_id):
+                    print(f"📨 Partida {match_id} já registrada, mas notificação não enviada - enviando...")
+                    try:
+                        stats = riot_api.extract_player_stats(match_data, puuid)
+                        if stats:
+                            await send_match_notification(account_id, stats)
+                    except Exception as e:
+                        print(f"❌ Erro ao enviar notificação pendente: {e}")
+                else:
+                    print(f"⏭️ Partida {match_id} já registrada e notificada, pulando")
                 continue
 
             # Verifica se a partida acabou recentemente (última 1 hora)
