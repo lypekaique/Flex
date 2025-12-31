@@ -369,6 +369,31 @@ class Database:
         conn.close()
         return accounts
     
+    def get_all_lol_accounts(self) -> List[Dict]:
+        """Retorna todas as contas LOL cadastradas no sistema"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, discord_id, summoner_name, summoner_id, puuid, account_id, region, created_at
+            FROM lol_accounts
+        ''')
+        
+        accounts = []
+        for row in cursor.fetchall():
+            accounts.append({
+                'id': row[0],
+                'discord_id': row[1],
+                'summoner_name': row[2],
+                'summoner_id': row[3],
+                'puuid': row[4],
+                'account_id': row[5],
+                'region': row[6],
+                'created_at': row[7]
+            })
+        
+        conn.close()
+        return accounts
+    
     def add_lol_account(self, discord_id: str, summoner_name: str, summoner_id: str, 
                        puuid: str, account_id: str, region: str) -> tuple[bool, str]:
         """Adiciona uma conta LOL para um usuário (máximo 3)"""
