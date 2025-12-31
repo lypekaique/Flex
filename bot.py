@@ -3185,6 +3185,7 @@ async def check_live_games():
         
         # FASE 1: Escaneia TODAS as contas e agrupa por game_id
         games_map = {}  # game_id -> lista de jogadores
+        games_sent = set()  # game_ids que já foram enviados (5+ jogadores)
         
         print(f"📡 [Live Games] FASE 1: Escaneando todas as contas...")
 
@@ -3199,6 +3200,10 @@ async def check_live_games():
                     
                     # Filtra apenas Ranked Flex (440) e Personalizadas (0)
                     if queue_id not in [440, 0]:
+                        continue
+                    
+                    # Se já enviou notificação para esta partida, pula
+                    if game_id in games_sent:
                         continue
 
                     # Extrai informações
@@ -3217,6 +3222,32 @@ async def check_live_games():
                             'summoner_name': summoner_name,
                             'live_info': live_info
                         })
+                        
+                        # Se atingiu 5 jogadores, envia imediatamente!
+                        if len(games_map[game_id]) >= 5:
+                            print(f"🚀 [Live Games] 5 jogadores detectados na partida {game_id}, enviando imediatamente!")
+                            
+                            # Verifica se já existe mensagem
+                            existing = db.get_live_game_message_by_game_id(game_id, None)
+                            if not existing:
+                                players = games_map[game_id]
+                                message_info = await send_live_game_notification_grouped(game_id, players)
+                                
+                                if message_info:
+                                    for player in players:
+                                        db.mark_live_game_notified(
+                                            player['account_id'],
+                                            game_id,
+                                            player['puuid'],
+                                            player['summoner_name'],
+                                            player['live_info']['championId'],
+                                            player['live_info']['champion'],
+                                            message_info.get('message_id'),
+                                            message_info.get('channel_id'),
+                                            message_info.get('guild_id')
+                                        )
+                                    print(f"✅ [Live Games] Mensagem enviada para partida {game_id} com 5 jogadores")
+                                    games_sent.add(game_id)
 
                 # Delay entre verificações de contas
                 await asyncio.sleep(1.5)
@@ -3239,13 +3270,44 @@ async def check_live_games():
         
         for game_id, players in games_map.items():
             try:
+                # Pula partidas que já foram enviadas na FASE 1 (5+ jogadores)
+                if game_id in games_sent:
+                    print(f"⏭️ [Live Games] Partida {game_id} já enviada na FASE 1, pulando...")
+                    continue
+                
                 # Verifica se JÁ EXISTE mensagem para este game_id
                 existing_message = db.get_live_game_message_by_game_id(game_id, None)
                 
                 if existing_message:
-                    # JÁ EXISTE MENSAGEM - não faz nada
-                    print(f"⏭️ [Live Games] Partida {game_id} já tem mensagem enviada, pulando...")
-                    continue
+                    # Verifica se a mensagem ainda existe no Discord
+                    message_exists = False
+                    try:
+                        msg_id = existing_message.get('message_id')
+                        ch_id = existing_message.get('channel_id')
+                        gld_id = existing_message.get('guild_id')
+                        
+                        if msg_id and ch_id and gld_id:
+                            guild = bot.get_guild(int(gld_id))
+                            if guild:
+                                channel = guild.get_channel(int(ch_id))
+                                if channel:
+                                    try:
+                                        await channel.fetch_message(int(msg_id))
+                                        message_exists = True
+                                    except discord.NotFound:
+                                        message_exists = False
+                                    except:
+                                        message_exists = True  # Assume que existe se der outro erro
+                    except:
+                        message_exists = True  # Assume que existe se der erro
+                    
+                    if message_exists:
+                        print(f"⏭️ [Live Games] Partida {game_id} já tem mensagem enviada, pulando...")
+                        continue
+                    else:
+                        # Mensagem foi apagada - limpa registro e reenvia
+                        print(f"🗑️ [Live Games] Mensagem da partida {game_id} foi apagada, limpando registro...")
+                        db.clear_live_game_notifications(game_id)
                 
                 print(f"\n📤 [Live Games] Criando mensagem para partida {game_id} com {len(players)} jogador(es)...")
 
