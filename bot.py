@@ -2536,9 +2536,8 @@ async def update_live_game_result(game_id: str, match_data: Dict):
                         voting_players = []
                         for puuid in match_puuids:
                             cursor.execute('''
-                                SELECT la.id, u.discord_id, la.summoner_name
+                                SELECT la.id, la.discord_id, la.summoner_name
                                 FROM lol_accounts la
-                                JOIN users u ON la.discord_id = u.discord_id
                                 WHERE la.puuid = ?
                             ''', (puuid,))
                             player_info = cursor.fetchone()
