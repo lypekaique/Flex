@@ -3085,15 +3085,16 @@ async def send_live_game_notification_grouped(game_id: str, players: List[Dict])
                 color=discord.Color.blue()
             )
             
-            # Modo de Jogo e Tempo de Jogo (lado a lado)
+            # Modo de Jogo e Hora de Início (lado a lado)
+            now = datetime.now()
             embed.add_field(
                 name="🎮 Modo de Jogo",
                 value="Ranked Flex",
                 inline=True
             )
             embed.add_field(
-                name="⏱️ Tempo de Jogo",
-                value="00:00",
+                name="🕐 Início",
+                value=now.strftime("%H:%M"),
                 inline=True
             )
             
