@@ -5,10 +5,13 @@ import os
 from dotenv import load_dotenv
 from database import Database
 from riot_api import RiotAPI
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List
 import asyncio
 import json
+
+# Fuso horário do Brasil (UTC-3)
+BRAZIL_TZ = timezone(timedelta(hours=-3))
 
 load_dotenv()
 
@@ -3056,6 +3059,9 @@ async def send_live_game_notification_grouped(game_id: str, players: List[Dict])
         discord_id = first_player['discord_id']
         region = first_player.get('region', 'br1')
         
+        # Busca dados completos da partida ao vivo para pegar TODOS os jogadores
+        game_data = await riot_api.get_active_game(first_player['puuid'], region)
+        
         # Busca servidor e canal
         for guild in bot.guilds:
             member = guild.get_member(int(discord_id))
@@ -3085,8 +3091,8 @@ async def send_live_game_notification_grouped(game_id: str, players: List[Dict])
                 color=discord.Color.blue()
             )
             
-            # Modo de Jogo e Hora de Início (lado a lado)
-            now = datetime.now()
+            # Hora de Início com fuso do Brasil (UTC-3)
+            now_brazil = datetime.now(BRAZIL_TZ)
             embed.add_field(
                 name="🎮 Modo de Jogo",
                 value="Ranked Flex",
@@ -3094,32 +3100,51 @@ async def send_live_game_notification_grouped(game_id: str, players: List[Dict])
             )
             embed.add_field(
                 name="🕐 Início",
-                value=now.strftime("%H:%M"),
+                value=now_brazil.strftime("%H:%M"),
                 inline=True
             )
             
-            # Separa jogadores por time (se tiver info de time)
+            # Separa TODOS os jogadores por time (da API da Riot)
             blue_team = []
             red_team = []
             
-            for p in players:
-                live_info = p.get('live_info', {})
-                team_id = live_info.get('teamId', 100)
-                champion = live_info.get('champion', 'Unknown')
-                summoner = p['summoner_name']
-                
-                player_line = f"• **{champion}** - {summoner}"
-                
-                if team_id == 100:
-                    blue_team.append(player_line)
-                else:
-                    red_team.append(player_line)
+            # PUUIDs dos jogadores do bot para destacar
+            bot_player_puuids = {p['puuid'] for p in players}
             
-            # Se não conseguiu separar por time, coloca todos no azul
-            if not blue_team and not red_team:
+            if game_data and 'participants' in game_data:
+                for participant in game_data['participants']:
+                    team_id = participant.get('teamId', 100)
+                    champion_id = participant.get('championId', 0)
+                    summoner_name = participant.get('riotId', participant.get('summonerName', 'Unknown'))
+                    puuid = participant.get('puuid', '')
+                    
+                    # Busca nome do campeão
+                    champion_name = riot_api.get_champion_name(champion_id)
+                    
+                    # Destaca jogadores do bot
+                    if puuid in bot_player_puuids:
+                        player_line = f"• **{champion_name}** - {summoner_name}"
+                    else:
+                        player_line = f"• **{champion_name}** - {summoner_name}"
+                    
+                    if team_id == 100:
+                        blue_team.append(player_line)
+                    else:
+                        red_team.append(player_line)
+            else:
+                # Fallback: usa apenas os jogadores do bot
                 for p in players:
-                    champion = p['live_info'].get('champion', 'Unknown')
-                    blue_team.append(f"• **{champion}** - {p['summoner_name']}")
+                    live_info = p.get('live_info', {})
+                    team_id = live_info.get('teamId', 100)
+                    champion = live_info.get('champion', 'Unknown')
+                    summoner = p['summoner_name']
+                    
+                    player_line = f"• **{champion}** - {summoner}"
+                    
+                    if team_id == 100:
+                        blue_team.append(player_line)
+                    else:
+                        red_team.append(player_line)
             
             # Time Azul
             if blue_team:
@@ -3137,9 +3162,8 @@ async def send_live_game_notification_grouped(game_id: str, players: List[Dict])
                     inline=True
                 )
             
-            # Footer com Game ID e timestamp
-            now = datetime.now()
-            embed.set_footer(text=f"Game ID: {game_id} • {region.upper()} • {now.strftime('%d/%m às %H:%M')}")
+            # Footer com Game ID e timestamp (fuso Brasil)
+            embed.set_footer(text=f"Game ID: {game_id} • {region.upper()} • {now_brazil.strftime('%d/%m às %H:%M')}")
             
             message = await channel.send(embed=embed)
             
