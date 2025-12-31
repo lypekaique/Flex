@@ -285,7 +285,7 @@ async def on_ready():
     # Inicia verificação de reset semanal do Top Flex
     if not check_weekly_reset.is_running():
         check_weekly_reset.start()
-        print('✅ Task de reset semanal Top Flex iniciada (verifica a cada minuto)')
+        print('✅ Task de reset semanal Top Flex iniciada (todo dia às 12h, executa às segundas)')
     else:
         print('⚠️ Task de reset semanal Top Flex já está rodando')
     
@@ -4191,106 +4191,109 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
     except Exception as e:
         print(f"Erro no error handler: {e}")
 
-@tasks.loop(minutes=1)
+@tasks.loop(time=datetime.strptime("12:00", "%H:%M").time())
 async def check_weekly_reset():
-    """Task que verifica se é hora de resetar o ranking semanal (segunda-feira às 12h)"""
+    """Task que roda todo dia às 12h e verifica se é segunda-feira para resetar o ranking"""
     from datetime import timedelta
     try:
         now = datetime.now()
         
-        # Verifica se é segunda-feira (weekday() == 0) e se é 12:00
-        if now.weekday() == 0 and now.hour == 12 and now.minute == 0:
-            print("🏆 [Top Flex] Iniciando reset semanal...")
+        # Verifica se é segunda-feira (weekday() == 0)
+        if now.weekday() != 0:
+            return  # Não é segunda-feira, ignora
+        
+        # É segunda-feira às 12h - executa o reset
+        print("🏆 [Top Flex] Iniciando reset semanal...")
+        
+        # Calcula a semana que acabou (segunda passada até domingo)
+        week_end = (now - timedelta(days=1)).replace(hour=23, minute=59, second=59)
+        week_start = (week_end - timedelta(days=6)).replace(hour=0, minute=0, second=0)
+        
+        week_start_str = week_start.strftime('%Y-%m-%d')
+        week_end_str = week_end.strftime('%Y-%m-%d')
+        
+        # Busca ranking COMPLETO da semana que acabou (todos os participantes)
+        full_ranking = db.get_weekly_carry_score_ranking(week_start_str, week_end_str, limit=100)
+        
+        # Salva histórico de posições de TODOS os participantes
+        if full_ranking:
+            db.save_weekly_ranking(week_start_str, week_end_str, full_ranking)
+            print(f"📊 [Top Flex] Salvo histórico de {len(full_ranking)} participantes")
+        
+        ranking = full_ranking[:1] if full_ranking else []
+        
+        if ranking:
+            winner = ranking[0]
+            winner_discord_id = winner['discord_id']
+            winner_score = winner['total_score']
             
-            # Calcula a semana que acabou (segunda passada até domingo)
-            week_end = (now - timedelta(days=1)).replace(hour=23, minute=59, second=59)
-            week_start = (week_end - timedelta(days=6)).replace(hour=0, minute=0, second=0)
+            print(f"🏆 [Top Flex] Vencedor da semana: {winner_discord_id} com {winner_score} pontos")
             
-            week_start_str = week_start.strftime('%Y-%m-%d')
-            week_end_str = week_end.strftime('%Y-%m-%d')
-            
-            # Busca ranking COMPLETO da semana que acabou (todos os participantes)
-            full_ranking = db.get_weekly_carry_score_ranking(week_start_str, week_end_str, limit=100)
-            
-            # Salva histórico de posições de TODOS os participantes
-            if full_ranking:
-                db.save_weekly_ranking(week_start_str, week_end_str, full_ranking)
-                print(f"📊 [Top Flex] Salvo histórico de {len(full_ranking)} participantes")
-            
-            ranking = full_ranking[:1] if full_ranking else []
-            
-            if ranking:
-                winner = ranking[0]
-                winner_discord_id = winner['discord_id']
-                winner_score = winner['total_score']
+            # Processa para cada servidor
+            for guild in bot.guilds:
+                guild_id = str(guild.id)
                 
-                print(f"🏆 [Top Flex] Vencedor da semana: {winner_discord_id} com {winner_score} pontos")
+                # Verifica se tem cargo configurado
+                role_id = db.get_top_flex_role(guild_id)
+                if not role_id:
+                    continue
                 
-                # Processa para cada servidor
-                for guild in bot.guilds:
-                    guild_id = str(guild.id)
-                    
-                    # Verifica se tem cargo configurado
-                    role_id = db.get_top_flex_role(guild_id)
-                    if not role_id:
-                        continue
-                    
-                    role = guild.get_role(int(role_id))
-                    if not role:
-                        print(f"⚠️ [Top Flex] Cargo {role_id} não encontrado no servidor {guild.name}")
-                        continue
-                    
-                    # Remove cargo do vencedor anterior
-                    last_winner = db.get_last_top_flex_winner(guild_id)
-                    if last_winner and last_winner['discord_id'] != winner_discord_id:
-                        try:
-                            old_member = guild.get_member(int(last_winner['discord_id']))
-                            if old_member and role in old_member.roles:
-                                await old_member.remove_roles(role, reason="Novo vencedor do Top Flex semanal")
-                                print(f"🔄 [Top Flex] Cargo removido de {old_member.name}")
-                        except Exception as e:
-                            print(f"⚠️ [Top Flex] Erro ao remover cargo do vencedor anterior: {e}")
-                    
-                    # Adiciona cargo ao novo vencedor
+                role = guild.get_role(int(role_id))
+                if not role:
+                    print(f"⚠️ [Top Flex] Cargo {role_id} não encontrado no servidor {guild.name}")
+                    continue
+                
+                # Remove cargo do vencedor anterior
+                last_winner = db.get_last_top_flex_winner(guild_id)
+                if last_winner and last_winner['discord_id'] != winner_discord_id:
                     try:
-                        new_member = guild.get_member(int(winner_discord_id))
-                        if new_member:
-                            if role not in new_member.roles:
-                                await new_member.add_roles(role, reason="Vencedor do Top Flex semanal")
-                                print(f"✅ [Top Flex] Cargo adicionado a {new_member.name}")
-                            
-                            # Registra vencedor
-                            db.add_top_flex_winner(winner_discord_id, guild_id, week_start_str, week_end_str, winner_score)
-                            
-                            # Envia anúncio no canal de votação (se configurado)
-                            voting_channel_id = db.get_voting_channel(guild_id)
-                            if voting_channel_id:
-                                channel = guild.get_channel(int(voting_channel_id))
-                                if channel:
-                                    embed = discord.Embed(
-                                        title="🏆 VENCEDOR DA SEMANA!",
-                                        description=(
-                                            f"Parabéns <@{winner_discord_id}>!\n\n"
-                                            f"Você foi o **Top Flex** da semana com **{winner_score}** Carry Score!\n"
-                                            f"Você recebeu o cargo {role.mention}!"
-                                        ),
-                                        color=discord.Color.gold()
-                                    )
-                                    embed.add_field(
-                                        name="📅 Período",
-                                        value=f"{week_start.strftime('%d/%m')} - {week_end.strftime('%d/%m/%Y')}",
-                                        inline=False
-                                    )
-                                    embed.set_footer(text="O ranking foi resetado. Boa sorte esta semana!")
-                                    await channel.send(embed=embed)
-                        else:
-                            print(f"⚠️ [Top Flex] Membro {winner_discord_id} não encontrado no servidor {guild.name}")
+                        old_member = guild.get_member(int(last_winner['discord_id']))
+                        if old_member and role in old_member.roles:
+                            await old_member.remove_roles(role, reason="Novo vencedor do Top Flex semanal")
+                            print(f"🔄 [Top Flex] Cargo removido de {old_member.name}")
                     except Exception as e:
-                        print(f"❌ [Top Flex] Erro ao adicionar cargo ao vencedor: {e}")
-            else:
-                print("⚠️ [Top Flex] Nenhum jogador com Carry Score na semana passada")
-            
-            print("✅ [Top Flex] Reset semanal concluído!")
+                        print(f"⚠️ [Top Flex] Erro ao remover cargo do vencedor anterior: {e}")
+                
+                # Adiciona cargo ao novo vencedor
+                try:
+                    new_member = guild.get_member(int(winner_discord_id))
+                    if new_member:
+                        if role not in new_member.roles:
+                            await new_member.add_roles(role, reason="Vencedor do Top Flex semanal")
+                            print(f"✅ [Top Flex] Cargo adicionado a {new_member.name}")
+                        
+                        # Registra vencedor
+                        db.add_top_flex_winner(winner_discord_id, guild_id, week_start_str, week_end_str, winner_score)
+                        
+                        # Envia anúncio no canal de votação (se configurado)
+                        voting_channel_id = db.get_voting_channel(guild_id)
+                        if voting_channel_id:
+                            channel = guild.get_channel(int(voting_channel_id))
+                            if channel:
+                                embed = discord.Embed(
+                                    title="🏆 VENCEDOR DA SEMANA!",
+                                    description=(
+                                        f"Parabéns <@{winner_discord_id}>!\n\n"
+                                        f"Você foi o **Top Flex** da semana com **{winner_score}** Carry Score!\n"
+                                        f"Você recebeu o cargo {role.mention}!"
+                                    ),
+                                    color=discord.Color.gold()
+                                )
+                                embed.add_field(
+                                    name="📅 Período",
+                                    value=f"{week_start.strftime('%d/%m')} - {week_end.strftime('%d/%m/%Y')}",
+                                    inline=False
+                                )
+                                embed.set_footer(text="O ranking foi resetado. Boa sorte esta semana!")
+                                await channel.send(embed=embed)
+                    else:
+                        print(f"⚠️ [Top Flex] Membro {winner_discord_id} não encontrado no servidor {guild.name}")
+                except Exception as e:
+                    print(f"❌ [Top Flex] Erro ao adicionar cargo ao vencedor: {e}")
+        else:
+            print("⚠️ [Top Flex] Nenhum jogador com Carry Score na semana passada")
+        
+        print("✅ [Top Flex] Reset semanal concluído!")
             
     except Exception as e:
         print(f"❌ [Top Flex] Erro no reset semanal: {e}")
