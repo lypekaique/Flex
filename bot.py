@@ -4363,7 +4363,25 @@ async def live_track_radar():
                     # Verifica se já existe mensagem para esta partida
                     existing_message = db.get_live_game_message_by_game_id(game_id, None)
                     
+                    # Se existe registro no banco, verifica se a mensagem ainda existe no Discord
+                    message_exists = False
                     if existing_message:
+                        try:
+                            guild = bot.get_guild(int(existing_message['guild_id']))
+                            if guild:
+                                channel = guild.get_channel(int(existing_message['channel_id']))
+                                if channel:
+                                    await channel.fetch_message(int(existing_message['message_id']))
+                                    message_exists = True
+                        except discord.NotFound:
+                            # Mensagem foi excluída - limpa registros do banco
+                            print(f"📡 [Live Radar] Mensagem {existing_message['message_id']} foi excluída, limpando registros...")
+                            db.clear_live_game_notifications(game_id)
+                            existing_message = None
+                        except Exception as e:
+                            print(f"📡 [Live Radar] Erro ao verificar mensagem: {e}")
+                    
+                    if existing_message and message_exists:
                         # Já existe mensagem, verifica se este jogador está marcado
                         if not db.is_live_game_notified(account_id, game_id):
                             # Marca o jogador como notificado

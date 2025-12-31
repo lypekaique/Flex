@@ -1231,6 +1231,25 @@ class Database:
             print(f"   📋 {lg['game_id']} | {lg['summoner_name']} | {lg['champion_name']}")
         return live_games
     
+    def clear_live_game_notifications(self, game_id: str) -> bool:
+        """Remove TODAS as notificações de uma partida ao vivo (quando a mensagem foi excluída)"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                DELETE FROM live_games_notified
+                WHERE game_id = ?
+            ''', (game_id,))
+            conn.commit()
+            deleted = cursor.rowcount
+            conn.close()
+            
+            print(f"🗑️ [DATABASE] {deleted} registro(s) de live game {game_id} removidos")
+            return True
+        except Exception as e:
+            print(f"❌ [DATABASE] Erro ao limpar notificações: {e}")
+            return False
+    
     def remove_live_game_notification(self, lol_account_id: int, game_id: str) -> bool:
         """Remove uma notificação de live game específica"""
         try:
