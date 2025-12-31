@@ -476,6 +476,64 @@ async def contas(interaction: discord.Interaction):
     
     await interaction.followup.send(embed=embed, ephemeral=True)
 
+async def account_autocomplete_for_unlink(interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
+    """Autocomplete para selecionar conta a desvincular"""
+    discord_id = str(interaction.user.id)
+    accounts = db.get_user_accounts(discord_id)
+    
+    choices = []
+    for account in accounts:
+        name = f"{account['summoner_name']} ({account['region'].upper()})"
+        if not current or current.lower() in name.lower():
+            choices.append(app_commands.Choice(name=name, value=str(account['id'])))
+    
+    return choices[:25]
+
+@bot.tree.command(name="deslogar", description="🚪 Desvincula uma conta do LoL (estatísticas são mantidas)")
+@app_commands.describe(conta="Selecione a conta que deseja desvincular")
+@app_commands.autocomplete(conta=account_autocomplete_for_unlink)
+async def deslogar(interaction: discord.Interaction, conta: str):
+    """Desvincula uma conta LOL sem apagar as estatísticas"""
+    if not await check_command_channel(interaction):
+        return
+    
+    await interaction.response.defer(ephemeral=True)
+    
+    discord_id = str(interaction.user.id)
+    
+    # Verifica se a conta pertence ao usuário
+    accounts = db.get_user_accounts(discord_id)
+    account_to_remove = None
+    
+    for account in accounts:
+        if str(account['id']) == conta:
+            account_to_remove = account
+            break
+    
+    if not account_to_remove:
+        await interaction.followup.send(
+            "❌ Conta não encontrada ou não pertence a você.",
+            ephemeral=True
+        )
+        return
+    
+    # Remove a conta (mas mantém as estatísticas nas tabelas matches)
+    success = db.unlink_lol_account(int(conta))
+    
+    if success:
+        await interaction.followup.send(
+            f"✅ **Conta desvinculada com sucesso!**\n\n"
+            f"🎮 **{account_to_remove['summoner_name']}** ({account_to_remove['region'].upper()})\n\n"
+            f"📊 Suas estatísticas desta conta foram **mantidas** no histórico.\n"
+            f"🔄 Use `/logar` para vincular outra conta.",
+            ephemeral=True
+        )
+    else:
+        await interaction.followup.send(
+            "❌ Erro ao desvincular conta. Tente novamente.",
+            ephemeral=True
+        )
+
 @bot.tree.command(name="champban", description="🚫 Veja todos os campeões banidos do servidor")
 async def champban(interaction: discord.Interaction):
     """Mostra todos os campeões banidos de todos os jogadores do servidor"""

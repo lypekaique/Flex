@@ -424,6 +424,28 @@ class Database:
             conn.close()
             return False, f"Erro ao vincular conta: {e}"
     
+    def unlink_lol_account(self, lol_account_id: int) -> bool:
+        """Remove uma conta LOL do usuário (mantém as estatísticas nas tabelas matches)"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Remove apenas da tabela lol_accounts
+            # As estatísticas em matches são mantidas (lol_account_id ainda referencia)
+            cursor.execute('DELETE FROM lol_accounts WHERE id = ?', (lol_account_id,))
+            
+            # Remove notificações de live games dessa conta
+            cursor.execute('DELETE FROM live_games_notified WHERE lol_account_id = ?', (lol_account_id,))
+            
+            conn.commit()
+            deleted = cursor.rowcount
+            conn.close()
+            
+            return deleted > 0
+        except Exception as e:
+            print(f"❌ [DATABASE] Erro ao desvincular conta: {e}")
+            return False
+    
     def add_match(self, lol_account_id: int, match_data: Dict) -> bool:
         """Adiciona uma partida ao histórico"""
         try:
