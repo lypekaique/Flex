@@ -285,7 +285,7 @@ async def on_ready():
     # Inicia verificação de reset semanal do Top Flex
     if not check_weekly_reset.is_running():
         check_weekly_reset.start()
-        print('✅ Task de reset semanal Top Flex iniciada (todo dia às 12h, executa às segundas)')
+        print('✅ Task de reset semanal Top Flex iniciada (todo dia à 00:00, executa na segunda)')
     else:
         print('⚠️ Task de reset semanal Top Flex já está rodando')
     
@@ -525,167 +525,6 @@ async def deslogar(interaction: discord.Interaction, conta: str):
     else:
         await interaction.followup.send(
             "❌ Erro ao desvincular conta. Tente novamente.",
-            ephemeral=True
-        )
-
-@bot.tree.command(name="champban", description="🚫 Veja todos os campeões banidos do servidor")
-async def champban(interaction: discord.Interaction):
-    """Mostra todos os campeões banidos de todos os jogadores do servidor"""
-    if not await check_command_channel(interaction):
-        return
-    
-    await interaction.response.defer()
-    
-    guild_id = str(interaction.guild.id)
-    
-    conn = db.get_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT DISTINCT discord_id FROM lol_accounts
-    ''')
-    all_discord_ids = [row[0] for row in cursor.fetchall()]
-    conn.close()
-    
-    server_bans = []
-    for discord_id in all_discord_ids:
-        member = interaction.guild.get_member(int(discord_id))
-        if not member:
-            continue
-        
-        accounts = db.get_user_accounts(discord_id)
-        for account in accounts:
-            bans = db.get_active_champion_bans(account['id'])
-            for ban in bans:
-                ban['discord_user'] = member
-                ban['account_name'] = account['summoner_name']
-                server_bans.append(ban)
-    
-    if not server_bans:
-        embed = discord.Embed(
-            title="✅ Nenhum Campeão Banido",
-            description="Nenhum jogador do servidor tem campeões banidos no momento!\n\nParabéns a todos! 🎮",
-            color=discord.Color.green()
-        )
-        await interaction.followup.send(embed=embed)
-        return
-    
-    embed = discord.Embed(
-        title="🚫 Campeões Banidos do Servidor",
-        description=f"Total: **{len(server_bans)}** banimento(s) ativo(s)",
-        color=discord.Color.red()
-    )
-    
-    from datetime import datetime
-    now = datetime.now()
-    
-    for ban in server_bans:
-        expires_at = datetime.fromisoformat(ban['expires_at'])
-        time_left = expires_at - now
-        
-        days_left = time_left.days
-        hours_left = time_left.seconds // 3600
-        minutes_left = (time_left.seconds % 3600) // 60
-        
-        if days_left > 0:
-            time_str = f"{days_left}d {hours_left}h"
-        elif hours_left > 0:
-            time_str = f"{hours_left}h {minutes_left}m"
-        else:
-            time_str = f"{minutes_left}m"
-        
-        if ban['ban_level'] == 1:
-            level_emoji = "⚠️"
-            level_text = "Nível 1"
-        elif ban['ban_level'] == 2:
-            level_emoji = "🚨"
-            level_text = "Nível 2"
-        else:
-            level_emoji = "🔴"
-            level_text = "Nível 3"
-        
-        embed.add_field(
-            name=f"{level_emoji} {ban['champion_name']} - {ban['discord_user'].display_name}",
-            value=(
-                f"**Conta:** {ban['account_name']}\n"
-                f"**{level_text}** ({ban['ban_days']} dias) | ⏱️ {time_str}\n"
-                f"📋 {ban['reason']}"
-            ),
-            inline=True
-        )
-    
-    embed.set_footer(text=f"Sistema de Banimento Progressivo • {interaction.guild.name}")
-    await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="champban_remove", description="🔓 [ADMIN] Remove banimento de campeão de um jogador")
-@app_commands.describe(
-    usuario="Usuário Discord para remover o banimento",
-    campeao="Nome do campeão para desbanir (deixe vazio para remover todos)"
-)
-@app_commands.checks.has_permissions(administrator=True)
-async def champban_remove(interaction: discord.Interaction, usuario: discord.Member, campeao: str = None):
-    """[ADMIN] Remove banimento de campeão de um jogador específico"""
-    if not await check_command_channel(interaction):
-        return
-    
-    await interaction.response.defer(ephemeral=True)
-    
-    discord_id = str(usuario.id)
-    accounts = db.get_user_accounts(discord_id)
-    
-    if not accounts:
-        await interaction.followup.send(
-            f"❌ {usuario.mention} não tem nenhuma conta vinculada!",
-            ephemeral=True
-        )
-        return
-    
-    # Se campeão não foi especificado, remove todos os banimentos
-    if not campeao:
-        total_removed = 0
-        for account in accounts:
-            removed = db.remove_all_champion_bans(account['id'])
-            total_removed += removed
-        
-        if total_removed > 0:
-            embed = discord.Embed(
-                title="✅ Banimentos Removidos",
-                description=f"Todos os banimentos de {usuario.mention} foram removidos!",
-                color=discord.Color.green()
-            )
-            embed.add_field(
-                name="📊 Total",
-                value=f"**{total_removed}** banimento(s) removido(s)",
-                inline=False
-            )
-            embed.set_footer(text=f"Removido por {interaction.user.name}")
-            await interaction.followup.send(embed=embed, ephemeral=True)
-        else:
-            await interaction.followup.send(
-                f"ℹ️ {usuario.mention} não tinha nenhum banimento ativo.",
-                ephemeral=True
-            )
-        return
-    
-    # Remove banimento de campeão específico
-    removed = False
-    for account in accounts:
-        if db.remove_champion_ban(account['id'], campeao):
-            removed = True
-    
-    if removed:
-        embed = discord.Embed(
-            title="✅ Banimento Removido",
-            description=f"O banimento de **{campeao}** foi removido para {usuario.mention}!",
-            color=discord.Color.green()
-        )
-        embed.set_footer(text=f"Removido por {interaction.user.name}")
-        await interaction.followup.send(embed=embed, ephemeral=True)
-        
-        # Log no console
-        print(f"🔓 [ADMIN] {interaction.user.name} removeu banimento de {campeao} de {usuario.name}")
-    else:
-        await interaction.followup.send(
-            f"ℹ️ {usuario.mention} não tinha banimento ativo de **{campeao}**.",
             ephemeral=True
         )
 
@@ -988,7 +827,7 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
         else:
             embed.description = "❌ Nenhuma configuração encontrada para este servidor."
         
-        embed.set_footer(text="Use /configurar <tipo> #canal para configurar")
+        embed.set_footer(text="Use /configurar para ver todas as configurações")
         await interaction.followup.send(embed=embed, ephemeral=True)
         return
     
@@ -1016,7 +855,7 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
                 value=(
                     "**Sistema de Ranking Semanal:**\n"
                     "• O ranking é baseado no **Carry Score** (votos de MVP)\n"
-                    "• Toda **segunda-feira às 12h** o ranking reseta\n"
+                    "• Toda **segunda-feira às 00:00** o ranking reseta\n"
                     "• O **1º lugar** da semana recebe o cargo automaticamente\n"
                     "• O cargo é removido do vencedor anterior"
                 ),
@@ -1082,6 +921,7 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
                     "• 📊 **MVP Score** (comparado com os 10 jogadores)\n"
                     "• 👑 **MVP Score** (colocação entre 10 jogadores)\n"
                     "• ⚔️ **KDA**, 🗡️ **Dano**, 🌾 **CS**, 👁️ **Vision**\n"
+                    "• 🎨 **Pintados de Ouro**\n"
                     "• 🏆 **Campeão** e **Role**\n\n"
                     "**CADA jogador** recebe sua notificação individual\n"
                     "com análise detalhada da performance!"
@@ -1314,13 +1154,18 @@ async def perfil(interaction: discord.Interaction, usuario: discord.User = None,
     # Busca posição atual na semana
     current_week_pos = db.get_player_current_week_position(discord_id, week_start_str, week_end_str)
     
-    # Carry Score com posição atual
+    # Carry Score com posição
     if current_week_pos['position'] > 0:
         carry_text = f"🏆 **Carry Score:** {carry_score} (**{current_week_pos['position']}º** de {current_week_pos['total_participants']})"
     else:
         carry_text = f"🏆 **Carry Score:** {carry_score}"
     
-    # Médias gerais
+    # Pintados de ouro do campeão
+    if gold_medals > 0:
+        gold_text = f"🎨 **Pintados de Ouro:** {gold_medals}x com {campeao}"
+    else:
+        gold_text = f"🎨 **Pintados de Ouro:** Nenhum com {campeao}"
+    
     embed.add_field(
         name="📈 Médias por Partida",
         value=(
@@ -1519,7 +1364,7 @@ async def champinfo(interaction: discord.Interaction, usuario: discord.User, cam
         champ_name_formatted = champ_name_formatted.capitalize()
     
     champ_image_url = f"https://ddragon.leagueoflegends.com/cdn/14.1.1/img/champion/{champ_name_formatted}.png"
-    
+
     # Cria embed
     embed = discord.Embed(
         title=f"🎮 {campeao} - {usuario.display_name}",
@@ -1614,7 +1459,7 @@ async def tops_flex(interaction: discord.Interaction):
         description=(
             f"**Semana:** {week_start.strftime('%d/%m')} - {week_end.strftime('%d/%m/%Y')}\n"
             f"Ranking baseado em **Carry Score** (votos de MVP)\n\n"
-            f"⏰ Reset: **Segunda-feira às 12h**"
+            f"⏰ Reset: **Segunda-feira às 00:00**"
         ),
         color=discord.Color.gold()
     )
@@ -1755,7 +1600,7 @@ async def flex_guide(interaction: discord.Interaction):
             "🔄 Verificação automática a cada **3 minutos**\n"
             "🚀 Detecção de partidas finalizadas em **60 segundos**\n"
             "🗳️ Votação de MVP após cada partida\n"
-            "🏆 Reset semanal **segunda às 12h** com cargo\n"
+            "🏆 Reset semanal **segunda às 00:00** com cargo\n"
             "🌍 Suporte a **todas as regiões** da Riot"
         ),
         inline=False
@@ -1846,9 +1691,21 @@ async def reset_media(
                     description=f"Partidas da conta **{account['summoner_name']}** foram deletadas.",
                     color=discord.Color.green()
                 )
-                embed.add_field(name="👤 Usuário", value=usuario.mention, inline=True)
-                embed.add_field(name="🎮 Conta", value=account['summoner_name'], inline=True)
-                embed.add_field(name="🗑️ Partidas Deletadas", value=str(deleted_count), inline=True)
+                embed.add_field(
+                    name="👤 Usuário",
+                    value=usuario.mention,
+                    inline=True
+                )
+                embed.add_field(
+                    name="🎮 Conta",
+                    value=account['summoner_name'],
+                    inline=True
+                )
+                embed.add_field(
+                    name="🗑️ Partidas Deletadas",
+                    value=str(deleted_count),
+                    inline=True
+                )
                 await interaction.followup.send(embed=embed, ephemeral=True)
             else:
                 await interaction.followup.send("❌ Erro ao deletar partidas.", ephemeral=True)
@@ -1869,13 +1726,21 @@ async def reset_media(
                 description=f"Todas as partidas de {usuario.mention} foram deletadas.",
                 color=discord.Color.green()
             )
-            embed.add_field(name="👤 Usuário", value=usuario.mention, inline=False)
+            embed.add_field(
+                name="👤 Usuário",
+                value=usuario.mention,
+                inline=False
+            )
             embed.add_field(
                 name="🎮 Contas Afetadas",
                 value="\n".join(accounts_info) if accounts_info else "Nenhuma",
                 inline=False
             )
-            embed.add_field(name="🗑️ Total Deletado", value=f"{total_deleted} partidas", inline=False)
+            embed.add_field(
+                name="🗑️ Total Deletado",
+                value=f"{total_deleted} partidas",
+                inline=False
+            )
             await interaction.followup.send(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="reset_media_confirmar", description="🗑️ [ADMIN] Confirma o reset de TODAS as partidas")
@@ -2990,641 +2855,113 @@ class MVPVotingView(discord.ui.View):
                 results_text = "**Votação encerrada por tempo:**\n\n"
                 
                 if sorted_votes:
-                    first_place_votes = sorted_votes[0][1]
+                    first_place_votes = sorted_votes[0][1] if sorted_votes else 0
+                    
+                    # Encontra todos os empatados em primeiro
                     first_place_winners = [v[0] for v in sorted_votes if v[1] == first_place_votes]
                     
                     if len(first_place_winners) > 1:
+                        # Empate no primeiro lugar - +2 cada
                         for winner_id in first_place_winners:
                             db.add_carry_score(winner_id, self.game_id, 2, "Empate em 1º lugar MVP (timeout)")
                             results_text += f"🥇 <@{winner_id}> - **{first_place_votes} votos** → **+2 Carry Score**\n"
                     else:
+                        # Primeiro lugar único - +3
                         winner_id = first_place_winners[0]
                         db.add_carry_score(winner_id, self.game_id, 3, "1º lugar MVP (timeout)")
                         results_text += f"🥇 <@{winner_id}> - **{first_place_votes} votos** → **+3 Carry Score**\n"
-                
-                # Fecha a votação
-                db.close_pending_vote(self.game_id, self.guild_id)
-                
-                print(f"⏱️ [Votação] Votação expirada para partida {self.game_id}, votos processados")
-            else:
-                results_text = "**Votação encerrada - Nenhum voto recebido**"
-                db.close_pending_vote(self.game_id, self.guild_id)
-                print(f"⏱️ [Votação] Votação expirada para partida {self.game_id}, sem votos")
+                        
+                        # Segundo lugar (se existir e não for empate)
+                        if len(sorted_votes) > 1:
+                            second_place_votes = sorted_votes[1][1]
+                            second_place_winners = [v[0] for v in sorted_votes if v[1] == second_place_votes and v[0] not in first_place_winners]
+                            
+                            for second_id in second_place_winners:
+                                db.add_carry_score(second_id, self.game_id, 2, "2º lugar MVP")
+                                results_text += f"🥈 <@{second_id}> - **{second_place_votes} votos** → **+2 Carry Score**\n"
+            
+            # Fecha a votação
+            db.close_pending_vote(self.game_id, self.guild_id)
+            
+            # Atualiza a mensagem original
+            embed = discord.Embed(
+                title="🏆 VOTAÇÃO ENCERRADA",
+                description=results_text,
+                color=discord.Color.green()
+            )
+            
+            # Desabilita todos os botões
+            for item in self.children:
+                item.disabled = True
+            
+            await interaction.message.edit(embed=embed, view=self)
+            
+            print(f"✅ [Votação] Votação finalizada para partida {self.game_id}")
             
         except Exception as e:
-            print(f"❌ [Votação] Erro no timeout: {e}")
-
-async def check_champion_performance(lol_account_id: int, champion_name: str):
-    """Sistema de PROIBIÇÃO PROGRESSIVA - Verifica se o jogador teve performances ruins com o mesmo campeão
-    Sistema de Stack: 2 dias → 4 dias → 1 semana
-    Reseta após 3 dias do último banimento ou ao atingir o máximo
-
-    Critérios de Proibição:
-    1. 3 partidas ruins seguidas (< 45 pontos cada) - mostra todas as 3 partidas
-    2. Partida ATUAL abaixo de 35 pontos (independente das anteriores) - mostra apenas a partida atual
+            print(f"❌ [Votação] Erro ao finalizar votação: {e}")
+            import traceback
+            traceback.print_exc()
     
-    IMPORTANTE: Nível de ban é ESPECÍFICO POR CAMPEÃO. Se trocar de campeão, volta para nível 1."""
-    try:
-        # Busca as últimas 3 partidas com esse campeão
-        matches = db.get_last_n_matches_with_champion(lol_account_id, champion_name, n=3)
-
-        # Se não tem nenhuma partida, não faz nada
-        if len(matches) == 0:
-            return
-
-        # CRITÉRIO 1: Sistema antigo - verifica se todas as 3 têm MVP Score abaixo de 45 (requer 3 partidas)
-        all_bad_scores = len(matches) >= 3 and all(match.get('mvp_score', 0) < 45 for match in matches)
-
-        # CRITÉRIO 2: Critério rigoroso - verifica se a PARTIDA ATUAL (primeira da lista) ficou abaixo de 35 pontos
-        current_match_below_35 = matches[0].get('mvp_score', 0) < 35
-
-        # Dispara alerta se qualquer um dos critérios for atendido
-        should_alert = all_bad_scores or current_match_below_35
-
-        if not should_alert:
-            return
-        
-        # 🔥 NOVA VALIDAÇÃO: Verifica se já foi enviado alerta para esta partida atual com este campeão
-        current_match_id = matches[0].get('match_id')
-        if db.was_performance_alert_sent(lol_account_id, current_match_id, champion_name):
-            print(f"⏭️ [Performance Alert] Alerta já enviado para partida {current_match_id} com {champion_name}, pulando...")
-            return
-        
-        # Determina o nível de banimento (progressivo)
-        current_level = db.get_champion_ban_level(lol_account_id, champion_name)
-        
-        # Sistema de stack: 1 (2 dias) → 2 (4 dias) → 3 (1 semana)
-        if current_level == 0:
-            new_level = 1
-            ban_days = 2
-        elif current_level == 1:
-            new_level = 2
-            ban_days = 4
-        elif current_level == 2:
-            new_level = 3
-            ban_days = 7
-        else:  # Já está no máximo (3), reseta para 1
-            new_level = 1
-            ban_days = 2
-        
-        # Determina a razão do banimento
-        if current_match_below_35:
-            reason = "Partida atual abaixo de 35 pontos"
-        else:
-            reason = "3 partidas ruins seguidas (< 45 pontos)"
-        
-        # Registra o banimento no banco
-        db.add_champion_ban(lol_account_id, champion_name, ban_days, new_level, reason)
-        
-        # Registra pintado de ouro (+1) quando recebe banimento
-        current_match = matches[0] if matches else None
-        if current_match:
-            match_id = current_match.get('match_id', f"ban_{champion_name}_{datetime.now().timestamp()}")
-            mvp_score = current_match.get('mvp_score', 0)
-            role = current_match.get('role', 'Unknown')
-            db.add_gold_medal(lol_account_id, champion_name, role, match_id, mvp_score)
-            print(f"🎨 [Pintado de Ouro] {champion_name} - Banimento aplicado!")
-        
-        # Busca informações da conta
-        conn = db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT discord_id, summoner_name FROM lol_accounts
-            WHERE id = ?
-        ''', (lol_account_id,))
-        account_info = cursor.fetchone()
-        conn.close()
-        
-        if not account_info:
-            return
-        
-        discord_id, summoner_name = account_info
-        
-        # Busca todos os servidores onde está o bot
-        for guild in bot.guilds:
-            # Verifica se o usuário está nesse servidor
-            member = guild.get_member(int(discord_id))
-            if not member:
-                continue
-            
-            # Busca canal de notificações configurado para esse servidor
-            channel_id = db.get_notification_channel(str(guild.id))
-            if not channel_id:
-                continue
-            
-            # Busca o canal
-            channel = guild.get_channel(int(channel_id))
-            if not channel:
-                continue
-            
-            # Calcula média dos MVP Scores
-            avg_mvp_score = sum(m.get('mvp_score', 0) for m in matches) / len(matches)
-
-            # Determina qual critério foi atendido para personalizar a mensagem
-            alert_reason = ""
-            if current_match_below_35:
-                alert_reason = "• Teve uma partida abaixo de 35 pontos!"
-            else:
-                alert_reason = "• 3 partidas ruins seguidas (< 45 pontos cada)!"
-
-            # Define emoji e cor baseado no nível
-            if new_level == 1:
-                level_emoji = "⚠️"
-                level_color = discord.Color.orange()
-                level_text = "NÍVEL 1"
-            elif new_level == 2:
-                level_emoji = "🚨"
-                level_color = discord.Color.red()
-                level_text = "NÍVEL 2"
-            else:  # nível 3
-                level_emoji = "🔴"
-                level_color = discord.Color.dark_red()
-                level_text = "NÍVEL 3 (MÁXIMO)"
-            
-            embed = discord.Embed(
-                title=f"{level_emoji} BANIMENTO PROGRESSIVO - {level_text}",
-                description=f"{member.mention} está **PROIBIDO** de jogar com **{champion_name}** por **{ban_days} dias**!",
-                color=level_color
-            )
-
-            # Filtra partidas baseado no critério atendido
-            if current_match_below_35:
-                # Mostra apenas a partida atual (primeira da lista)
-                relevant_matches = [matches[0]]
-                field_title = "🎯 Partida Problemática"
-                field_desc = f"Partida atual com MVP Score abaixo de 35 pontos com {champion_name}"
-            else:
-                # Mostra todas as 3 partidas ruins
-                relevant_matches = matches
-                field_title = "🎯 Últimas 3 Partidas"
-                field_desc = f"As 3 partidas ruins seguidas com {champion_name}"
-
-            embed.add_field(
-                name="📊 Estatísticas Recentes",
-                value=(
-                    f"🎮 **{len(relevant_matches)}** partida(s) relevante(s) com {champion_name}\n"
-                    f"👑 MVP Score médio: **{int(avg_mvp_score)}/100**\n"
-                    f"⚠️ {alert_reason}"
-                ),
-                inline=False
-            )
-
-            # Adiciona detalhes das partidas relevantes
-            matches_text = ""
-            for i, match in enumerate(relevant_matches, 1):
-                result_emoji = "✅" if match['win'] else "❌"
-                mvp_placement = match.get('mvp_placement', 0)
-                matches_text += (
-                    f"{result_emoji} MVP: **{match.get('mvp_score', 0)} ({mvp_placement}º)** | "
-                    f"{match['kills']}/{match['deaths']}/{match['assists']}\n"
-                )
-
-            embed.add_field(
-                name=field_title,
-                value=matches_text.strip(),
-                inline=False
-            )
-            
-            embed.add_field(
-                name="🚫 SISTEMA DE BANIMENTO PROGRESSIVO",
-                value=(
-                    "**Critérios de Proibição:**\n"
-                    "• **3 partidas ruins seguidas** (< 45 pontos cada)\n"
-                    "• **Pelo menos 1 partida abaixo de 35 pontos**\n\n"
-                    "**Sistema de Stack:**\n"
-                    "• **Nível 1:** 2 dias de banimento\n"
-                    "• **Nível 2:** 4 dias de banimento\n"
-                    "• **Nível 3:** 1 semana de banimento\n\n"
-                    "**Reset:** Após 3 dias do último banimento ou ao atingir nível máximo"
-                ),
-                inline=False
-            )
-            
-            embed.set_footer(text=f"Conta: {summoner_name}")
-            
-            # Envia notificação
-            try:
-                await channel.send(embed=embed)
-                
-                # 🔥 Marca que o alerta foi enviado para esta partida e campeão
-                alert_type = "below_35" if current_match_below_35 else "3_bad_matches"
-                db.mark_performance_alert_sent(lol_account_id, current_match_id, champion_name, alert_type)
-                
-                if current_match_below_35:
-                    print(f"⚠️ Alerta enviado: {summoner_name} com {champion_name} (partida abaixo de 35 pontos)")
-                else:
-                    print(f"⚠️ Alerta enviado: {summoner_name} com {champion_name} (3 partidas ruins seguidas)")
-            except Exception as e:
-                print(f"Erro ao enviar notificação: {e}")
-    
-    except Exception as e:
-        print(f"Erro ao verificar performance: {e}")
-
-async def send_live_game_notification(lol_account_id: int, live_info: Dict):
-    """Envia notificação quando um jogador entra em partida ao vivo"""
-    try:
-        # Busca informações da conta
-        conn = db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT discord_id, summoner_name, region FROM lol_accounts
-            WHERE id = ?
-        ''', (lol_account_id,))
-        account_info = cursor.fetchone()
-        conn.close()
-        
-        if not account_info:
-            return
-        
-        discord_id, summoner_name, region = account_info
-        
-        # Busca APENAS o primeiro servidor válido onde está o bot (envia apenas UMA vez)
-        for guild in bot.guilds:
-            # Verifica se o usuário está nesse servidor
-            member = guild.get_member(int(discord_id))
-            if not member:
-                continue
-            
-            # Busca canal configurado (prioriza live games, depois partidas como fallback)
-            channel_id = db.get_live_game_channel(str(guild.id))
-            if not channel_id:
-                channel_id = db.get_match_channel(str(guild.id))
-            if not channel_id:
-                continue
-            
-            # Busca o canal
-            channel = guild.get_channel(int(channel_id))
-            if not channel:
-                continue
-            
-            # Determina cor baseada no modo de jogo
-            queue_id = live_info.get('queueId', 0)
-            if queue_id == 440:  # Ranked Flex
-                color = discord.Color.gold()
-            elif queue_id == 420:  # Ranked Solo/Duo
-                color = discord.Color.purple()
-            else:
-                color = discord.Color.blue()
-            
-            embed = discord.Embed(
-                title="🔴 PARTIDA AO VIVO!",
-                description=f"{member.mention} **entrou em partida!**",
-                color=color,
-                timestamp=datetime.now()
-            )
-            
-            # Informações principais
-            embed.add_field(
-                name="🎮 Modo de Jogo",
-                value=f"**{live_info['gameMode']}**",
-                inline=True
-            )
-            
-            embed.add_field(
-                name="🏆 Campeão",
-                value=f"**{live_info['champion']}**",
-                inline=True
-            )
-            
-            # Calcula tempo de jogo
-            game_length = live_info.get('gameLength', 0)
-            game_time_min = game_length // 60
-            game_time_sec = game_length % 60
-            
-            # Formata tempo de jogo (se negativo ou 0, mostra 00:00)
-            if game_length <= 0:
-                game_time_display = "00:00"
-            else:
-                game_time_display = f"{game_time_min}:{game_time_sec:02d}"
-            
-            embed.add_field(
-                name="⏱️ Tempo de Jogo",
-                value=f"**{game_time_display}**",
-                inline=True
-            )
-            
-            # Campo vazio para quebra de linha (força os times a ficarem lado a lado)
-            embed.add_field(
-                name="\u200b",
-                value="\u200b",
-                inline=True
-            )
-            
-            # Composições de time
-            team_100 = live_info.get('team_100', [])
-            team_200 = live_info.get('team_200', [])
-            
-            if team_100:
-                team_100_text = "\n".join([f"• **{p['champion']}** - {p['summonerName']}" for p in team_100[:5]])
-                embed.add_field(
-                    name="🔵 Time Azul",
-                    value=team_100_text,
-                    inline=True
-                )
-            
-            if team_200:
-                team_200_text = "\n".join([f"• **{p['champion']}** - {p['summonerName']}" for p in team_200[:5]])
-                embed.add_field(
-                    name="🔴 Time Vermelho",
-                    value=team_200_text,
-                    inline=True
-                )
-            
-            # Links úteis
-            region_map = {
-                'br1': 'br', 'na1': 'na', 'euw1': 'euw', 'eun1': 'eune',
-                'kr': 'kr', 'jp1': 'jp', 'la1': 'lan', 'la2': 'las',
-                'oc1': 'oce', 'tr1': 'tr', 'ru': 'ru'
-            }
-            region_short = region_map.get(region.lower(), region.lower())
-            
-            # Remove #TAG do summoner name para os links
-            summoner_clean = summoner_name.split('#')[0] if '#' in summoner_name else summoner_name
-            
-            links = f"""
-[OP.GG](https://www.op.gg/summoners/{region_short}/{summoner_clean}) • 
-[U.GG](https://u.gg/lol/profile/{region_short}/{summoner_clean}/overview) • 
-[Porofessor](https://porofessor.gg/live/{region_short}/{summoner_clean})
-            """
-            
-            embed.add_field(
-                name="📊 Live Trackers",
-                value=links.strip(),
-                inline=False
-            )
-            
-            embed.set_thumbnail(url=member.display_avatar.url)
-            embed.set_footer(
-                text=f"{summoner_name} • {region.upper()}",
-                icon_url="https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-shared-components/global/default/ranked-emblem-flex.png"
-            )
-            
-            # Envia notificação e salva message_id
-            try:
-                message = await channel.send(embed=embed)
-                print(f"🔴 Live game: {summoner_name} - {live_info['champion']} ({live_info['gameMode']})")
-                
-                # Retorna informações da mensagem para salvar no banco
-                return {
-                    'message_id': str(message.id),
-                    'channel_id': str(channel.id),
-                    'guild_id': str(guild.id)
-                }
-            except Exception as e:
-                print(f"Erro ao enviar notificação de live game: {e}")
-                return None
-    
-    except Exception as e:
-        print(f"Erro ao processar notificação de live game: {e}")
-
-async def update_live_game_notification(game_id: str, guild_id: str, new_players: list):
-    """Atualiza uma mensagem de live game existente com novos jogadores detectados"""
-    try:
-        print(f"🔍 [Update Live] Iniciando atualização para game {game_id}, guild {guild_id}")
-        print(f"🔍 [Update Live] Novos jogadores recebidos: {len(new_players)}")
-        
-        # Busca a mensagem existente
-        message_info = db.get_live_game_message_by_game_id(game_id, guild_id)
-        if not message_info:
-            print(f"⚠️ [Update Live] Mensagem não encontrada para game {game_id}")
-            return False
-        
-        print(f"🔍 [Update Live] Mensagem encontrada: {message_info['message_id']}")
-        
-        # Busca o canal e a mensagem
-        guild = bot.get_guild(int(message_info['guild_id']))
-        if not guild:
-            return False
-        
-        channel = guild.get_channel(int(message_info['channel_id']))
-        if not channel:
-            return False
-        
+    async def on_timeout(self):
+        """Chamado quando a votação expira"""
         try:
-            message = await channel.fetch_message(int(message_info['message_id']))
-        except:
-            print(f"⚠️ [Update Live] Erro ao buscar mensagem {message_info['message_id']}")
-            return False
-        
-        # Busca todos os jogadores já notificados (incluindo os novos) - sem filtrar por guild para pegar todos
-        print(f"🔍 [Update Live] Buscando todos os jogadores do banco para game {game_id}")
-        all_players_data = db.get_live_game_players(game_id, None)
-        print(f"🔍 [Update Live] Jogadores encontrados no banco: {len(all_players_data)}")
-        for player_data in all_players_data:
-            print(f"   📋 Player: {player_data['summoner_name']} (discord_id: {player_data['discord_id']}, champion: {player_data['champion_name']})")
-        
-        # Busca os members do Discord
-        members = []
-        for player_data in all_players_data:
-            member = guild.get_member(int(player_data['discord_id']))
-            if member:
-                members.append({
-                    'member': member,
-                    'summoner_name': player_data['summoner_name'],
-                    'champion_name': player_data['champion_name']
-                })
-                print(f"   ✅ Member encontrado: {member.display_name} ({player_data['summoner_name']})")
-            else:
-                print(f"   ⚠️ Member NÃO encontrado para discord_id {player_data['discord_id']} ({player_data['summoner_name']})")
-        
-        print(f"🔍 [Update Live] Total de members encontrados: {len(members)}")
-        
-        if not members:
-            print(f"⚠️ [Update Live] Nenhum member encontrado, abortando atualização")
-            return False
-        
-        # Pega o embed antigo e atualiza
-        if not message.embeds:
-            print(f"⚠️ [Update Live] Mensagem não tem embeds")
-            return False
-        
-        old_embed = message.embeds[0]
-        
-        print(f"🔍 [Update Live] Criando novo embed com {len(members)} jogadores")
-        print(f"🔍 [Update Live] Jogadores que serão mencionados:")
-        for m in members:
-            print(f"   👤 {m['member'].display_name} ({m['summoner_name']}) - {m['champion_name']}")
-        
-        # Cria novo embed mantendo as informações originais
-        new_embed = discord.Embed(
-            title="🔴 PARTIDA EM GRUPO AO VIVO!" if len(members) > 1 else "🔴 PARTIDA AO VIVO!",
-            description=f"**{len(members)} jogador{'es' if len(members) > 1 else ''}** em partida!\n\n" + ", ".join([m['member'].mention for m in members]),
-            color=old_embed.color,
-            timestamp=old_embed.timestamp
-        )
-        
-        # Mantém os campos originais (times, modo de jogo, etc.)
-        print(f"🔍 [Update Live] Copiando {len(old_embed.fields)} campos do embed original")
-        for field in old_embed.fields:
-            new_embed.add_field(name=field.name, value=field.value, inline=field.inline)
-        
-        # Mantém footer e thumbnail
-        if old_embed.footer:
-            new_embed.set_footer(text=old_embed.footer.text, icon_url=old_embed.footer.icon_url)
-        if old_embed.thumbnail:
-            new_embed.set_thumbnail(url=old_embed.thumbnail.url)
-        
-        # Edita a mensagem
-        print(f"🔍 [Update Live] Editando mensagem {message.id}...")
-        await message.edit(embed=new_embed)
-        print(f"✅ [Update Live] Mensagem atualizada com {len(members)} jogadores na partida {game_id}")
-        return True
-        
-    except Exception as e:
-        print(f"❌ [Update Live] Erro ao atualizar mensagem: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-async def send_live_game_notification_grouped(game_id: str, players: list):
-    """Envia UMA notificação para múltiplos jogadores na mesma partida"""
-    try:
-        # Usa as informações do primeiro jogador como base
-        first_player = players[0]
-        live_info = first_player['live_info']
-        
-        # Busca o servidor comum (assume que todos estão no mesmo servidor)
-        # Pega o primeiro guild onde pelo menos um jogador está
-        target_guild = None
-        target_channel = None
-        
-        for guild in bot.guilds:
-            # Verifica se todos os jogadores estão neste servidor
-            members_in_guild = []
-            for player in players:
-                member = guild.get_member(int(player['discord_id']))
-                if member:
-                    members_in_guild.append(member)
+            vote_counts = db.get_vote_count_for_game(self.game_id)
             
-            # Se tem pelo menos 2 jogadores nesse servidor, usa ele
-            if len(members_in_guild) >= 2:
-                target_guild = guild
+            if vote_counts:
+                # Processa votos mesmo com timeout
+                sorted_votes = sorted(vote_counts.items(), key=lambda x: x[1], reverse=True)
                 
-                # Busca canal configurado (prioriza live games, depois partidas como fallback)
-                channel_id = db.get_live_game_channel(str(guild.id))
-                if not channel_id:
-                    channel_id = db.get_match_channel(str(guild.id))
-                if channel_id:
-                    target_channel = guild.get_channel(int(channel_id))
-                    if target_channel:
-                        break
-        
-        if not target_guild or not target_channel:
-            print(f"⚠️ Servidor ou canal não encontrado para partida agrupada {game_id}")
-            return None
-        
-        # Busca os members
-        members = []
-        for player in players:
-            member = target_guild.get_member(int(player['discord_id']))
-            if member:
-                members.append({'member': member, 'player': player})
-        
-        if not members:
-            return None
-        
-        # Determina cor baseada no modo de jogo
-        queue_id = live_info.get('queueId', 0)
-        if queue_id == 440:  # Ranked Flex
-            color = discord.Color.gold()
-        elif queue_id == 420:  # Ranked Solo/Duo
-            color = discord.Color.purple()
-        else:
-            color = discord.Color.blue()
-
-        players_mentions = ", ".join([m['member'].mention for m in members])
-        
-        embed = discord.Embed(
-            title="🔴 PARTIDA EM GRUPO AO VIVO!",
-            description=f"**{len(members)} jogadores** entraram em partida juntos!\n\n{players_mentions}",
-            color=color,
-            timestamp=datetime.now()
-        )
-        
-        # Informações principais
-        embed.add_field(
-            name="🎮 Modo de Jogo",
-            value=f"**{live_info['gameMode']}**",
-            inline=True
-        )
-        
-        # Calcula tempo de jogo
-        game_length = live_info.get('gameLength', 0)
-        game_time_min = game_length // 60
-        game_time_sec = game_length % 60
-        
-        if game_length <= 0:
-            game_time_display = "00:00"
-        else:
-            game_time_display = f"{game_time_min}:{game_time_sec:02d}"
-        
-        embed.add_field(
-            name="⏱️ Tempo de Jogo",
-            value=f"**{game_time_display}**",
-            inline=True
-        )
-        
-        # Campo vazio para quebra de linha (força os times a ficarem lado a lado)
-        embed.add_field(
-            name="\u200b",
-            value="\u200b",
-            inline=True
-        )
-        
-        # Lista os jogadores e seus campeões
-        players_text = ""
-        for m in members:
-            info = m['player']['live_info']
-            role_emoji = {
-                'TOP': '⚔️', 'JUNGLE': '🌳', 'MIDDLE': '✨',
-                'BOTTOM': '🏹', 'UTILITY': '🛡️'
-            }.get(info.get('role', ''), '❓')
+                results_text = "**Votação encerrada por tempo:**\n\n"
+                
+                if sorted_votes:
+                    first_place_votes = sorted_votes[0][1] if sorted_votes else 0
+                    
+                    # Encontra todos os empatados em primeiro
+                    first_place_winners = [v[0] for v in sorted_votes if v[1] == first_place_votes]
+                    
+                    if len(first_place_winners) > 1:
+                        # Empate no primeiro lugar - +2 cada
+                        for winner_id in first_place_winners:
+                            db.add_carry_score(winner_id, self.game_id, 2, "Empate em 1º lugar MVP (timeout)")
+                            results_text += f"🥇 <@{winner_id}> - **{first_place_votes} votos** → **+2 Carry Score**\n"
+                    else:
+                        # Primeiro lugar único - +3
+                        winner_id = first_place_winners[0]
+                        db.add_carry_score(winner_id, self.game_id, 3, "1º lugar MVP (timeout)")
+                        results_text += f"🥇 <@{winner_id}> - **{first_place_votes} votos** → **+3 Carry Score**\n"
+                        
+                        # Segundo lugar (se existir e não for empate)
+                        if len(sorted_votes) > 1:
+                            second_place_votes = sorted_votes[1][1]
+                            second_place_winners = [v[0] for v in sorted_votes if v[1] == second_place_votes and v[0] not in first_place_winners]
+                            
+                            for second_id in second_place_winners:
+                                db.add_carry_score(second_id, self.game_id, 2, "2º lugar MVP")
+                                results_text += f"🥈 <@{second_id}> - **{second_place_votes} votos** → **+2 Carry Score**\n"
             
-            players_text += f"{role_emoji} **{info['champion']}** - {m['member'].display_name}\n"
-        
-        
-        # Composições de time
-        team_100 = live_info.get('team_100', [])
-        team_200 = live_info.get('team_200', [])
-        
-        if team_100:
-            team_100_text = "\n".join([f"• **{p['champion']}** - {p['summonerName']}" for p in team_100[:5]])
-            embed.add_field(
-                name="🔵 Time Azul",
-                value=team_100_text,
-                inline=True
-            )
-        
-        if team_200:
-            team_200_text = "\n".join([f"• **{p['champion']}** - {p['summonerName']}" for p in team_200[:5]])
-            embed.add_field(
-                name="🔴 Time Vermelho",
-                value=team_200_text,
-                inline=True
-            )
-        
-        embed.set_footer(
-            text=f"Game ID: {game_id} • {first_player['region'].upper()}",
-            icon_url="https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-shared-components/global/default/ranked-emblem-flex.png"
-        )
-        
-        # Envia notificação
-        try:
-            message = await target_channel.send(embed=embed)
-            print(f"🔴 Live game agrupado: {len(members)} jogadores - {live_info['gameMode']}")
+            # Fecha a votação
+            db.close_pending_vote(self.game_id, self.guild_id)
             
-            return {
-                'message_id': str(message.id),
-                'channel_id': str(target_channel.id),
-                'guild_id': str(target_guild.id)
-            }
+            # Atualiza a mensagem original
+            embed = discord.Embed(
+                title="🏆 VOTAÇÃO ENCERRADA",
+                description=results_text,
+                color=discord.Color.green()
+            )
+            
+            # Desabilita todos os botões
+            for item in self.children:
+                item.disabled = True
+            
+            await interaction.message.edit(embed=embed, view=self)
+            
+            print(f"✅ [Votação] Votação finalizada para partida {self.game_id}")
+            
         except Exception as e:
-            print(f"Erro ao enviar notificação agrupada: {e}")
-            return None
-    
-    except Exception as e:
-        print(f"Erro ao processar notificação agrupada: {e}")
-        return None
+            print(f"❌ [Votação] Erro ao finalizar votação: {e}")
+            import traceback
+            traceback.print_exc()
 
 @tasks.loop(seconds=180)
 async def check_live_games():
@@ -3818,7 +3155,7 @@ async def check_new_matches():
         if not accounts:
             print("⚠️ [Partidas] Nenhuma conta vinculada para verificar")
             return
-
+        
         print(f"📊 [Partidas] Verificando {len(accounts)} conta(s)...")
         new_matches_count = 0
 
@@ -4023,10 +3360,8 @@ async def check_live_games_finished():
                     if live_game_info['puuid'] == puuid:
                         print(f"✅ [Live Check] PUUID corresponde - é a mesma partida!")
                     else:
-                        print(f"⚠️ [Live Check] PUUID diferente - pode ser outra partida")
-                        # Continua verificando mesmo assim, pois pode ser a mesma partida com PUUID diferente
-                else:
-                    print(f"⚠️ [Live Check] Nenhuma informação de live game encontrada para conta {account_id}")
+                        print(f"⚠️ [Live Check] PUUID diferente - pode não ser a mesma partida")
+                        # Continua verificando mesmo assim, pois pode haver erro na comparação
 
                 # Verifica se já está registrada no banco
                 last_match_id = db.get_last_match_id(account_id)
@@ -4133,7 +3468,6 @@ async def check_live_games_finished():
 
                                 # Verifica performance apenas se não for remake
                                 if not stats.get('is_remake', False):
-                                    print(f"📊 [Live Check] Verificando performance do campeão...")
                                     await check_champion_performance(account_id, stats['champion_name'])
 
                                 # Remove da lista de live games
@@ -4191,9 +3525,9 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
     except Exception as e:
         print(f"Erro no error handler: {e}")
 
-@tasks.loop(time=datetime.strptime("12:00", "%H:%M").time())
+@tasks.loop(time=datetime.strptime("00:00", "%H:%M").time())
 async def check_weekly_reset():
-    """Task que roda todo dia às 12h e verifica se é segunda-feira para resetar o ranking"""
+    """Task que roda todo dia à 00:00 e executa o reset semanal na virada para segunda-feira"""
     from datetime import timedelta
     try:
         now = datetime.now()
@@ -4202,7 +3536,7 @@ async def check_weekly_reset():
         if now.weekday() != 0:
             return  # Não é segunda-feira, ignora
         
-        # É segunda-feira às 12h - executa o reset
+        # É segunda-feira à 00:00 - executa o reset
         print("🏆 [Top Flex] Iniciando reset semanal...")
         
         # Calcula a semana que acabou (segunda passada até domingo)
