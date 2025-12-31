@@ -2953,6 +2953,173 @@ class MVPVotingView(discord.ui.View):
             import traceback
             traceback.print_exc()
 
+async def send_live_game_notification(lol_account_id: int, live_info: Dict) -> Dict:
+    """
+    Envia notificação quando um jogador entra em partida ao vivo.
+    Retorna dict com message_id, channel_id, guild_id ou None se falhar.
+    """
+    try:
+        # Busca informações da conta
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT discord_id, summoner_name, region FROM lol_accounts
+            WHERE id = ?
+        ''', (lol_account_id,))
+        account_info = cursor.fetchone()
+        conn.close()
+        
+        if not account_info:
+            return None
+        
+        discord_id, summoner_name, region = account_info
+        
+        # Busca servidor e canal
+        for guild in bot.guilds:
+            member = guild.get_member(int(discord_id))
+            if not member:
+                continue
+            
+            # Busca canal de live games ou canal de partidas
+            channel_id = db.get_live_game_channel(str(guild.id))
+            if not channel_id:
+                channel_id = db.get_match_channel(str(guild.id))
+            if not channel_id:
+                continue
+            
+            channel = guild.get_channel(int(channel_id))
+            if not channel:
+                continue
+            
+            # Cria embed de partida ao vivo
+            embed = discord.Embed(
+                title="🔴 PARTIDA AO VIVO!",
+                description=f"{member.mention} entrou em uma partida de **Ranked Flex**!",
+                color=discord.Color.blue()
+            )
+            
+            champion_name = live_info.get('champion', 'Unknown')
+            champion_image_url = f"https://ddragon.leagueoflegends.com/cdn/14.1.1/img/champion/{champion_name}.png"
+            
+            embed.add_field(
+                name="🎮 Informações",
+                value=(
+                    f"**Invocador:** {summoner_name}\n"
+                    f"**Campeão:** {champion_name}\n"
+                    f"**Modo:** Ranked Flex"
+                ),
+                inline=False
+            )
+            
+            # Links para trackers
+            summoner_encoded = summoner_name.replace('#', '-')
+            embed.add_field(
+                name="🔗 Links",
+                value=(
+                    f"[OP.GG](https://www.op.gg/summoners/{region}/{summoner_encoded}) • "
+                    f"[U.GG](https://u.gg/lol/profile/{region}/{summoner_encoded}) • "
+                    f"[Porofessor](https://porofessor.gg/live/{region}/{summoner_encoded})"
+                ),
+                inline=False
+            )
+            
+            embed.set_thumbnail(url=champion_image_url)
+            embed.set_footer(text="A mensagem será atualizada quando a partida terminar!")
+            
+            message = await channel.send(embed=embed)
+            
+            return {
+                'message_id': str(message.id),
+                'channel_id': str(channel.id),
+                'guild_id': str(guild.id)
+            }
+        
+        return None
+        
+    except Exception as e:
+        print(f"❌ [Live Games] Erro ao enviar notificação: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+async def send_live_game_notification_grouped(game_id: str, players: List[Dict]) -> Dict:
+    """
+    Envia notificação quando MÚLTIPLOS jogadores entram na mesma partida.
+    Retorna dict com message_id, channel_id, guild_id ou None se falhar.
+    """
+    try:
+        if not players:
+            return None
+        
+        # Pega o primeiro jogador para determinar o servidor
+        first_player = players[0]
+        discord_id = first_player['discord_id']
+        
+        # Busca servidor e canal
+        for guild in bot.guilds:
+            member = guild.get_member(int(discord_id))
+            if not member:
+                continue
+            
+            # Busca canal de live games ou canal de partidas
+            channel_id = db.get_live_game_channel(str(guild.id))
+            if not channel_id:
+                channel_id = db.get_match_channel(str(guild.id))
+            if not channel_id:
+                continue
+            
+            channel = guild.get_channel(int(channel_id))
+            if not channel:
+                continue
+            
+            # Cria embed de partida em grupo
+            player_mentions = [f"<@{p['discord_id']}>" for p in players]
+            
+            embed = discord.Embed(
+                title="🔴 PARTIDA EM GRUPO AO VIVO!",
+                description=f"**{len(players)} jogadores** entraram na mesma partida de **Ranked Flex**!\n\n{' • '.join(player_mentions)}",
+                color=discord.Color.blue()
+            )
+            
+            # Lista de jogadores com campeões
+            players_info = ""
+            for p in players:
+                champion = p['live_info'].get('champion', 'Unknown')
+                players_info += f"• **{p['summoner_name']}** - {champion}\n"
+            
+            embed.add_field(
+                name="🎮 Jogadores",
+                value=players_info,
+                inline=False
+            )
+            
+            # Links para o primeiro jogador (como referência)
+            region = first_player.get('region', 'br1')
+            summoner_encoded = first_player['summoner_name'].replace('#', '-')
+            embed.add_field(
+                name="🔗 Acompanhar Partida",
+                value=f"[Porofessor](https://porofessor.gg/live/{region}/{summoner_encoded})",
+                inline=False
+            )
+            
+            embed.set_footer(text="A mensagem será atualizada quando a partida terminar!")
+            
+            message = await channel.send(embed=embed)
+            
+            return {
+                'message_id': str(message.id),
+                'channel_id': str(channel.id),
+                'guild_id': str(guild.id)
+            }
+        
+        return None
+        
+    except Exception as e:
+        print(f"❌ [Live Games] Erro ao enviar notificação em grupo: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
 @tasks.loop(seconds=180)
 async def check_live_games():
     """Task que verifica se jogadores estão em partidas ao vivo a cada 3 minutos (180 segundos)"""
