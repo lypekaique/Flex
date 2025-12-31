@@ -3354,9 +3354,9 @@ async def update_live_game_notification(game_id: str, guild_id: str, new_players
             print(f"⚠️ [Update Live] Erro ao buscar mensagem {message_info['message_id']}")
             return False
         
-        # Busca todos os jogadores já notificados (incluindo os novos)
-        print(f"🔍 [Update Live] Buscando todos os jogadores do banco para game {game_id}, guild {guild_id}")
-        all_players_data = db.get_live_game_players(game_id, guild_id)
+        # Busca todos os jogadores já notificados (incluindo os novos) - sem filtrar por guild para pegar todos
+        print(f"🔍 [Update Live] Buscando todos os jogadores do banco para game {game_id}")
+        all_players_data = db.get_live_game_players(game_id, None)
         print(f"🔍 [Update Live] Jogadores encontrados no banco: {len(all_players_data)}")
         for player_data in all_players_data:
             print(f"   📋 Player: {player_data['summoner_name']} (discord_id: {player_data['discord_id']}, champion: {player_data['champion_name']})")
@@ -3685,9 +3685,10 @@ async def check_live_games():
                 # VERIFICAÇÃO GLOBAL: Verifica se já existe mensagem para este game_id em QUALQUER servidor
                 existing_global = db.get_live_game_message_by_game_id(game_id, None)
                 if existing_global:
-                    print(f"📝 [Live Games] Já existe mensagem global para partida {game_id}, apenas marcando jogadores...")
-                    # Apenas marca os jogadores como notificados
+                    print(f"📝 [Live Games] Já existe mensagem global para partida {game_id}, marcando {len(players)} novos jogadores...")
+                    # Marca os novos jogadores como notificados PRIMEIRO
                     for player in players:
+                        print(f"   📝 Marcando {player['summoner_name']} como notificado")
                         db.mark_live_game_notified(
                             player['account_id'],
                             game_id,
@@ -3699,7 +3700,8 @@ async def check_live_games():
                             existing_global['channel_id'],
                             existing_global['guild_id']
                         )
-                    # Atualiza a mensagem existente
+                    # Atualiza a mensagem existente com TODOS os jogadores do banco
+                    print(f"📝 [Live Games] Atualizando mensagem com todos os jogadores...")
                     await update_live_game_notification(game_id, existing_global['guild_id'], players)
                     continue
 
