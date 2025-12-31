@@ -260,6 +260,13 @@ async def on_ready():
         print('✅ Task de verificação de partidas finalizadas iniciada (a cada 60s)')
     else:
         print('⚠️ Task de verificação de partidas finalizadas já está rodando')
+    
+    # Inicia verificação de reset semanal do Top Flex
+    if not check_weekly_reset.is_running():
+        check_weekly_reset.start()
+        print('✅ Task de reset semanal Top Flex iniciada (verifica a cada minuto)')
+    else:
+        print('⚠️ Task de reset semanal Top Flex já está rodando')
 
 async def region_autocomplete(
     interaction: discord.Interaction,
@@ -1089,6 +1096,7 @@ async def config_type_autocomplete(
         ('💬 Comandos - Canal onde usuários podem usar comandos', 'comandos'),
         ('🔴 Live - Notificações de partidas ao vivo', 'live'),
         ('🗳️ Votação - Canal para votação de MVP após partida', 'votacao'),
+        ('🏆 Top Flex - Cargo de premiação semanal', 'top_flex'),
     ]
     return [
         app_commands.Choice(name=name, value=value)
@@ -1098,12 +1106,13 @@ async def config_type_autocomplete(
 
 @bot.tree.command(name="configurar", description="⚙️ [ADMIN] Configure os canais do bot ou veja a configuração atual")
 @app_commands.describe(
-    tipo="Tipo de configuração: alertas, score, comandos ou live (deixe vazio para ver config atual)",
-    canal="Canal onde serão enviadas as mensagens (obrigatório se tipo for especificado)"
+    tipo="Tipo de configuração: alertas, score, comandos, live, votacao ou top_flex",
+    canal="Canal onde serão enviadas as mensagens (para alertas, score, comandos, live, votacao)",
+    cargo="Cargo de premiação (apenas para top_flex)"
 )
 @app_commands.autocomplete(tipo=config_type_autocomplete)
 @app_commands.checks.has_permissions(administrator=True)
-async def configurar(interaction: discord.Interaction, tipo: str = None, canal: discord.TextChannel = None):
+async def configurar(interaction: discord.Interaction, tipo: str = None, canal: discord.TextChannel = None, cargo: discord.Role = None):
     """Configura os canais do bot (apenas administradores)"""
     await interaction.response.defer(ephemeral=True)
     
@@ -1184,6 +1193,19 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
                     value="❌ Não configurado",
                     inline=False
                 )
+            
+            if config.get('top_flex_role_id'):
+                embed.add_field(
+                    name="🏆 Cargo Top Flex",
+                    value=f"<@&{config['top_flex_role_id']}>\nCargo dado ao vencedor semanal do ranking",
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="🏆 Cargo Top Flex",
+                    value="❌ Não configurado",
+                    inline=False
+                )
         else:
             embed.description = "❌ Nenhuma configuração encontrada para este servidor."
         
@@ -1191,7 +1213,42 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
         await interaction.followup.send(embed=embed, ephemeral=True)
         return
     
-    # Se especificou tipo mas não especificou canal
+    tipo = tipo.lower()
+    
+    # Validação especial para top_flex (precisa de cargo, não de canal)
+    if tipo == 'top_flex':
+        if cargo is None:
+            await interaction.followup.send(
+                "❌ Você precisa especificar um **cargo** para o top_flex!\n"
+                "Use: `/configurar tipo:top_flex cargo:@SeuCargo`",
+                ephemeral=True
+            )
+            return
+        
+        success = db.set_top_flex_role(guild_id, str(cargo.id))
+        if success:
+            embed = discord.Embed(
+                title="✅ Cargo Top Flex Configurado!",
+                description=f"O cargo {cargo.mention} será dado ao vencedor semanal",
+                color=discord.Color.gold()
+            )
+            embed.add_field(
+                name="🏆 Como funciona?",
+                value=(
+                    "**Sistema de Ranking Semanal:**\n"
+                    "• O ranking é baseado no **Carry Score** (votos de MVP)\n"
+                    "• Toda **segunda-feira às 12h** o ranking reseta\n"
+                    "• O **1º lugar** da semana recebe o cargo automaticamente\n"
+                    "• O cargo é removido do vencedor anterior"
+                ),
+                inline=False
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        else:
+            await interaction.followup.send("❌ Erro ao configurar cargo.", ephemeral=True)
+        return
+    
+    # Para outros tipos, precisa de canal
     if canal is None:
         await interaction.followup.send(
             "❌ Você precisa especificar um canal quando escolhe um tipo de configuração!\n"
@@ -1201,11 +1258,10 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
         return
     
     channel_id = str(canal.id)
-    tipo = tipo.lower()
     
     if tipo not in ['alertas', 'score', 'comandos', 'live', 'votacao']:
         await interaction.followup.send(
-            "❌ Tipo inválido! Use: `alertas`, `score`, `comandos`, `live` ou `votacao`",
+            "❌ Tipo inválido! Use: `alertas`, `score`, `comandos`, `live`, `votacao` ou `top_flex`",
             ephemeral=True
         )
         return
@@ -1463,6 +1519,10 @@ async def perfil(interaction: discord.Interaction, usuario: discord.User = None,
         inline=True
     )
     
+    # Busca Carry Score e estatísticas de ranking semanal
+    carry_score = db.get_total_carry_score(discord_id, year)
+    ranking_stats = db.get_player_average_position(discord_id)
+    
     # Médias gerais
     embed.add_field(
         name="📈 Médias por Partida",
@@ -1472,10 +1532,24 @@ async def perfil(interaction: discord.Interaction, usuario: discord.User = None,
             f"💰 **Gold:** {int(profile_stats['avg_gold']):,}\n"
             f"🌾 **CS:** {profile_stats['avg_cs']:.1f}\n"
             f"👁️ **Visão:** {profile_stats['avg_vision']:.1f}\n"
-            f"🎯 **MVP Score:** {profile_stats['avg_mvp_score']:.1f}"
+            f"🏆 **Carry Score:** {carry_score}"
         ),
         inline=True
     )
+    
+    # Estatísticas de ranking semanal
+    if ranking_stats['weeks_played'] > 0:
+        embed.add_field(
+            name="📊 Ranking Semanal",
+            value=(
+                f"📅 **Semanas:** {ranking_stats['weeks_played']}\n"
+                f"📍 **Média Posição:** {ranking_stats['avg_position']}º\n"
+                f"🥇 **Melhor:** {ranking_stats['best_position']}º\n"
+                f"👑 **1º Lugar:** {ranking_stats['first_places']}x\n"
+                f"🏅 **Top 3:** {ranking_stats['top3_count']}x"
+            ),
+            inline=True
+        )
     
     # Top 3 campeões
     if top_champions:
@@ -1542,6 +1616,87 @@ async def perfil(interaction: discord.Interaction, usuario: discord.User = None,
     
     embed.set_footer(text=f"Ranked Flex • Season {year} • Use /media para estatísticas detalhadas")
     
+    await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="tops_flex", description="🏆 Ranking semanal de Carry Score")
+async def tops_flex(interaction: discord.Interaction):
+    """Mostra o ranking semanal de Carry Score"""
+    if not await check_command_channel(interaction):
+        return
+    
+    await interaction.response.defer()
+    
+    # Calcula início e fim da semana atual (segunda a domingo)
+    from datetime import timedelta
+    today = datetime.now()
+    # Encontra a segunda-feira desta semana
+    days_since_monday = today.weekday()
+    week_start = (today - timedelta(days=days_since_monday)).replace(hour=0, minute=0, second=0, microsecond=0)
+    week_end = (week_start + timedelta(days=6)).replace(hour=23, minute=59, second=59)
+    
+    week_start_str = week_start.strftime('%Y-%m-%d')
+    week_end_str = week_end.strftime('%Y-%m-%d')
+    
+    # Busca ranking da semana
+    ranking = db.get_weekly_carry_score_ranking(week_start_str, week_end_str, limit=10)
+    
+    embed = discord.Embed(
+        title="🏆 TOP FLEX - RANKING SEMANAL",
+        description=(
+            f"**Semana:** {week_start.strftime('%d/%m')} - {week_end.strftime('%d/%m/%Y')}\n"
+            f"Ranking baseado em **Carry Score** (votos de MVP)\n\n"
+            f"⏰ Reset: **Segunda-feira às 12h**"
+        ),
+        color=discord.Color.gold()
+    )
+    
+    if not ranking:
+        embed.add_field(
+            name="📊 Ranking",
+            value="Nenhum jogador com Carry Score esta semana.\nJogue partidas e vote no MVP!",
+            inline=False
+        )
+    else:
+        ranking_text = ""
+        for i, player in enumerate(ranking, 1):
+            # Emoji de posição
+            if i == 1:
+                pos_emoji = "👑"
+            elif i == 2:
+                pos_emoji = "🥈"
+            elif i == 3:
+                pos_emoji = "🥉"
+            else:
+                pos_emoji = f"**{i}º**"
+            
+            ranking_text += f"{pos_emoji} <@{player['discord_id']}> - **{player['total_score']}** pontos ({player['games']} votos)\n"
+        
+        embed.add_field(
+            name="📊 Ranking",
+            value=ranking_text,
+            inline=False
+        )
+    
+    # Mostra último vencedor
+    guild_id = str(interaction.guild_id)
+    last_winner = db.get_last_top_flex_winner(guild_id)
+    if last_winner:
+        embed.add_field(
+            name="🏅 Último Vencedor",
+            value=f"<@{last_winner['discord_id']}> - {last_winner['total_score']} pontos\nSemana: {last_winner['week_start']} a {last_winner['week_end']}",
+            inline=False
+        )
+    
+    # Mostra cargo configurado
+    top_flex_role = db.get_top_flex_role(guild_id)
+    if top_flex_role:
+        embed.add_field(
+            name="🎖️ Prêmio",
+            value=f"O 1º lugar recebe o cargo <@&{top_flex_role}>",
+            inline=False
+        )
+    
+    embed.set_footer(text="Ganhe Carry Score votando e sendo votado como MVP!")
     await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="flex", description="🎯 Guia completo do bot com botões interativos")
@@ -4070,6 +4225,116 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
             await interaction.response.send_message(error_message, ephemeral=True)
     except Exception as e:
         print(f"Erro no error handler: {e}")
+
+@tasks.loop(minutes=1)
+async def check_weekly_reset():
+    """Task que verifica se é hora de resetar o ranking semanal (segunda-feira às 12h)"""
+    from datetime import timedelta
+    try:
+        now = datetime.now()
+        
+        # Verifica se é segunda-feira (weekday() == 0) e se é 12:00
+        if now.weekday() == 0 and now.hour == 12 and now.minute == 0:
+            print("🏆 [Top Flex] Iniciando reset semanal...")
+            
+            # Calcula a semana que acabou (segunda passada até domingo)
+            week_end = (now - timedelta(days=1)).replace(hour=23, minute=59, second=59)
+            week_start = (week_end - timedelta(days=6)).replace(hour=0, minute=0, second=0)
+            
+            week_start_str = week_start.strftime('%Y-%m-%d')
+            week_end_str = week_end.strftime('%Y-%m-%d')
+            
+            # Busca ranking COMPLETO da semana que acabou (todos os participantes)
+            full_ranking = db.get_weekly_carry_score_ranking(week_start_str, week_end_str, limit=100)
+            
+            # Salva histórico de posições de TODOS os participantes
+            if full_ranking:
+                db.save_weekly_ranking(week_start_str, week_end_str, full_ranking)
+                print(f"📊 [Top Flex] Salvo histórico de {len(full_ranking)} participantes")
+            
+            ranking = full_ranking[:1] if full_ranking else []
+            
+            if ranking:
+                winner = ranking[0]
+                winner_discord_id = winner['discord_id']
+                winner_score = winner['total_score']
+                
+                print(f"🏆 [Top Flex] Vencedor da semana: {winner_discord_id} com {winner_score} pontos")
+                
+                # Processa para cada servidor
+                for guild in bot.guilds:
+                    guild_id = str(guild.id)
+                    
+                    # Verifica se tem cargo configurado
+                    role_id = db.get_top_flex_role(guild_id)
+                    if not role_id:
+                        continue
+                    
+                    role = guild.get_role(int(role_id))
+                    if not role:
+                        print(f"⚠️ [Top Flex] Cargo {role_id} não encontrado no servidor {guild.name}")
+                        continue
+                    
+                    # Remove cargo do vencedor anterior
+                    last_winner = db.get_last_top_flex_winner(guild_id)
+                    if last_winner and last_winner['discord_id'] != winner_discord_id:
+                        try:
+                            old_member = guild.get_member(int(last_winner['discord_id']))
+                            if old_member and role in old_member.roles:
+                                await old_member.remove_roles(role, reason="Novo vencedor do Top Flex semanal")
+                                print(f"🔄 [Top Flex] Cargo removido de {old_member.name}")
+                        except Exception as e:
+                            print(f"⚠️ [Top Flex] Erro ao remover cargo do vencedor anterior: {e}")
+                    
+                    # Adiciona cargo ao novo vencedor
+                    try:
+                        new_member = guild.get_member(int(winner_discord_id))
+                        if new_member:
+                            if role not in new_member.roles:
+                                await new_member.add_roles(role, reason="Vencedor do Top Flex semanal")
+                                print(f"✅ [Top Flex] Cargo adicionado a {new_member.name}")
+                            
+                            # Registra vencedor
+                            db.add_top_flex_winner(winner_discord_id, guild_id, week_start_str, week_end_str, winner_score)
+                            
+                            # Envia anúncio no canal de votação (se configurado)
+                            voting_channel_id = db.get_voting_channel(guild_id)
+                            if voting_channel_id:
+                                channel = guild.get_channel(int(voting_channel_id))
+                                if channel:
+                                    embed = discord.Embed(
+                                        title="🏆 VENCEDOR DA SEMANA!",
+                                        description=(
+                                            f"Parabéns <@{winner_discord_id}>!\n\n"
+                                            f"Você foi o **Top Flex** da semana com **{winner_score}** Carry Score!\n"
+                                            f"Você recebeu o cargo {role.mention}!"
+                                        ),
+                                        color=discord.Color.gold()
+                                    )
+                                    embed.add_field(
+                                        name="📅 Período",
+                                        value=f"{week_start.strftime('%d/%m')} - {week_end.strftime('%d/%m/%Y')}",
+                                        inline=False
+                                    )
+                                    embed.set_footer(text="O ranking foi resetado. Boa sorte esta semana!")
+                                    await channel.send(embed=embed)
+                        else:
+                            print(f"⚠️ [Top Flex] Membro {winner_discord_id} não encontrado no servidor {guild.name}")
+                    except Exception as e:
+                        print(f"❌ [Top Flex] Erro ao adicionar cargo ao vencedor: {e}")
+            else:
+                print("⚠️ [Top Flex] Nenhum jogador com Carry Score na semana passada")
+            
+            print("✅ [Top Flex] Reset semanal concluído!")
+            
+    except Exception as e:
+        print(f"❌ [Top Flex] Erro no reset semanal: {e}")
+        import traceback
+        traceback.print_exc()
+
+@check_weekly_reset.before_loop
+async def before_weekly_reset():
+    await bot.wait_until_ready()
 
 if __name__ == "__main__":
     if not TOKEN or not RIOT_API_KEY:

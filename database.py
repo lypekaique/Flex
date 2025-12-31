@@ -291,6 +291,43 @@ class Database:
             cursor.execute('ALTER TABLE server_configs ADD COLUMN voting_channel_id TEXT')
             print("✅ Migração voting_channel_id concluída!")
         
+        # Migração: Adiciona coluna top_flex_role_id em server_configs
+        try:
+            cursor.execute("SELECT top_flex_role_id FROM server_configs LIMIT 1")
+        except sqlite3.OperationalError:
+            print("🔄 Migrando banco: adicionando coluna top_flex_role_id...")
+            cursor.execute('ALTER TABLE server_configs ADD COLUMN top_flex_role_id TEXT')
+            print("✅ Migração top_flex_role_id concluída!")
+        
+        # Tabela para histórico de vencedores do top_flex semanal
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS top_flex_winners (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                discord_id TEXT NOT NULL,
+                guild_id TEXT NOT NULL,
+                week_start DATE NOT NULL,
+                week_end DATE NOT NULL,
+                total_score INTEGER NOT NULL,
+                awarded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(guild_id, week_start)
+            )
+        ''')
+        
+        # Tabela para histórico de posições semanais de TODOS os participantes
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS weekly_rankings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                discord_id TEXT NOT NULL,
+                week_start DATE NOT NULL,
+                week_end DATE NOT NULL,
+                position INTEGER NOT NULL,
+                total_score INTEGER NOT NULL,
+                total_participants INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(discord_id, week_start)
+            )
+        ''')
+        
         conn.commit()
         conn.close()
     
@@ -885,7 +922,7 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT notification_channel_id, match_channel_id, command_channel_id, live_game_channel_id, voting_channel_id FROM server_configs
+            SELECT notification_channel_id, match_channel_id, command_channel_id, live_game_channel_id, voting_channel_id, top_flex_role_id FROM server_configs
             WHERE guild_id = ?
         ''', (guild_id,))
         
@@ -898,7 +935,8 @@ class Database:
                 'match_channel_id': result[1],
                 'command_channel_id': result[2],
                 'live_game_channel_id': result[3],
-                'voting_channel_id': result[4] if len(result) > 4 else None
+                'voting_channel_id': result[4] if len(result) > 4 else None,
+                'top_flex_role_id': result[5] if len(result) > 5 else None
             }
         return None
     
@@ -2025,3 +2063,180 @@ class Database:
             })
         conn.close()
         return ranking
+    
+    def get_weekly_carry_score_ranking(self, week_start: str, week_end: str, limit: int = 10) -> List[Dict]:
+        """Retorna ranking de carry score da semana específica"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT discord_id, SUM(score) as total_score, COUNT(*) as games
+            FROM carry_scores
+            WHERE date(earned_at) >= ? AND date(earned_at) <= ?
+            GROUP BY discord_id
+            ORDER BY total_score DESC
+            LIMIT ?
+        ''', (week_start, week_end, limit))
+        
+        ranking = []
+        for row in cursor.fetchall():
+            ranking.append({
+                'discord_id': row[0],
+                'total_score': row[1],
+                'games': row[2]
+            })
+        conn.close()
+        return ranking
+    
+    def set_top_flex_role(self, guild_id: str, role_id: str) -> bool:
+        """Define o cargo de premiação do top_flex para um servidor"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO server_configs (guild_id, top_flex_role_id, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(guild_id) DO UPDATE SET top_flex_role_id = ?, updated_at = CURRENT_TIMESTAMP
+            ''', (guild_id, role_id, role_id))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Erro ao configurar cargo top_flex: {e}")
+            return False
+    
+    def get_top_flex_role(self, guild_id: str) -> Optional[str]:
+        """Retorna o cargo de premiação do top_flex configurado"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT top_flex_role_id FROM server_configs WHERE guild_id = ?', (guild_id,))
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result and result[0] else None
+    
+    def add_top_flex_winner(self, discord_id: str, guild_id: str, week_start: str, week_end: str, total_score: int) -> bool:
+        """Registra o vencedor do top_flex da semana"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR REPLACE INTO top_flex_winners (discord_id, guild_id, week_start, week_end, total_score)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (discord_id, guild_id, week_start, week_end, total_score))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Erro ao registrar vencedor top_flex: {e}")
+            return False
+    
+    def get_last_top_flex_winner(self, guild_id: str) -> Optional[Dict]:
+        """Retorna o último vencedor do top_flex"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT discord_id, week_start, week_end, total_score, awarded_at
+            FROM top_flex_winners
+            WHERE guild_id = ?
+            ORDER BY awarded_at DESC
+            LIMIT 1
+        ''', (guild_id,))
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result:
+            return {
+                'discord_id': result[0],
+                'week_start': result[1],
+                'week_end': result[2],
+                'total_score': result[3],
+                'awarded_at': result[4]
+            }
+        return None
+    
+    def save_weekly_ranking(self, week_start: str, week_end: str, ranking: List[Dict]) -> bool:
+        """Salva o ranking semanal de todos os participantes"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            total_participants = len(ranking)
+            
+            for position, player in enumerate(ranking, 1):
+                cursor.execute('''
+                    INSERT OR REPLACE INTO weekly_rankings 
+                    (discord_id, week_start, week_end, position, total_score, total_participants)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (player['discord_id'], week_start, week_end, position, player['total_score'], total_participants))
+            
+            conn.commit()
+            conn.close()
+            print(f"✅ [Weekly Ranking] Salvo ranking de {total_participants} participantes")
+            return True
+        except Exception as e:
+            print(f"❌ Erro ao salvar ranking semanal: {e}")
+            return False
+    
+    def get_player_weekly_history(self, discord_id: str, limit: int = 10) -> List[Dict]:
+        """Retorna histórico de posições semanais de um jogador"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT week_start, week_end, position, total_score, total_participants
+            FROM weekly_rankings
+            WHERE discord_id = ?
+            ORDER BY week_start DESC
+            LIMIT ?
+        ''', (discord_id, limit))
+        
+        history = []
+        for row in cursor.fetchall():
+            history.append({
+                'week_start': row[0],
+                'week_end': row[1],
+                'position': row[2],
+                'total_score': row[3],
+                'total_participants': row[4]
+            })
+        conn.close()
+        return history
+    
+    def get_player_average_position(self, discord_id: str) -> Dict:
+        """Retorna a média de posição e estatísticas de um jogador"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT 
+                COUNT(*) as weeks_played,
+                AVG(position) as avg_position,
+                MIN(position) as best_position,
+                MAX(position) as worst_position,
+                SUM(CASE WHEN position = 1 THEN 1 ELSE 0 END) as first_places,
+                SUM(CASE WHEN position <= 3 THEN 1 ELSE 0 END) as top3_count,
+                AVG(total_score) as avg_score
+            FROM weekly_rankings
+            WHERE discord_id = ?
+        ''', (discord_id,))
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result and result[0] > 0:
+            return {
+                'weeks_played': result[0],
+                'avg_position': round(result[1], 1),
+                'best_position': result[2],
+                'worst_position': result[3],
+                'first_places': result[4],
+                'top3_count': result[5],
+                'avg_score': round(result[6], 1) if result[6] else 0
+            }
+        return {
+            'weeks_played': 0,
+            'avg_position': 0,
+            'best_position': 0,
+            'worst_position': 0,
+            'first_places': 0,
+            'top3_count': 0,
+            'avg_score': 0
+        }
