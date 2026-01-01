@@ -2220,6 +2220,104 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
     except Exception as e:
         print(f"Erro ao processar notificação de partida: {e}")
 
+async def send_champion_ban_notification(account_id: int, champion_name: str, ban_days: int, ban_level: int, ban_reason: str):
+    """
+    Envia notificação quando um jogador recebe restrição de campeão.
+    """
+    try:
+        # Busca informações da conta
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT discord_id, summoner_name FROM lol_accounts WHERE id = ?', (account_id,))
+        account_data = cursor.fetchone()
+        conn.close()
+        
+        if not account_data:
+            print(f"⚠️ [ChampBan Notification] Conta {account_id} não encontrada")
+            return
+        
+        discord_id, summoner_name = account_data
+        
+        # Busca servidor e canal
+        for guild in bot.guilds:
+            member = guild.get_member(int(discord_id))
+            if not member:
+                continue
+            
+            # Busca canal de partidas
+            channel_id = db.get_match_channel(str(guild.id))
+            if not channel_id:
+                continue
+            
+            channel = guild.get_channel(int(channel_id))
+            if not channel:
+                continue
+            
+            # Cria embed de notificação
+            embed = discord.Embed(
+                title="⚠️ BANIMENTO PROGRESSIVO - NÍVEL " + str(ban_level),
+                description=f"{member.mention} está **PROIBIDO** de jogar com **{champion_name}** por **{ban_days} dias**!",
+                color=discord.Color.orange()
+            )
+            
+            # Estatísticas recentes
+            conn = db.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT COUNT(*), AVG(mvp_score) FROM matches
+                WHERE lol_account_id = ? AND champion_name = ?
+                ORDER BY played_at DESC
+                LIMIT 5
+            ''', (account_id, champion_name))
+            stats_data = cursor.fetchone()
+            conn.close()
+            
+            match_count = stats_data[0] if stats_data else 0
+            avg_mvp = stats_data[1] if stats_data and stats_data[1] else 0
+            
+            embed.add_field(
+                name="📊 Estatísticas Recentes",
+                value=f"🎮 **{match_count} partida(s) relevante(s) com {champion_name}**\n👑 **MVP Score médio: {avg_mvp:.0f}/100**",
+                inline=False
+            )
+            
+            # Partida problemática
+            embed.add_field(
+                name="❌ Partida Problemática",
+                value=f"⚠️ **{ban_reason}**",
+                inline=False
+            )
+            
+            # Sistema de banimento progressivo
+            embed.add_field(
+                name="🚫 SISTEMA DE BANIMENTO PROGRESSIVO",
+                value=(
+                    "**Critérios de Proibição:**\n"
+                    "• **3 partidas ruins seguidas** (< 45 pontos cada)\n"
+                    "• **Pelo menos 1 partida abaixo de 35 pontos**\n\n"
+                    "**Sistema de Stack:**\n"
+                    "• **Nível 1:** 2 dias de banimento\n"
+                    "• **Nível 2:** 4 dias de banimento\n"
+                    "• **Nível 3:** 1 semana de banimento\n\n"
+                    f"**Reset:** Após 3 dias do último banimento ou ao atingir nível máximo"
+                ),
+                inline=False
+            )
+            
+            # Footer
+            embed.set_footer(text=f"Conta: {summoner_name}")
+            
+            await channel.send(embed=embed)
+            print(f"✅ [ChampBan Notification] Notificação enviada para {member.display_name}")
+            return
+        
+        print(f"⚠️ [ChampBan Notification] Nenhum servidor/canal válido encontrado")
+        
+    except Exception as e:
+        print(f"❌ [ChampBan Notification] Erro ao enviar notificação: {e}")
+        import traceback
+        traceback.print_exc()
+
 async def check_champion_performance(account_id: int, champion_name: str, mvp_score: int):
     """
     Verifica se o jogador teve performance ruim com o campeão.
@@ -2235,6 +2333,11 @@ async def check_champion_performance(account_id: int, champion_name: str, mvp_sc
     Reset: Se ficar 2 dias sem tomar ban após punição acabar, volta pro nível 1
     """
     try:
+        print(f"\n🔍 [ChampBan] ===== VERIFICANDO PERFORMANCE =====")
+        print(f"   Account ID: {account_id}")
+        print(f"   Campeão: {champion_name}")
+        print(f"   MVP Score: {mvp_score}")
+        
         # Busca últimas 3 partidas com este campeão
         conn = db.get_connection()
         cursor = conn.cursor()
@@ -2247,6 +2350,8 @@ async def check_champion_performance(account_id: int, champion_name: str, mvp_sc
         recent_matches = cursor.fetchall()
         conn.close()
         
+        print(f"   Últimas partidas com {champion_name}: {[m[0] for m in recent_matches]}")
+        
         should_ban = False
         ban_reason = ""
         
@@ -2254,20 +2359,26 @@ async def check_champion_performance(account_id: int, champion_name: str, mvp_sc
         if mvp_score < 35:
             should_ban = True
             ban_reason = f"MVP Score {mvp_score} (abaixo de 35)"
-            print(f"🚫 [ChampBan] {champion_name}: MVP {mvp_score} < 35 - Aplicando restrição!")
+            print(f"🚫 [ChampBan] REGRA 1 ATIVADA: MVP {mvp_score} < 35 - Aplicando restrição!")
         
         # Regra 2: 3 partidas consecutivas com MVP < 45
         elif len(recent_matches) >= 3:
             all_below_45 = all(m[0] < 45 for m in recent_matches)
+            print(f"   Verificando regra 2: {len(recent_matches)} partidas, todas < 45? {all_below_45}")
             if all_below_45:
                 should_ban = True
                 scores = [m[0] for m in recent_matches]
                 ban_reason = f"3 partidas consecutivas abaixo de 45 ({scores})"
-                print(f"🚫 [ChampBan] {champion_name}: 3 partidas < 45 - Aplicando restrição!")
+                print(f"🚫 [ChampBan] REGRA 2 ATIVADA: 3 partidas < 45 - Aplicando restrição!")
+        else:
+            print(f"   Regra 2 não aplicável: apenas {len(recent_matches)} partida(s)")
         
         if should_ban:
+            print(f"🚨 [ChampBan] BAN NECESSÁRIO! Motivo: {ban_reason}")
+            
             # Busca nível atual do ban considerando reset de 2 dias
             current_level = db.get_champion_ban_level(account_id, champion_name)
+            print(f"   Nível atual de ban: {current_level}")
             
             # Se nível atual é 0 ou já passou 2 dias desde último ban expirar, começa do nível 1
             # A função get_champion_ban_level já retorna 0 se passou mais de 2 dias
@@ -2277,18 +2388,34 @@ async def check_champion_performance(account_id: int, champion_name: str, mvp_sc
             if new_level > 3:
                 new_level = 3
             
+            print(f"   Novo nível de ban: {new_level}")
+            
             # Dias de ban baseado no nível (progressivo)
             # Nível 1 = 2 dias, Nível 2 = 4 dias, Nível 3 = 7 dias
             ban_days_map = {1: 2, 2: 4, 3: 7}
             ban_days = ban_days_map.get(new_level, 7)
             
+            print(f"   Dias de ban: {ban_days}")
+            
             # Adiciona o ban
+            print(f"   Chamando db.add_champion_ban...")
             success = db.add_champion_ban(account_id, champion_name, ban_days, new_level, ban_reason)
             
             if success:
-                print(f"✅ [ChampBan] Restrição aplicada: {champion_name} - Nível {new_level} ({ban_days} dias)")
+                print(f"✅✅✅ [ChampBan] RESTRIÇÃO APLICADA COM SUCESSO!")
+                print(f"   Campeão: {champion_name}")
+                print(f"   Nível: {new_level}")
+                print(f"   Duração: {ban_days} dias")
+                print(f"   Motivo: {ban_reason}")
+                
+                # Envia notificação no canal
+                await send_champion_ban_notification(account_id, champion_name, ban_days, new_level, ban_reason)
             else:
-                print(f"❌ [ChampBan] Falha ao aplicar restrição para {champion_name}")
+                print(f"❌ [ChampBan] FALHA ao aplicar restrição para {champion_name}")
+        else:
+            print(f"✅ [ChampBan] Performance OK - nenhuma restrição necessária")
+        
+        print(f"🔍 [ChampBan] ===== FIM DA VERIFICAÇÃO =====\n")
         
     except Exception as e:
         print(f"❌ [ChampBan] Erro ao verificar performance: {e}")
