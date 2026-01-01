@@ -3896,9 +3896,9 @@ async def check_live_games_finished():
                                     mvp_score = stats.get('mvp_score', 0)
                                     await check_champion_performance(account_id, stats['champion_name'], mvp_score)
 
-                                # Envia notificação individual com estatísticas detalhadas
-                                print(f"📨 [Live Check] Enviando notificação individual de estatísticas para {account_id}")
-                                await send_match_notification(account_id, stats)
+                                # NÃO envia notificação individual aqui - já foi enviada pela mensagem de live game editada
+                                # A notificação individual só é enviada pelo check_new_matches para partidas que não foram live games
+                                print(f"⏭️ [Live Check] Notificação já enviada via live game, pulando notificação individual")
 
                                 # Remove da lista de live games
                                 print(f"🗑️ [Live Check] Removendo live game {game_id} da lista")
