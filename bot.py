@@ -3184,6 +3184,114 @@ async def send_live_game_notification(lol_account_id: int, live_info: Dict) -> D
         traceback.print_exc()
         return None
 
+async def update_live_game_message_with_players(message: discord.Message, game_id: str, players: List[Dict], game_data: Dict, region: str):
+    """
+    Atualiza mensagem de live game existente com jogadores faltantes.
+    """
+    try:
+        print(f"🔄 [Live Update] Atualizando mensagem {message.id} com {len(players)} jogadores")
+        
+        # Monta lista de menções dos jogadores
+        player_mentions = ", ".join([f"<@{p['discord_id']}>" for p in players])
+        
+        # Descrição com jogadores em partida
+        description = f"**{len(players)} jogadores** em partida!\n\n{player_mentions}"
+        
+        embed = discord.Embed(
+            title="🔴 PARTIDA EM GRUPO AO VIVO!",
+            description=description,
+            color=discord.Color.gold()
+        )
+        
+        # Hora de Início com fuso do Brasil (UTC-3)
+        now_brazil = datetime.now(BRAZIL_TZ)
+        embed.add_field(
+            name="🎮 Modo de Jogo",
+            value="Ranked Flex",
+            inline=True
+        )
+        embed.add_field(
+            name="🕐 Início",
+            value=now_brazil.strftime("%H:%M"),
+            inline=True
+        )
+
+        # Campo vazio para completar a linha
+        embed.add_field(
+            name="\u200b",
+            value="\u200b",
+            inline=True
+        )
+        
+        # Separa TODOS os jogadores por time (da API da Riot)
+        blue_team = []
+        red_team = []
+        
+        # PUUIDs dos jogadores do bot para destacar
+        bot_player_puuids = {p['puuid'] for p in players}
+        
+        if game_data and 'participants' in game_data:
+            for participant in game_data['participants']:
+                team_id = participant.get('teamId', 100)
+                champion_id = participant.get('championId', 0)
+                summoner_name = participant.get('riotId', participant.get('summonerName', 'Unknown'))
+                puuid = participant.get('puuid', '')
+                
+                # Busca nome do campeão
+                champion_name = riot_api.get_champion_name(champion_id)
+                
+                # Destaca jogadores do bot
+                if puuid in bot_player_puuids:
+                    player_line = f"• **{champion_name}** - {summoner_name}"
+                else:
+                    player_line = f"• **{champion_name}** - {summoner_name}"
+                
+                if team_id == 100:
+                    blue_team.append(player_line)
+                else:
+                    red_team.append(player_line)
+        else:
+            # Fallback: usa apenas os jogadores do bot
+            for p in players:
+                live_info = p.get('live_info', {})
+                team_id = live_info.get('teamId', 100)
+                champion = live_info.get('champion', 'Unknown')
+                summoner = p['summoner_name']
+                
+                player_line = f"• **{champion}** - {summoner}"
+                
+                if team_id == 100:
+                    blue_team.append(player_line)
+                else:
+                    red_team.append(player_line)
+        
+        # Time Azul
+        if blue_team:
+            embed.add_field(
+                name="🔵 Time Azul",
+                value="\n".join(blue_team),
+                inline=True
+            )
+        
+        # Time Vermelho
+        if red_team:
+            embed.add_field(
+                name="🔴 Time Vermelho",
+                value="\n".join(red_team),
+                inline=True
+            )
+        
+        # Footer com Game ID e timestamp (fuso Brasil)
+        embed.set_footer(text=f"Game ID: {game_id} • {region.upper()} • {now_brazil.strftime('%d/%m às %H:%M')}")
+        
+        await message.edit(embed=embed)
+        print(f"✅ [Live Update] Mensagem atualizada com sucesso!")
+        
+    except Exception as e:
+        print(f"❌ [Live Update] Erro ao atualizar mensagem: {e}")
+        import traceback
+        traceback.print_exc()
+
 async def send_live_game_notification_grouped(game_id: str, players: List[Dict]) -> Dict:
     """
     Envia notificação quando MÚLTIPLOS jogadores entram na mesma partida.
@@ -3421,6 +3529,7 @@ async def check_live_games():
                 if existing_message:
                     # Verifica se a mensagem ainda existe no Discord
                     message_exists = False
+                    discord_message = None
                     try:
                         msg_id = existing_message.get('message_id')
                         ch_id = existing_message.get('channel_id')
@@ -3432,7 +3541,7 @@ async def check_live_games():
                                 channel = guild.get_channel(int(ch_id))
                                 if channel:
                                     try:
-                                        await channel.fetch_message(int(msg_id))
+                                        discord_message = await channel.fetch_message(int(msg_id))
                                         message_exists = True
                                     except discord.NotFound:
                                         message_exists = False
@@ -3441,7 +3550,57 @@ async def check_live_games():
                     except:
                         message_exists = True  # Assume que existe se der erro
                     
-                    if message_exists:
+                    if message_exists and discord_message:
+                        # Verifica se há jogadores faltantes na mensagem
+                        # Busca todos os jogadores já notificados para este game_id
+                        conn = db.get_connection()
+                        cursor = conn.cursor()
+                        cursor.execute('''
+                            SELECT lol_account_id FROM live_games_notified 
+                            WHERE game_id = ?
+                        ''', (game_id,))
+                        notified_accounts = {row[0] for row in cursor.fetchall()}
+                        conn.close()
+                        
+                        # Jogadores atuais na partida
+                        current_accounts = {p['account_id'] for p in players}
+                        
+                        # Jogadores que faltam (estão na partida mas não foram notificados)
+                        missing_accounts = current_accounts - notified_accounts
+                        
+                        if missing_accounts:
+                            print(f"🔄 [Live Games] Partida {game_id} tem {len(missing_accounts)} jogador(es) faltante(s), atualizando mensagem...")
+                            
+                            # Busca dados da partida ao vivo novamente
+                            first_player = players[0]
+                            region = first_player.get('region', 'br1')
+                            game_data = await riot_api.get_active_game(first_player['puuid'], region)
+                            
+                            if game_data:
+                                # Atualiza o embed com todos os jogadores
+                                await update_live_game_message_with_players(discord_message, game_id, players, game_data, region)
+                                
+                                # Marca os jogadores faltantes como notificados
+                                for player in players:
+                                    if player['account_id'] in missing_accounts:
+                                        db.mark_live_game_notified(
+                                            player['account_id'],
+                                            game_id,
+                                            player['puuid'],
+                                            player['summoner_name'],
+                                            player['live_info']['championId'],
+                                            player['live_info']['champion'],
+                                            msg_id,
+                                            ch_id,
+                                            gld_id
+                                        )
+                                        print(f"   ✅ Jogador {player['summoner_name']} adicionado à notificação")
+                        else:
+                            print(f"⏭️ [Live Games] Partida {game_id} já tem mensagem enviada com todos os jogadores, pulando...")
+                        
+                        continue
+                    elif message_exists:
+                        # Mensagem existe mas não conseguimos buscar - pula
                         print(f"⏭️ [Live Games] Partida {game_id} já tem mensagem enviada, pulando...")
                         continue
                     else:
