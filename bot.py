@@ -3050,6 +3050,9 @@ async def send_mvp_voting(game_id: str, guild: discord.Guild, players: List[Dict
         
         message = await channel.send(embed=embed, view=view)
         
+        # Define a referência da mensagem na view para o timeout poder editar
+        view.message = message
+        
         # Atualiza votação pendente com message_id
         db.create_pending_vote(game_id, str(guild.id), players_json, str(message.id), str(channel.id), expires_minutes=5)
         
@@ -3063,11 +3066,12 @@ async def send_mvp_voting(game_id: str, guild: discord.Guild, players: List[Dict
 class MVPVotingView(discord.ui.View):
     """View com botões para votação de MVP"""
     
-    def __init__(self, game_id: str, players: List[Dict], guild_id: str):
+    def __init__(self, game_id: str, players: List[Dict], guild_id: str, message: discord.Message = None):
         super().__init__(timeout=300)  # 5 minutos
         self.game_id = game_id
         self.players = players
         self.guild_id = guild_id
+        self.message = message  # Referência à mensagem para editar no timeout
         
         # Adiciona um botão para cada jogador
         for i, player in enumerate(players):
@@ -3108,11 +3112,15 @@ class MVPVotingView(discord.ui.View):
                 ephemeral=True
             )
             
-            # Verifica se todos votaram
+            # Verifica se todos votaram (total_players - 1 porque não pode votar em si mesmo)
             votes = db.get_votes_for_game(self.game_id)
             total_players = len(self.players)
+            max_votes = total_players  # Cada jogador pode votar 1x
             
-            if len(votes) >= total_players:
+            print(f"🗳️ [Votação] Votos: {len(votes)}/{max_votes} para partida {self.game_id}")
+            
+            if len(votes) >= max_votes:
+                print(f"✅ [Votação] Todos votaram! Finalizando votação...")
                 await self.finalize_voting(interaction)
         
         return callback
@@ -3131,17 +3139,15 @@ class MVPVotingView(discord.ui.View):
             
             results_text = "**Resultado da Votação:**\n\n"
             
-            # Verifica se é voto unânime (todos votaram na mesma pessoa)
-            if len(sorted_votes) == 1 and sorted_votes[0][1] == total_voters:
+            # Verifica se é voto unânime (4+ votos na mesma pessoa - não pode votar em si mesmo)
+            # Unânime = total_voters - 1 (pois o vencedor não vota em si mesmo)
+            unanimous_threshold = total_voters - 1 if total_voters > 1 else 1
+            
+            if len(sorted_votes) == 1 and sorted_votes[0][1] >= unanimous_threshold:
                 # Voto unânime - +5 carry score
                 winner_id = sorted_votes[0][0]
                 db.add_carry_score(winner_id, self.game_id, 5, "Voto unânime de MVP")
-                
-                try:
-                    winner = await bot.fetch_user(int(winner_id))
-                    results_text += f"👑 **VOTO UNÂNIME!** <@{winner_id}> recebeu **+5 Carry Score**!"
-                except:
-                    results_text += f"👑 **VOTO UNÂNIME!** <@{winner_id}> recebeu **+5 Carry Score**!"
+                results_text += f"👑 **VOTO UNÂNIME!** <@{winner_id}> recebeu **+5 Carry Score**!"
             else:
                 # Distribui pontos normalmente
                 first_place_votes = sorted_votes[0][1] if sorted_votes else 0
@@ -3160,14 +3166,19 @@ class MVPVotingView(discord.ui.View):
                     db.add_carry_score(winner_id, self.game_id, 3, "1º lugar MVP")
                     results_text += f"🥇 <@{winner_id}> - **{first_place_votes} votos** → **+3 Carry Score**\n"
                     
-                    # Segundo lugar (se existir e não for empate)
+                    # Segundo lugar - +2 se tiver 2+ votos, +1 se tiver 1 voto
                     if len(sorted_votes) > 1:
                         second_place_votes = sorted_votes[1][1]
                         second_place_winners = [v[0] for v in sorted_votes if v[1] == second_place_votes and v[0] not in first_place_winners]
                         
                         for second_id in second_place_winners:
-                            db.add_carry_score(second_id, self.game_id, 2, "2º lugar MVP")
-                            results_text += f"🥈 <@{second_id}> - **{second_place_votes} votos** → **+2 Carry Score**\n"
+                            if second_place_votes >= 2:
+                                db.add_carry_score(second_id, self.game_id, 2, "2º lugar MVP (2+ votos)")
+                                results_text += f"🥈 <@{second_id}> - **{second_place_votes} votos** → **+2 Carry Score**\n"
+                            else:
+                                # 1 voto = +1 ponto
+                                db.add_carry_score(second_id, self.game_id, 1, "2º lugar MVP (1 voto)")
+                                results_text += f"🥈 <@{second_id}> - **{second_place_votes} voto** → **+1 Carry Score**\n"
             
             # Fecha a votação
             db.close_pending_vote(self.game_id, self.guild_id)
@@ -3193,46 +3204,62 @@ class MVPVotingView(discord.ui.View):
             traceback.print_exc()
     
     async def on_timeout(self):
-        """Chamado quando a votação expira"""
+        """Chamado quando a votação expira após 5 minutos"""
         try:
+            print(f"⏰ [Votação] Timeout atingido para partida {self.game_id}")
+            
             vote_counts = db.get_vote_count_for_game(self.game_id)
+            total_voters = len(self.players)
+            unanimous_threshold = total_voters - 1 if total_voters > 1 else 1
+            
+            results_text = "**⏰ Votação encerrada por tempo:**\n\n"
             
             if vote_counts:
                 # Processa votos mesmo com timeout
                 sorted_votes = sorted(vote_counts.items(), key=lambda x: x[1], reverse=True)
                 
-                results_text = "**Votação encerrada por tempo:**\n\n"
-                
                 if sorted_votes:
                     first_place_votes = sorted_votes[0][1] if sorted_votes else 0
                     
-                    # Encontra todos os empatados em primeiro
-                    first_place_winners = [v[0] for v in sorted_votes if v[1] == first_place_votes]
-                    
-                    if len(first_place_winners) > 1:
-                        # Empate no primeiro lugar - +2 cada
-                        for winner_id in first_place_winners:
-                            db.add_carry_score(winner_id, self.game_id, 2, "Empate em 1º lugar MVP (timeout)")
-                            results_text += f"🥇 <@{winner_id}> - **{first_place_votes} votos** → **+2 Carry Score**\n"
+                    # Verifica se é unânime
+                    if len(sorted_votes) == 1 and sorted_votes[0][1] >= unanimous_threshold:
+                        winner_id = sorted_votes[0][0]
+                        db.add_carry_score(winner_id, self.game_id, 5, "Voto unânime de MVP (timeout)")
+                        results_text += f"👑 **VOTO UNÂNIME!** <@{winner_id}> recebeu **+5 Carry Score**!"
                     else:
-                        # Primeiro lugar único - +3
-                        winner_id = first_place_winners[0]
-                        db.add_carry_score(winner_id, self.game_id, 3, "1º lugar MVP (timeout)")
-                        results_text += f"🥇 <@{winner_id}> - **{first_place_votes} votos** → **+3 Carry Score**\n"
+                        # Encontra todos os empatados em primeiro
+                        first_place_winners = [v[0] for v in sorted_votes if v[1] == first_place_votes]
                         
-                        # Segundo lugar (se existir e não for empate)
-                        if len(sorted_votes) > 1:
-                            second_place_votes = sorted_votes[1][1]
-                            second_place_winners = [v[0] for v in sorted_votes if v[1] == second_place_votes and v[0] not in first_place_winners]
+                        if len(first_place_winners) > 1:
+                            # Empate no primeiro lugar - +2 cada
+                            for winner_id in first_place_winners:
+                                db.add_carry_score(winner_id, self.game_id, 2, "Empate em 1º lugar MVP (timeout)")
+                                results_text += f"🥇 <@{winner_id}> - **{first_place_votes} votos** → **+2 Carry Score**\n"
+                        else:
+                            # Primeiro lugar único - +3
+                            winner_id = first_place_winners[0]
+                            db.add_carry_score(winner_id, self.game_id, 3, "1º lugar MVP (timeout)")
+                            results_text += f"🥇 <@{winner_id}> - **{first_place_votes} votos** → **+3 Carry Score**\n"
                             
-                            for second_id in second_place_winners:
-                                db.add_carry_score(second_id, self.game_id, 2, "2º lugar MVP")
-                                results_text += f"🥈 <@{second_id}> - **{second_place_votes} votos** → **+2 Carry Score**\n"
+                            # Segundo lugar - +2 se tiver 2+ votos, +1 se tiver 1 voto
+                            if len(sorted_votes) > 1:
+                                second_place_votes = sorted_votes[1][1]
+                                second_place_winners = [v[0] for v in sorted_votes if v[1] == second_place_votes and v[0] not in first_place_winners]
+                                
+                                for second_id in second_place_winners:
+                                    if second_place_votes >= 2:
+                                        db.add_carry_score(second_id, self.game_id, 2, "2º lugar MVP (timeout)")
+                                        results_text += f"🥈 <@{second_id}> - **{second_place_votes} votos** → **+2 Carry Score**\n"
+                                    else:
+                                        db.add_carry_score(second_id, self.game_id, 1, "2º lugar MVP (1 voto, timeout)")
+                                        results_text += f"🥈 <@{second_id}> - **{second_place_votes} voto** → **+1 Carry Score**\n"
+            else:
+                results_text += "Nenhum voto registrado."
             
             # Fecha a votação
             db.close_pending_vote(self.game_id, self.guild_id)
             
-            # Atualiza a mensagem original
+            # Atualiza a mensagem original usando self.message
             embed = discord.Embed(
                 title="🏆 VOTAÇÃO ENCERRADA",
                 description=results_text,
@@ -3243,72 +3270,15 @@ class MVPVotingView(discord.ui.View):
             for item in self.children:
                 item.disabled = True
             
-            await interaction.message.edit(embed=embed, view=self)
-            
-            print(f"✅ [Votação] Votação finalizada para partida {self.game_id}")
-            
-        except Exception as e:
-            print(f"❌ [Votação] Erro ao finalizar votação: {e}")
-            import traceback
-            traceback.print_exc()
-    
-    async def on_timeout(self):
-        """Chamado quando a votação expira"""
-        try:
-            vote_counts = db.get_vote_count_for_game(self.game_id)
-            
-            if vote_counts:
-                # Processa votos mesmo com timeout
-                sorted_votes = sorted(vote_counts.items(), key=lambda x: x[1], reverse=True)
-                
-                results_text = "**Votação encerrada por tempo:**\n\n"
-                
-                if sorted_votes:
-                    first_place_votes = sorted_votes[0][1] if sorted_votes else 0
-                    
-                    # Encontra todos os empatados em primeiro
-                    first_place_winners = [v[0] for v in sorted_votes if v[1] == first_place_votes]
-                    
-                    if len(first_place_winners) > 1:
-                        # Empate no primeiro lugar - +2 cada
-                        for winner_id in first_place_winners:
-                            db.add_carry_score(winner_id, self.game_id, 2, "Empate em 1º lugar MVP (timeout)")
-                            results_text += f"🥇 <@{winner_id}> - **{first_place_votes} votos** → **+2 Carry Score**\n"
-                    else:
-                        # Primeiro lugar único - +3
-                        winner_id = first_place_winners[0]
-                        db.add_carry_score(winner_id, self.game_id, 3, "1º lugar MVP (timeout)")
-                        results_text += f"🥇 <@{winner_id}> - **{first_place_votes} votos** → **+3 Carry Score**\n"
-                        
-                        # Segundo lugar (se existir e não for empate)
-                        if len(sorted_votes) > 1:
-                            second_place_votes = sorted_votes[1][1]
-                            second_place_winners = [v[0] for v in sorted_votes if v[1] == second_place_votes and v[0] not in first_place_winners]
-                            
-                            for second_id in second_place_winners:
-                                db.add_carry_score(second_id, self.game_id, 2, "2º lugar MVP")
-                                results_text += f"🥈 <@{second_id}> - **{second_place_votes} votos** → **+2 Carry Score**\n"
-            
-            # Fecha a votação
-            db.close_pending_vote(self.game_id, self.guild_id)
-            
-            # Atualiza a mensagem original
-            embed = discord.Embed(
-                title="🏆 VOTAÇÃO ENCERRADA",
-                description=results_text,
-                color=discord.Color.green()
-            )
-            
-            # Desabilita todos os botões
-            for item in self.children:
-                item.disabled = True
-            
-            await interaction.message.edit(embed=embed, view=self)
-            
-            print(f"✅ [Votação] Votação finalizada para partida {self.game_id}")
+            # Usa self.message para editar (definido após enviar)
+            if self.message:
+                await self.message.edit(embed=embed, view=self)
+                print(f"✅ [Votação] Votação finalizada por timeout para partida {self.game_id}")
+            else:
+                print(f"⚠️ [Votação] Não foi possível editar mensagem (self.message é None)")
             
         except Exception as e:
-            print(f"❌ [Votação] Erro ao finalizar votação: {e}")
+            print(f"❌ [Votação] Erro ao finalizar votação por timeout: {e}")
             import traceback
             traceback.print_exc()
 
@@ -3737,6 +3707,56 @@ async def check_live_games():
         else:
             print(f"\n📋 [Live Games] Nenhuma partida detectada")
             return
+        
+        # FASE 1.5: Re-verifica partidas para encontrar jogadores que podem ter sido perdidos
+        print(f"\n🔄 [Live Games] FASE 1.5: Re-verificando partidas para encontrar todos os jogadores...")
+        
+        for game_id, players in list(games_map.items()):
+            if len(players) >= 2:
+                # Já tem 2+ jogadores, mas pode ter mais
+                # Busca dados da partida ao vivo para verificar todos os participantes
+                first_player = players[0]
+                try:
+                    game_data = await riot_api.get_active_game(first_player['puuid'], first_player['region'])
+                    
+                    if game_data:
+                        # Pega todos os PUUIDs da partida
+                        participants = game_data.get('participants', [])
+                        game_puuids = [p.get('puuid') for p in participants if p.get('puuid')]
+                        
+                        # Verifica quais contas do bot estão na partida mas não foram detectadas
+                        detected_puuids = {p['puuid'] for p in players}
+                        
+                        for account_id, puuid, region, discord_id, summoner_name in accounts:
+                            if puuid in game_puuids and puuid not in detected_puuids:
+                                # Jogador está na partida mas não foi detectado
+                                print(f"   🔍 [Re-check] Encontrado jogador faltante: {summoner_name}")
+                                
+                                live_info = riot_api.extract_live_game_info(game_data, puuid)
+                                if live_info:
+                                    games_map[game_id].append({
+                                        'account_id': account_id,
+                                        'puuid': puuid,
+                                        'region': region,
+                                        'discord_id': discord_id,
+                                        'summoner_name': summoner_name,
+                                        'live_info': live_info
+                                    })
+                                    detected_puuids.add(puuid)
+                        
+                        if len(games_map[game_id]) > len(players):
+                            print(f"   ✅ [Re-check] Partida {game_id}: {len(players)} → {len(games_map[game_id])} jogadores")
+                
+                except Exception as e:
+                    print(f"   ⚠️ [Re-check] Erro ao re-verificar partida {game_id}: {e}")
+                
+                await asyncio.sleep(0.5)
+        
+        # Log após re-verificação
+        print(f"\n📋 [Live Games] Após re-verificação:")
+        for game_id, players in games_map.items():
+            player_names = [p['summoner_name'] for p in players]
+            print(f"   🎮 Partida {game_id}: {len(players)} jogador(es) - {', '.join(player_names)}")
         
         # FASE 2: Processa cada partida - verifica se já existe mensagem
         print(f"\n📡 [Live Games] FASE 2: Processando partidas...")
