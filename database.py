@@ -835,21 +835,30 @@ class Database:
                                 guild_id: str = None) -> bool:
         """Marca uma live game como notificada e salva IDs da mensagem"""
         try:
-            print(f"💾 [DB] Salvando live game: account={lol_account_id}, game={game_id}, summoner={summoner_name}")
+            print(f"💾 [DB] Salvando live game: account={lol_account_id}, game={game_id}, summoner={summoner_name}, msg={message_id}")
             conn = self.get_connection()
             cursor = conn.cursor()
+            
+            # Usa INSERT OR REPLACE para atualizar se já existir
             cursor.execute('''
-                INSERT OR IGNORE INTO live_games_notified
-                (lol_account_id, game_id, puuid, summoner_name, champion_id, champion_name, message_id, channel_id, guild_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO live_games_notified
+                (lol_account_id, game_id, puuid, summoner_name, champion_id, champion_name, message_id, channel_id, guild_id, notified_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
             ''', (lol_account_id, game_id, puuid, summoner_name, champion_id, champion_name, message_id, channel_id, guild_id))
             rows_affected = cursor.rowcount
             conn.commit()
+            
+            # Verifica se foi salvo
+            cursor.execute('SELECT COUNT(*) FROM live_games_notified WHERE game_id = ?', (game_id,))
+            count = cursor.fetchone()[0]
             conn.close()
-            print(f"✅ [DB] Live game salva: {rows_affected} linha(s) afetada(s)")
+            
+            print(f"✅ [DB] Live game salva: {rows_affected} linha(s) afetada(s), total para game_id={game_id}: {count}")
             return True
         except Exception as e:
             print(f"❌ [DB] Erro ao marcar live game como notificada: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def cleanup_old_live_game_notifications(self, hours: int = 24) -> bool:
