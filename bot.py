@@ -1555,8 +1555,15 @@ async def champban(interaction: discord.Interaction):
             
             ban_lines.append(f"• **{ban['champion_name']}** - Nível {ban['ban_level']} ({time_left} restantes)")
         
+        # Busca o nome do membro no servidor
+        member = interaction.guild.get_member(int(discord_id))
+        if member:
+            player_name = member.display_name
+        else:
+            player_name = data['summoner_name']
+        
         embed.add_field(
-            name=f"<@{discord_id}> ({data['summoner_name']})",
+            name=f"🚫 {player_name} ({data['summoner_name']})",
             value="\n".join(ban_lines),
             inline=False
         )
@@ -2212,6 +2219,66 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
     
     except Exception as e:
         print(f"Erro ao processar notificação de partida: {e}")
+
+async def check_champion_performance(account_id: int, champion_name: str, mvp_score: int):
+    """
+    Verifica se o jogador teve performance ruim com o campeão.
+    Regras:
+    - MVP < 35: Adiciona restrição imediatamente
+    - 3 partidas consecutivas com MVP < 45: Adiciona restrição
+    """
+    try:
+        # Busca últimas 3 partidas com este campeão
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT mvp_score FROM matches
+            WHERE lol_account_id = ? AND champion_name = ?
+            ORDER BY played_at DESC
+            LIMIT 3
+        ''', (account_id, champion_name))
+        recent_matches = cursor.fetchall()
+        conn.close()
+        
+        should_ban = False
+        ban_reason = ""
+        
+        # Regra 1: MVP < 35 = ban imediato
+        if mvp_score < 35:
+            should_ban = True
+            ban_reason = f"MVP Score {mvp_score} (abaixo de 35)"
+            print(f"🚫 [ChampBan] {champion_name}: MVP {mvp_score} < 35 - Aplicando restrição!")
+        
+        # Regra 2: 3 partidas consecutivas com MVP < 45
+        elif len(recent_matches) >= 3:
+            all_below_45 = all(m[0] < 45 for m in recent_matches)
+            if all_below_45:
+                should_ban = True
+                scores = [m[0] for m in recent_matches]
+                ban_reason = f"3 partidas consecutivas abaixo de 45 ({scores})"
+                print(f"🚫 [ChampBan] {champion_name}: 3 partidas < 45 - Aplicando restrição!")
+        
+        if should_ban:
+            # Busca nível atual do ban (se existir)
+            current_level = db.get_champion_ban_level(account_id, champion_name)
+            new_level = current_level + 1
+            
+            # Dias de ban baseado no nível (progressivo)
+            ban_days_map = {1: 1, 2: 3, 3: 7, 4: 14, 5: 30}
+            ban_days = ban_days_map.get(new_level, 30)  # Máximo 30 dias
+            
+            # Adiciona o ban
+            success = db.add_champion_ban(account_id, champion_name, ban_days, new_level, ban_reason)
+            
+            if success:
+                print(f"✅ [ChampBan] Restrição aplicada: {champion_name} - Nível {new_level} ({ban_days} dias)")
+            else:
+                print(f"❌ [ChampBan] Falha ao aplicar restrição para {champion_name}")
+        
+    except Exception as e:
+        print(f"❌ [ChampBan] Erro ao verificar performance: {e}")
+        import traceback
+        traceback.print_exc()
 
 async def update_live_game_result(game_id: str, match_data: Dict):
     """
@@ -3572,6 +3639,10 @@ async def process_account_batch(account_id: int, puuid: str, region: str, riot_a
                             print(f"⚠️ [Partidas] Remake registrado: {match_id} ({stats['game_duration']}s)")
                         else:
                             print(f"✅ [Partidas] Nova partida registrada: {match_id} (MVP: {stats.get('mvp_score', 0)})")
+                            
+                            # Verifica performance do campeão (não remake)
+                            mvp_score = stats.get('mvp_score', 0)
+                            await check_champion_performance(account_id, stats['champion_name'], mvp_score)
 
                         # Envia notificação automática da nova partida
                         await send_match_notification(account_id, stats)
@@ -3785,6 +3856,10 @@ async def check_live_games_finished():
                                     print(f"⚠️ [Live Check] Remake detectado: {match_id} ({stats['game_duration']}s)")
                                 else:
                                     print(f"✅ [Live Check] Partida terminada detectada: {match_id} (MVP: {stats.get('mvp_score', 0)})")
+                                    
+                                    # Verifica performance do campeão (não remake)
+                                    mvp_score = stats.get('mvp_score', 0)
+                                    await check_champion_performance(account_id, stats['champion_name'], mvp_score)
 
                                 # Envia notificação individual com estatísticas detalhadas
                                 print(f"📨 [Live Check] Enviando notificação individual de estatísticas para {account_id}")
