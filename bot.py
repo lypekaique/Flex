@@ -1500,6 +1500,70 @@ async def tops_flex(interaction: discord.Interaction):
     embed.set_footer(text="Ganhe Carry Score votando e sendo votado como MVP!")
     await interaction.followup.send(embed=embed)
 
+@bot.tree.command(name="champban", description="🚫 Veja todas as restrições de campeões ativas")
+async def champban(interaction: discord.Interaction):
+    """Lista todas as restrições de campeões ativas"""
+    if not await check_command_channel(interaction):
+        return
+    
+    await interaction.response.defer()
+    
+    # Busca todos os bans ativos
+    bans = db.get_all_active_champion_bans()
+    
+    if not bans:
+        embed = discord.Embed(
+            title="🚫 Restrições de Campeões",
+            description="Nenhuma restrição ativa no momento! 🎉",
+            color=discord.Color.green()
+        )
+        await interaction.followup.send(embed=embed)
+        return
+    
+    embed = discord.Embed(
+        title="🚫 Restrições de Campeões Ativas",
+        description=f"**{len(bans)}** restrição(ões) ativa(s)",
+        color=discord.Color.red()
+    )
+    
+    # Agrupa por jogador
+    players_bans = {}
+    for ban in bans:
+        discord_id = ban['discord_id']
+        if discord_id not in players_bans:
+            players_bans[discord_id] = {
+                'summoner_name': ban['summoner_name'],
+                'bans': []
+            }
+        players_bans[discord_id]['bans'].append(ban)
+    
+    # Adiciona campos por jogador
+    for discord_id, data in players_bans.items():
+        ban_lines = []
+        for ban in data['bans']:
+            # Calcula dias restantes
+            from datetime import datetime
+            expires = datetime.fromisoformat(ban['expires_at'].replace('Z', '+00:00')) if 'Z' in ban['expires_at'] else datetime.fromisoformat(ban['expires_at'])
+            now = datetime.now()
+            days_left = (expires - now).days
+            hours_left = (expires - now).seconds // 3600
+            
+            if days_left > 0:
+                time_left = f"{days_left}d"
+            else:
+                time_left = f"{hours_left}h"
+            
+            ban_lines.append(f"• **{ban['champion_name']}** - Nível {ban['ban_level']} ({time_left} restantes)")
+        
+        embed.add_field(
+            name=f"<@{discord_id}> ({data['summoner_name']})",
+            value="\n".join(ban_lines),
+            inline=False
+        )
+    
+    embed.set_footer(text="Restrições são aplicadas por performance ruim com o campeão")
+    await interaction.followup.send(embed=embed)
+
 @bot.tree.command(name="flex", description="🎯 Guia completo do bot com botões interativos")
 async def flex_guide(interaction: discord.Interaction):
     """Comando com guia interativo do bot"""

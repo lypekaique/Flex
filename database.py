@@ -1525,6 +1525,36 @@ class Database:
             print(f"❌ Erro ao remover todos os banimentos: {e}")
             return 0
     
+    def get_all_active_champion_bans(self) -> List[Dict]:
+        """Retorna todos os banimentos ativos de todos os jogadores"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT cb.champion_name, cb.ban_level, cb.ban_days, cb.banned_at, cb.expires_at, cb.reason,
+                   la.summoner_name, la.discord_id
+            FROM champion_bans cb
+            JOIN lol_accounts la ON cb.lol_account_id = la.id
+            WHERE cb.expires_at > datetime('now')
+            ORDER BY cb.expires_at ASC
+        ''')
+        
+        bans = []
+        for row in cursor.fetchall():
+            bans.append({
+                'champion_name': row[0],
+                'ban_level': row[1],
+                'ban_days': row[2],
+                'banned_at': row[3],
+                'expires_at': row[4],
+                'reason': row[5],
+                'summoner_name': row[6],
+                'discord_id': row[7]
+            })
+        
+        conn.close()
+        return bans
+    
     def was_performance_alert_sent(self, lol_account_id: int, match_id: str, champion_name: str) -> bool:
         """Verifica se já foi enviado alerta de performance para esta partida e campeão"""
         try:
