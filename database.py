@@ -835,6 +835,7 @@ class Database:
                                 guild_id: str = None) -> bool:
         """Marca uma live game como notificada e salva IDs da mensagem"""
         try:
+            print(f"💾 [DB] Salvando live game: account={lol_account_id}, game={game_id}, summoner={summoner_name}")
             conn = self.get_connection()
             cursor = conn.cursor()
             cursor.execute('''
@@ -842,11 +843,13 @@ class Database:
                 (lol_account_id, game_id, puuid, summoner_name, champion_id, champion_name, message_id, channel_id, guild_id)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (lol_account_id, game_id, puuid, summoner_name, champion_id, champion_name, message_id, channel_id, guild_id))
+            rows_affected = cursor.rowcount
             conn.commit()
             conn.close()
+            print(f"✅ [DB] Live game salva: {rows_affected} linha(s) afetada(s)")
             return True
         except Exception as e:
-            print(f"Erro ao marcar live game como notificada: {e}")
+            print(f"❌ [DB] Erro ao marcar live game como notificada: {e}")
             return False
     
     def cleanup_old_live_game_notifications(self, hours: int = 24) -> bool:
