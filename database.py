@@ -2518,6 +2518,25 @@ class Database:
         except Exception as e:
             print(f"❌ [Pintado de Ouro] Erro ao buscar contador: {e}")
             return 0
+    
+    def set_pintado_de_ouro(self, lol_account_id: int, amount: int) -> bool:
+        """Define o valor de 'Pintado de Ouro' de uma conta (SET, não ADD)"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE lol_accounts 
+                SET pintado_de_ouro = ?
+                WHERE id = ?
+            ''', (amount, lol_account_id))
+            conn.commit()
+            conn.close()
+            
+            print(f"✅ [Pintado de Ouro] Valor definido para {amount} na account_id={lol_account_id}")
+            return True
+        except Exception as e:
+            print(f"❌ [Pintado de Ouro] Erro ao definir valor: {e}")
+            return False
 
     def get_gold_medals_by_champion(self, discord_id: str, champion_name: str, year: int = None) -> int:
         """Retorna quantidade de pintados de ouro de um campeão específico"""

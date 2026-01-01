@@ -1546,14 +1546,18 @@ async def champban(interaction: discord.Interaction):
     for discord_id, data in players_bans.items():
         ban_lines = []
         for ban in data['bans']:
-            # Calcula dias restantes
+            # Calcula dias e horas restantes
             from datetime import datetime
             expires = datetime.fromisoformat(ban['expires_at'].replace('Z', '+00:00')) if 'Z' in ban['expires_at'] else datetime.fromisoformat(ban['expires_at'])
             now = datetime.now()
-            days_left = (expires - now).days
-            hours_left = (expires - now).seconds // 3600
+            total_seconds = (expires - now).total_seconds()
+            days_left = int(total_seconds // 86400)
+            hours_left = int((total_seconds % 86400) // 3600)
             
-            if days_left > 0:
+            # Mostra dias E horas (ex: 1d 8h)
+            if days_left > 0 and hours_left > 0:
+                time_left = f"{days_left}d {hours_left}h"
+            elif days_left > 0:
                 time_left = f"{days_left}d"
             else:
                 time_left = f"{hours_left}h"
@@ -1576,14 +1580,14 @@ async def champban(interaction: discord.Interaction):
     embed.set_footer(text="Restrições são aplicadas por performance ruim com o campeão")
     await interaction.followup.send(embed=embed)
 
-@bot.tree.command(name="addpintado", description="🏅 Adiciona Pintado de Ouro manualmente a um jogador")
+@bot.tree.command(name="pintadodeouro", description="🏅 Define o Pintado de Ouro de um jogador")
 @app_commands.describe(
-    usuario="Jogador que receberá o Pintado de Ouro",
-    quantidade="Quantidade a adicionar (padrão: 1)"
+    usuario="Jogador que terá o Pintado de Ouro definido",
+    quantidade="Quantidade a definir (novo valor)"
 )
 @app_commands.checks.has_permissions(administrator=True)
-async def addpintado(interaction: discord.Interaction, usuario: discord.User, quantidade: int = 1):
-    """Adiciona Pintado de Ouro manualmente a um jogador"""
+async def pintadodeouro(interaction: discord.Interaction, usuario: discord.User, quantidade: int):
+    """Define o Pintado de Ouro de um jogador (SET, não ADD)"""
     if not await check_command_channel(interaction):
         return
     
@@ -1600,38 +1604,23 @@ async def addpintado(interaction: discord.Interaction, usuario: discord.User, qu
         )
         return
     
-    # Adiciona para todas as contas do usuário
-    total_added = 0
-    for acc in accounts:
-        success = db.add_pintado_de_ouro_manual(acc['id'], quantidade)
-        if success:
-            total_added += quantidade
+    # Define para a primeira conta do usuário (valor único por jogador)
+    success = db.set_pintado_de_ouro(accounts[0]['id'], quantidade)
     
-    if total_added > 0:
-        # Busca novo total
-        new_total = 0
-        for acc in accounts:
-            new_total += db.get_pintado_de_ouro_count(acc['id'])
-        
+    if success:
         embed = discord.Embed(
-            title="🏅 Pintado de Ouro Adicionado",
-            description=f"**{quantidade}** Pintado(s) de Ouro adicionado(s) para {usuario.mention}",
+            title="🏅 Pintado de Ouro Definido",
+            description=f"Pintado de Ouro de {usuario.mention} definido para **{quantidade}**",
             color=discord.Color.gold()
         )
         
-        embed.add_field(
-            name="📊 Total Atual",
-            value=f"**{new_total}** Pintado(s) de Ouro",
-            inline=False
-        )
-        
-        embed.set_footer(text=f"Adicionado por {interaction.user.display_name}")
+        embed.set_footer(text=f"Definido por {interaction.user.display_name}")
         
         await interaction.followup.send(embed=embed)
-        print(f"✅ [AddPintado] {interaction.user.display_name} adicionou {quantidade} para {usuario.display_name}")
+        print(f"✅ [PintadoDeOuro] {interaction.user.display_name} definiu {quantidade} para {usuario.display_name}")
     else:
         await interaction.followup.send(
-            "❌ Erro ao adicionar Pintado de Ouro.",
+            "❌ Erro ao definir Pintado de Ouro.",
             ephemeral=True
         )
 
