@@ -1431,7 +1431,14 @@ class Database:
         return result is not None
     
     def get_champion_ban_level(self, lol_account_id: int, champion_name: str) -> int:
-        """Retorna o nível de banimento atual do campeão (0 se não banido ou expirado)"""
+        """
+        Retorna o nível de banimento atual do campeão.
+        
+        Sistema progressivo:
+        - Se ban ativo: retorna nível atual
+        - Se expirou há menos de 2 dias: mantém nível (próximo ban será nível+1)
+        - Se expirou há mais de 2 dias: reseta para 0 (próximo ban será nível 1)
+        """
         from datetime import datetime, timedelta
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -1458,11 +1465,11 @@ class Database:
         if expires_at > now:
             return ban_level
         
-        # Se expirou há menos de 3 dias, mantém o nível para próximo banimento
-        if (now - expires_at) < timedelta(days=3):
+        # Se expirou há menos de 2 dias, mantém o nível para próximo banimento
+        if (now - expires_at) < timedelta(days=2):
             return ban_level
         
-        # Se expirou há mais de 3 dias, reseta para 0
+        # Se expirou há mais de 2 dias, reseta para 0 (volta pro nível 1 no próximo ban)
         return 0
     
     def cleanup_expired_bans(self) -> int:

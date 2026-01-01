@@ -2226,6 +2226,13 @@ async def check_champion_performance(account_id: int, champion_name: str, mvp_sc
     Regras:
     - MVP < 35: Adiciona restrição imediatamente
     - 3 partidas consecutivas com MVP < 45: Adiciona restrição
+    
+    Sistema progressivo:
+    - Nível 1: 2 dias
+    - Nível 2: 4 dias  
+    - Nível 3: 7 dias (1 semana)
+    
+    Reset: Se ficar 2 dias sem tomar ban após punição acabar, volta pro nível 1
     """
     try:
         # Busca últimas 3 partidas com este campeão
@@ -2259,13 +2266,21 @@ async def check_champion_performance(account_id: int, champion_name: str, mvp_sc
                 print(f"🚫 [ChampBan] {champion_name}: 3 partidas < 45 - Aplicando restrição!")
         
         if should_ban:
-            # Busca nível atual do ban (se existir)
+            # Busca nível atual do ban considerando reset de 2 dias
             current_level = db.get_champion_ban_level(account_id, champion_name)
+            
+            # Se nível atual é 0 ou já passou 2 dias desde último ban expirar, começa do nível 1
+            # A função get_champion_ban_level já retorna 0 se passou mais de 2 dias
             new_level = current_level + 1
             
+            # Máximo nível 3
+            if new_level > 3:
+                new_level = 3
+            
             # Dias de ban baseado no nível (progressivo)
-            ban_days_map = {1: 1, 2: 3, 3: 7, 4: 14, 5: 30}
-            ban_days = ban_days_map.get(new_level, 30)  # Máximo 30 dias
+            # Nível 1 = 2 dias, Nível 2 = 4 dias, Nível 3 = 7 dias
+            ban_days_map = {1: 2, 2: 4, 3: 7}
+            ban_days = ban_days_map.get(new_level, 7)
             
             # Adiciona o ban
             success = db.add_champion_ban(account_id, champion_name, ban_days, new_level, ban_reason)
