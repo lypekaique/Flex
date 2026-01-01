@@ -3365,8 +3365,9 @@ async def check_live_games():
 
                     # Marca TODOS como notificados com a mesma mensagem
                     if message_info:
+                        print(f"📝 [Live Games] Salvando {len(players)} jogadores no banco para partida {game_id}...")
                         for player in players:
-                            db.mark_live_game_notified(
+                            result = db.mark_live_game_notified(
                                 player['account_id'],
                                 game_id,
                                 player['puuid'],
@@ -3377,7 +3378,10 @@ async def check_live_games():
                                 message_info.get('channel_id'),
                                 message_info.get('guild_id')
                             )
+                            print(f"   💾 Jogador {player['summoner_name']}: {'OK' if result else 'FALHOU'}")
                         print(f"✅ [Live Games] Mensagem criada para partida {game_id} com {len(players)} jogadores")
+                    else:
+                        print(f"❌ [Live Games] send_live_game_notification_grouped retornou None para {game_id}")
                 else:
                     # Apenas 1 jogador - envia notificação individual normal
                     player = players[0]
