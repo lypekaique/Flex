@@ -299,6 +299,14 @@ class Database:
             cursor.execute('ALTER TABLE server_configs ADD COLUMN top_flex_role_id TEXT')
             print("✅ Migração top_flex_role_id concluída!")
         
+        # Migração: Adiciona coluna pintado_de_ouro em lol_accounts
+        try:
+            cursor.execute("SELECT pintado_de_ouro FROM lol_accounts LIMIT 1")
+        except sqlite3.OperationalError:
+            print("🔄 Migrando banco: adicionando coluna pintado_de_ouro...")
+            cursor.execute('ALTER TABLE lol_accounts ADD COLUMN pintado_de_ouro INTEGER DEFAULT 0')
+            print("✅ Migração pintado_de_ouro concluída!")
+        
         # Tabela para histórico de vencedores do top_flex semanal
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS top_flex_winners (
@@ -2452,6 +2460,65 @@ class Database:
             'total_time_seconds': row[12] or 0
         }
     
+    def increment_pintado_de_ouro(self, lol_account_id: int) -> bool:
+        """Incrementa o contador de 'Pintado de Ouro' de uma conta"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE lol_accounts 
+                SET pintado_de_ouro = pintado_de_ouro + 1
+                WHERE id = ?
+            ''', (lol_account_id,))
+            conn.commit()
+            
+            # Busca o novo valor
+            cursor.execute('SELECT pintado_de_ouro FROM lol_accounts WHERE id = ?', (lol_account_id,))
+            new_count = cursor.fetchone()[0]
+            conn.close()
+            
+            print(f"✅ [Pintado de Ouro] Contador incrementado para account_id={lol_account_id}, novo valor: {new_count}")
+            return True
+        except Exception as e:
+            print(f"❌ [Pintado de Ouro] Erro ao incrementar: {e}")
+            return False
+    
+    def add_pintado_de_ouro_manual(self, lol_account_id: int, amount: int = 1) -> bool:
+        """Adiciona manualmente 'Pintado de Ouro' a uma conta"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE lol_accounts 
+                SET pintado_de_ouro = pintado_de_ouro + ?
+                WHERE id = ?
+            ''', (amount, lol_account_id))
+            conn.commit()
+            
+            # Busca o novo valor
+            cursor.execute('SELECT pintado_de_ouro FROM lol_accounts WHERE id = ?', (lol_account_id,))
+            new_count = cursor.fetchone()[0]
+            conn.close()
+            
+            print(f"✅ [Pintado de Ouro] Adicionado {amount} manualmente para account_id={lol_account_id}, novo valor: {new_count}")
+            return True
+        except Exception as e:
+            print(f"❌ [Pintado de Ouro] Erro ao adicionar manualmente: {e}")
+            return False
+    
+    def get_pintado_de_ouro_count(self, lol_account_id: int) -> int:
+        """Retorna a quantidade de 'Pintado de Ouro' de uma conta"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT pintado_de_ouro FROM lol_accounts WHERE id = ?', (lol_account_id,))
+            result = cursor.fetchone()
+            conn.close()
+            return result[0] if result else 0
+        except Exception as e:
+            print(f"❌ [Pintado de Ouro] Erro ao buscar contador: {e}")
+            return 0
+
     def get_gold_medals_by_champion(self, discord_id: str, champion_name: str, year: int = None) -> int:
         """Retorna quantidade de pintados de ouro de um campeão específico"""
         from datetime import datetime

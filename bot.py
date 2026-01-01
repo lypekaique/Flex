@@ -1118,6 +1118,11 @@ async def perfil(interaction: discord.Interaction, usuario: discord.User = None,
     # Avatar do usuário
     embed.set_thumbnail(url=target_user.display_avatar.url)
     
+    # Busca contador de Pintado de Ouro (restrições)
+    pintado_count = 0
+    for acc in accounts:
+        pintado_count += db.get_pintado_de_ouro_count(acc['id'])
+    
     # Estatísticas gerais
     embed.add_field(
         name="📊 Estatísticas Gerais",
@@ -1126,7 +1131,7 @@ async def perfil(interaction: discord.Interaction, usuario: discord.User = None,
             f"✅ **Vitórias:** {profile_stats['wins']} ({profile_stats['winrate']}%)\n"
             f"❌ **Derrotas:** {profile_stats['losses']}\n"
             f"⏱️ **Tempo de Jogo:** {hours}h {minutes}min\n"
-            f"🎨 **Pintados de Ouro:** {total_gold_medals}"
+            f"🏅 **Pintado de Ouro:** {pintado_count}"
         ),
         inline=True
     )
@@ -1570,6 +1575,65 @@ async def champban(interaction: discord.Interaction):
     
     embed.set_footer(text="Restrições são aplicadas por performance ruim com o campeão")
     await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="addpintado", description="🏅 Adiciona Pintado de Ouro manualmente a um jogador")
+@app_commands.describe(
+    usuario="Jogador que receberá o Pintado de Ouro",
+    quantidade="Quantidade a adicionar (padrão: 1)"
+)
+@app_commands.checks.has_permissions(administrator=True)
+async def addpintado(interaction: discord.Interaction, usuario: discord.User, quantidade: int = 1):
+    """Adiciona Pintado de Ouro manualmente a um jogador"""
+    if not await check_command_channel(interaction):
+        return
+    
+    await interaction.response.defer()
+    
+    # Busca contas vinculadas do usuário
+    discord_id = str(usuario.id)
+    accounts = db.get_user_accounts(discord_id)
+    
+    if not accounts:
+        await interaction.followup.send(
+            f"❌ **{usuario.display_name}** não tem nenhuma conta vinculada.",
+            ephemeral=True
+        )
+        return
+    
+    # Adiciona para todas as contas do usuário
+    total_added = 0
+    for acc in accounts:
+        success = db.add_pintado_de_ouro_manual(acc['id'], quantidade)
+        if success:
+            total_added += quantidade
+    
+    if total_added > 0:
+        # Busca novo total
+        new_total = 0
+        for acc in accounts:
+            new_total += db.get_pintado_de_ouro_count(acc['id'])
+        
+        embed = discord.Embed(
+            title="🏅 Pintado de Ouro Adicionado",
+            description=f"**{quantidade}** Pintado(s) de Ouro adicionado(s) para {usuario.mention}",
+            color=discord.Color.gold()
+        )
+        
+        embed.add_field(
+            name="📊 Total Atual",
+            value=f"**{new_total}** Pintado(s) de Ouro",
+            inline=False
+        )
+        
+        embed.set_footer(text=f"Adicionado por {interaction.user.display_name}")
+        
+        await interaction.followup.send(embed=embed)
+        print(f"✅ [AddPintado] {interaction.user.display_name} adicionou {quantidade} para {usuario.display_name}")
+    else:
+        await interaction.followup.send(
+            "❌ Erro ao adicionar Pintado de Ouro.",
+            ephemeral=True
+        )
 
 @bot.tree.command(name="flex", description="🎯 Guia completo do bot com botões interativos")
 async def flex_guide(interaction: discord.Interaction):
@@ -2220,7 +2284,7 @@ async def send_match_notification(lol_account_id: int, stats: Dict):
     except Exception as e:
         print(f"Erro ao processar notificação de partida: {e}")
 
-async def send_champion_ban_notification(account_id: int, champion_name: str, ban_days: int, ban_level: int, ban_reason: str):
+async def send_champion_ban_notification(account_id: int, champion_name: str, ban_days: int, ban_level: int, ban_reason: str, pintado_count: int = 0):
     """
     Envia notificação quando um jogador recebe restrição de campeão.
     """
@@ -2258,6 +2322,13 @@ async def send_champion_ban_notification(account_id: int, champion_name: str, ba
                 title="⚠️ BANIMENTO PROGRESSIVO - NÍVEL " + str(ban_level),
                 description=f"{member.mention} está **PROIBIDO** de jogar com **{champion_name}** por **{ban_days} dias**!",
                 color=discord.Color.orange()
+            )
+            
+            # Pintado de Ouro
+            embed.add_field(
+                name="🏅 Pintado de Ouro",
+                value=f"**{pintado_count}** restrição(ões) aplicada(s) no total",
+                inline=False
             )
             
             # Estatísticas recentes
@@ -2408,8 +2479,13 @@ async def check_champion_performance(account_id: int, champion_name: str, mvp_sc
                 print(f"   Duração: {ban_days} dias")
                 print(f"   Motivo: {ban_reason}")
                 
+                # Incrementa contador de "Pintado de Ouro"
+                db.increment_pintado_de_ouro(account_id)
+                pintado_count = db.get_pintado_de_ouro_count(account_id)
+                print(f"🏅 [Pintado de Ouro] Contador atualizado: {pintado_count}")
+                
                 # Envia notificação no canal
-                await send_champion_ban_notification(account_id, champion_name, ban_days, new_level, ban_reason)
+                await send_champion_ban_notification(account_id, champion_name, ban_days, new_level, ban_reason, pintado_count)
             else:
                 print(f"❌ [ChampBan] FALHA ao aplicar restrição para {champion_name}")
         else:
