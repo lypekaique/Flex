@@ -2654,7 +2654,7 @@ async def update_live_game_result(game_id: str, match_data: Dict):
                 if original_embed.footer:
                     new_embed.set_footer(
                         text=original_embed.footer.text,
-                        icon_url=original_embed.footer.icon_url if original_embed.footer.icon_url else discord.Embed.Empty
+                        icon_url=original_embed.footer.icon_url if original_embed.footer.icon_url else None
                     )
 
                 # Edita a mensagem de live game
@@ -3467,38 +3467,21 @@ async def check_live_games():
                     print(f"⚠️ [Live Games] Nenhum servidor válido encontrado para partida {game_id}")
                     continue
 
-                # Cria nova mensagem
-                if len(players) > 1:
-                    print(f"🎮 [Live Games] {len(players)} jogadores na mesma partida {game_id}")
-                    # Múltiplos jogadores na mesma partida - envia UMA notificação
-                    message_info = await send_live_game_notification_grouped(game_id, players)
+                # Só processa se tiver 2+ jogadores do bot
+                if len(players) < 2:
+                    print(f"⏭️ [Live Games] Apenas 1 jogador na partida {game_id}, pulando (mínimo 2 jogadores)")
+                    continue
+                
+                # Cria nova mensagem para partidas com 2+ jogadores
+                print(f"🎮 [Live Games] {len(players)} jogadores na mesma partida {game_id}")
+                # Múltiplos jogadores na mesma partida - envia UMA notificação
+                message_info = await send_live_game_notification_grouped(game_id, players)
 
-                    # Marca TODOS como notificados com a mesma mensagem
-                    if message_info:
-                        print(f"📝 [Live Games] Salvando {len(players)} jogadores no banco para partida {game_id}...")
-                        for player in players:
-                            result = db.mark_live_game_notified(
-                                player['account_id'],
-                                game_id,
-                                player['puuid'],
-                                player['summoner_name'],
-                                player['live_info']['championId'],
-                                player['live_info']['champion'],
-                                message_info.get('message_id'),
-                                message_info.get('channel_id'),
-                                message_info.get('guild_id')
-                            )
-                            print(f"   💾 Jogador {player['summoner_name']}: {'OK' if result else 'FALHOU'}")
-                        print(f"✅ [Live Games] Mensagem criada para partida {game_id} com {len(players)} jogadores")
-                    else:
-                        print(f"❌ [Live Games] send_live_game_notification_grouped retornou None para {game_id}")
-                else:
-                    # Apenas 1 jogador - envia notificação individual normal
-                    player = players[0]
-                    message_info = await send_live_game_notification(player['account_id'], player['live_info'])
-
-                    if message_info:
-                        db.mark_live_game_notified(
+                # Marca TODOS como notificados com a mesma mensagem
+                if message_info:
+                    print(f"📝 [Live Games] Salvando {len(players)} jogadores no banco para partida {game_id}...")
+                    for player in players:
+                        result = db.mark_live_game_notified(
                             player['account_id'],
                             game_id,
                             player['puuid'],
@@ -3509,7 +3492,10 @@ async def check_live_games():
                             message_info.get('channel_id'),
                             message_info.get('guild_id')
                         )
-                        print(f"✅ [Live Games] Mensagem criada para partida {game_id}")
+                        print(f"   💾 Jogador {player['summoner_name']}: {'OK' if result else 'FALHOU'}")
+                    print(f"✅ [Live Games] Mensagem criada para partida {game_id} com {len(players)} jogadores")
+                else:
+                    print(f"❌ [Live Games] send_live_game_notification_grouped retornou None para {game_id}")
                             
             except Exception as e:
                 print(f"❌ [Live Games] Erro ao enviar notificação para game {game_id}: {e}")
@@ -3643,6 +3629,22 @@ async def process_account_batch(account_id: int, puuid: str, region: str, riot_a
                 stats = riot_api.extract_player_stats(match_data, puuid)
 
                 if stats:
+                    # Verifica quantos jogadores do bot estão nesta partida
+                    participants_puuids = [p['puuid'] for p in match_data['info']['participants']]
+                    conn = db.get_connection()
+                    cursor = conn.cursor()
+                    placeholders = ','.join('?' * len(participants_puuids))
+                    cursor.execute(f'SELECT COUNT(*) FROM lol_accounts WHERE puuid IN ({placeholders})', participants_puuids)
+                    bot_players_count = cursor.fetchone()[0]
+                    conn.close()
+                    
+                    print(f"👥 [Partidas] {bot_players_count} jogador(es) do bot nesta partida")
+                    
+                    # Só processa se tiver 2+ jogadores do bot
+                    if bot_players_count < 2:
+                        print(f"⏭️ [Partidas] Apenas {bot_players_count} jogador(es) do bot, pulando (mínimo 2)")
+                        continue
+                    
                     # Salva automaticamente no banco
                     success = db.add_match(account_id, stats)
 
@@ -3838,6 +3840,24 @@ async def check_live_games_finished():
 
                             if stats:
                                 print(f"📊 [Live Check] Estatísticas extraídas para {puuid}: {stats['champion_name']} - MVP: {stats['mvp_score']}")
+
+                                # Verifica quantos jogadores do bot estão nesta partida
+                                participants_puuids = [p['puuid'] for p in match_data['info']['participants']]
+                                conn = db.get_connection()
+                                cursor = conn.cursor()
+                                placeholders = ','.join('?' * len(participants_puuids))
+                                cursor.execute(f'SELECT COUNT(*) FROM lol_accounts WHERE puuid IN ({placeholders})', participants_puuids)
+                                bot_players_count = cursor.fetchone()[0]
+                                conn.close()
+                                
+                                print(f"👥 [Live Check] {bot_players_count} jogador(es) do bot nesta partida")
+                                
+                                # Só processa se tiver 2+ jogadores do bot
+                                if bot_players_count < 2:
+                                    print(f"⏭️ [Live Check] Apenas {bot_players_count} jogador(es) do bot, pulando (mínimo 2)")
+                                    # Remove da lista de live games sem processar
+                                    db.remove_live_game_notification(account_id, game_id)
+                                    continue
 
                                 # Salva no banco de dados ANTES de tudo
                                 print(f"💾 [Live Check] Salvando partida no banco de dados...")
