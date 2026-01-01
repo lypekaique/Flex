@@ -2278,6 +2278,13 @@ async def send_champion_ban_notification(account_id: int, champion_name: str, ba
     Envia notificação quando um jogador recebe restrição de campeão.
     """
     try:
+        print(f"\n🔔 [ChampBan Notification] ===== ENVIANDO NOTIFICAÇÃO DE BAN =====")
+        print(f"   Account ID: {account_id}")
+        print(f"   Campeão: {champion_name}")
+        print(f"   Dias: {ban_days}")
+        print(f"   Nível: {ban_level}")
+        print(f"   Pintado de Ouro: {pintado_count}")
+        
         # Busca informações da conta
         conn = db.get_connection()
         cursor = conn.cursor()
@@ -2286,25 +2293,38 @@ async def send_champion_ban_notification(account_id: int, champion_name: str, ba
         conn.close()
         
         if not account_data:
-            print(f"⚠️ [ChampBan Notification] Conta {account_id} não encontrada")
+            print(f"❌ [ChampBan Notification] Conta {account_id} não encontrada no banco")
             return
         
         discord_id, summoner_name = account_data
+        print(f"   Discord ID: {discord_id}")
+        print(f"   Summoner: {summoner_name}")
         
         # Busca servidor e canal
+        print(f"   Buscando servidor e canal...")
         for guild in bot.guilds:
+            print(f"   Verificando guild: {guild.name} (ID: {guild.id})")
             member = guild.get_member(int(discord_id))
             if not member:
+                print(f"      ❌ Membro não encontrado neste servidor")
                 continue
+            
+            print(f"      ✅ Membro encontrado: {member.display_name}")
             
             # Busca canal de partidas
             channel_id = db.get_match_channel(str(guild.id))
+            print(f"      Canal de partidas configurado: {channel_id}")
+            
             if not channel_id:
+                print(f"      ❌ Canal de partidas não configurado")
                 continue
             
             channel = guild.get_channel(int(channel_id))
             if not channel:
+                print(f"      ❌ Canal {channel_id} não encontrado")
                 continue
+            
+            print(f"      ✅ Canal encontrado: #{channel.name}")
             
             # Cria embed de notificação
             embed = discord.Embed(
@@ -2367,11 +2387,16 @@ async def send_champion_ban_notification(account_id: int, champion_name: str, ba
             # Footer
             embed.set_footer(text=f"Conta: {summoner_name}")
             
+            print(f"      📤 Enviando embed de notificação...")
             await channel.send(embed=embed)
-            print(f"✅ [ChampBan Notification] Notificação enviada para {member.display_name}")
+            print(f"✅✅✅ [ChampBan Notification] NOTIFICAÇÃO ENVIADA COM SUCESSO!")
+            print(f"      Para: {member.display_name}")
+            print(f"      Canal: #{channel.name}")
+            print(f"      Servidor: {guild.name}")
             return
         
-        print(f"⚠️ [ChampBan Notification] Nenhum servidor/canal válido encontrado")
+        print(f"❌❌❌ [ChampBan Notification] NENHUM SERVIDOR/CANAL VÁLIDO ENCONTRADO!")
+        print(f"   Verifique se o canal de partidas está configurado com /configurar")
         
     except Exception as e:
         print(f"❌ [ChampBan Notification] Erro ao enviar notificação: {e}")
@@ -3723,13 +3748,15 @@ async def check_live_games():
                     print(f"⏭️ [Live Games] Partida {game_id} já está sendo processada, pulando...")
                     continue
                 
-                # Verifica se JÁ EXISTE mensagem para este game_id
+                # VERIFICAÇÃO CRÍTICA: Verifica se JÁ EXISTE mensagem para este game_id NO BANCO
+                # Isso evita duplicação mesmo se o set _processing_games for limpo
                 existing_message = db.get_live_game_message_by_game_id(game_id, None)
                 
-                if existing_message:
+                if existing_message and existing_message.get('message_id'):
+                    print(f"🚫 [Live Games] Partida {game_id} JÁ TEM MENSAGEM no banco (ID: {existing_message.get('message_id')})")
+                    print(f"   Verificando se mensagem ainda existe no Discord...")
+                    
                     # Verifica se a mensagem ainda existe no Discord
-                    message_exists = False
-                    discord_message = None
                     try:
                         msg_id = existing_message.get('message_id')
                         ch_id = existing_message.get('channel_id')
@@ -3741,72 +3768,18 @@ async def check_live_games():
                                 channel = guild.get_channel(int(ch_id))
                                 if channel:
                                     try:
-                                        discord_message = await channel.fetch_message(int(msg_id))
-                                        message_exists = True
+                                        await channel.fetch_message(int(msg_id))
+                                        print(f"✅ [Live Games] Mensagem existe no Discord, pulando partida {game_id}")
+                                        continue
                                     except discord.NotFound:
-                                        message_exists = False
-                                    except:
-                                        message_exists = True  # Assume que existe se der outro erro
-                    except:
-                        message_exists = True  # Assume que existe se der erro
-                    
-                    if message_exists and discord_message:
-                        # Verifica se há jogadores faltantes na mensagem
-                        # Busca todos os jogadores já notificados para este game_id
-                        conn = db.get_connection()
-                        cursor = conn.cursor()
-                        cursor.execute('''
-                            SELECT lol_account_id FROM live_games_notified 
-                            WHERE game_id = ?
-                        ''', (game_id,))
-                        notified_accounts = {row[0] for row in cursor.fetchall()}
-                        conn.close()
-                        
-                        # Jogadores atuais na partida
-                        current_accounts = {p['account_id'] for p in players}
-                        
-                        # Jogadores que faltam (estão na partida mas não foram notificados)
-                        missing_accounts = current_accounts - notified_accounts
-                        
-                        if missing_accounts:
-                            print(f"🔄 [Live Games] Partida {game_id} tem {len(missing_accounts)} jogador(es) faltante(s), atualizando mensagem...")
-                            
-                            # Busca dados da partida ao vivo novamente
-                            first_player = players[0]
-                            region = first_player.get('region', 'br1')
-                            game_data = await riot_api.get_active_game(first_player['puuid'], region)
-                            
-                            if game_data:
-                                # Atualiza o embed com todos os jogadores
-                                await update_live_game_message_with_players(discord_message, game_id, players, game_data, region)
-                                
-                                # Marca os jogadores faltantes como notificados
-                                for player in players:
-                                    if player['account_id'] in missing_accounts:
-                                        db.mark_live_game_notified(
-                                            player['account_id'],
-                                            game_id,
-                                            player['puuid'],
-                                            player['summoner_name'],
-                                            player['live_info']['championId'],
-                                            player['live_info']['champion'],
-                                            msg_id,
-                                            ch_id,
-                                            gld_id
-                                        )
-                                        print(f"   ✅ Jogador {player['summoner_name']} adicionado à notificação")
-                        else:
-                            print(f"⏭️ [Live Games] Partida {game_id} já tem mensagem enviada com todos os jogadores, pulando...")
-                        
+                                        print(f"🗑️ [Live Games] Mensagem foi apagada, limpando registro...")
+                                        db.clear_live_game_notifications(game_id)
+                    except Exception as e:
+                        print(f"⚠️ [Live Games] Erro ao verificar mensagem: {e}")
+                        # Se der erro, assume que existe e pula
                         continue
-                    elif message_exists:
-                        # Mensagem existe mas não conseguimos buscar - pula
-                        print(f"⏭️ [Live Games] Partida {game_id} já tem mensagem enviada, pulando...")
-                        continue
-                    else:
-                        # Mensagem foi apagada - limpa registro e reenvia
-                        print(f"🗑️ [Live Games] Mensagem da partida {game_id} foi apagada, limpando registro...")
-                        db.clear_live_game_notifications(game_id)
+                
+                # Se chegou aqui, não existe mensagem no Discord - pode criar
                 
                 print(f"\n📤 [Live Games] Criando mensagem para partida {game_id} com {len(players)} jogador(es)...")
 
