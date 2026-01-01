@@ -3044,16 +3044,20 @@ async def send_live_game_notification_grouped(game_id: str, players: List[Dict])
     Retorna dict com message_id, channel_id, guild_id ou None se falhar.
     """
     try:
+        print(f"📤 [Live Grouped] Iniciando envio para game_id={game_id} com {len(players)} jogadores")
         if not players:
+            print(f"❌ [Live Grouped] Lista de jogadores vazia!")
             return None
         
         # Pega o primeiro jogador para determinar o servidor
         first_player = players[0]
         discord_id = first_player['discord_id']
         region = first_player.get('region', 'br1')
+        print(f"📤 [Live Grouped] Primeiro jogador: discord_id={discord_id}, region={region}")
         
         # Busca dados completos da partida ao vivo para pegar TODOS os jogadores
         game_data = await riot_api.get_active_game(first_player['puuid'], region)
+        print(f"📤 [Live Grouped] game_data obtido: {game_data is not None}")
         
         # Busca servidor e canal
         for guild in bot.guilds:
@@ -3166,6 +3170,7 @@ async def send_live_game_notification_grouped(game_id: str, players: List[Dict])
             embed.set_footer(text=f"Game ID: {game_id} • {region.upper()} • {now_brazil.strftime('%d/%m às %H:%M')}")
             
             message = await channel.send(embed=embed)
+            print(f"✅ [Live Grouped] Mensagem enviada! message_id={message.id}, channel_id={channel.id}, guild_id={guild.id}")
             
             return {
                 'message_id': str(message.id),
@@ -3173,6 +3178,7 @@ async def send_live_game_notification_grouped(game_id: str, players: List[Dict])
                 'guild_id': str(guild.id)
             }
         
+        print(f"⚠️ [Live Grouped] Nenhum servidor/canal válido encontrado para enviar notificação")
         return None
         
     except Exception as e:
