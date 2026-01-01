@@ -3509,10 +3509,6 @@ async def process_account_batch(account_id: int, puuid: str, region: str, riot_a
                         else:
                             print(f"✅ [Partidas] Nova partida registrada: {match_id} (MVP: {stats.get('mvp_score', 0)})")
 
-                        # Verifica performance apenas se não for remake
-                        if not stats.get('is_remake', False):
-                            await check_champion_performance(account_id, stats['champion_name'])
-
                         # Envia notificação automática da nova partida
                         await send_match_notification(account_id, stats)
 
@@ -3729,10 +3725,6 @@ async def check_live_games_finished():
                                 # Envia notificação individual com estatísticas detalhadas
                                 print(f"📨 [Live Check] Enviando notificação individual de estatísticas para {account_id}")
                                 await send_match_notification(account_id, stats)
-
-                                # Verifica performance apenas se não for remake
-                                if not stats.get('is_remake', False):
-                                    await check_champion_performance(account_id, stats['champion_name'])
 
                                 # Remove da lista de live games
                                 print(f"🗑️ [Live Check] Removendo live game {game_id} da lista")
