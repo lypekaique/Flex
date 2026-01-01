@@ -3568,6 +3568,9 @@ async def send_live_game_notification_grouped(game_id: str, players: List[Dict])
         traceback.print_exc()
         return None
 
+# Set para controlar partidas sendo processadas (evita duplicação)
+_processing_games = set()
+
 @tasks.loop(seconds=180)
 async def check_live_games():
     """Task que verifica se jogadores estão em partidas ao vivo a cada 3 minutos (180 segundos)"""
@@ -3650,6 +3653,11 @@ async def check_live_games():
         
         for game_id, players in games_map.items():
             try:
+                # Verifica se já está sendo processada (evita duplicação)
+                if game_id in _processing_games:
+                    print(f"⏭️ [Live Games] Partida {game_id} já está sendo processada, pulando...")
+                    continue
+                
                 # Verifica se JÁ EXISTE mensagem para este game_id
                 existing_message = db.get_live_game_message_by_game_id(game_id, None)
                 
@@ -3758,30 +3766,39 @@ async def check_live_games():
                     print(f"⏭️ [Live Games] Apenas 1 jogador na partida {game_id}, pulando (mínimo 2 jogadores)")
                     continue
                 
-                # Cria nova mensagem para partidas com 2+ jogadores
-                print(f"🎮 [Live Games] {len(players)} jogadores na mesma partida {game_id}")
-                # Múltiplos jogadores na mesma partida - envia UMA notificação
-                message_info = await send_live_game_notification_grouped(game_id, players)
+                # Marca como sendo processada
+                _processing_games.add(game_id)
+                print(f"🔒 [Live Games] Partida {game_id} marcada como sendo processada")
+                
+                try:
+                    # Cria nova mensagem para partidas com 2+ jogadores
+                    print(f"🎮 [Live Games] {len(players)} jogadores na mesma partida {game_id}")
+                    # Múltiplos jogadores na mesma partida - envia UMA notificação
+                    message_info = await send_live_game_notification_grouped(game_id, players)
 
-                # Marca TODOS como notificados com a mesma mensagem
-                if message_info:
-                    print(f"📝 [Live Games] Salvando {len(players)} jogadores no banco para partida {game_id}...")
-                    for player in players:
-                        result = db.mark_live_game_notified(
-                            player['account_id'],
-                            game_id,
-                            player['puuid'],
-                            player['summoner_name'],
-                            player['live_info']['championId'],
-                            player['live_info']['champion'],
-                            message_info.get('message_id'),
-                            message_info.get('channel_id'),
-                            message_info.get('guild_id')
-                        )
-                        print(f"   💾 Jogador {player['summoner_name']}: {'OK' if result else 'FALHOU'}")
-                    print(f"✅ [Live Games] Mensagem criada para partida {game_id} com {len(players)} jogadores")
-                else:
-                    print(f"❌ [Live Games] send_live_game_notification_grouped retornou None para {game_id}")
+                    # Marca TODOS como notificados com a mesma mensagem
+                    if message_info:
+                        print(f"📝 [Live Games] Salvando {len(players)} jogadores no banco para partida {game_id}...")
+                        for player in players:
+                            result = db.mark_live_game_notified(
+                                player['account_id'],
+                                game_id,
+                                player['puuid'],
+                                player['summoner_name'],
+                                player['live_info']['championId'],
+                                player['live_info']['champion'],
+                                message_info.get('message_id'),
+                                message_info.get('channel_id'),
+                                message_info.get('guild_id')
+                            )
+                            print(f"   💾 Jogador {player['summoner_name']}: {'OK' if result else 'FALHOU'}")
+                        print(f"✅ [Live Games] Mensagem criada para partida {game_id} com {len(players)} jogadores")
+                    else:
+                        print(f"❌ [Live Games] send_live_game_notification_grouped retornou None para {game_id}")
+                finally:
+                    # Remove do set após processar (sucesso ou falha)
+                    _processing_games.discard(game_id)
+                    print(f"🔓 [Live Games] Partida {game_id} desmarcada")
                             
             except Exception as e:
                 print(f"❌ [Live Games] Erro ao enviar notificação para game {game_id}: {e}")
