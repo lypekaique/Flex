@@ -2311,12 +2311,12 @@ async def send_champion_ban_notification(account_id: int, champion_name: str, ba
             
             print(f"      ✅ Membro encontrado: {member.display_name}")
             
-            # Busca canal de partidas
-            channel_id = db.get_match_channel(str(guild.id))
-            print(f"      Canal de partidas configurado: {channel_id}")
+            # Busca canal de ALERTAS (não canal de partidas/score)
+            channel_id = db.get_notification_channel(str(guild.id))
+            print(f"      Canal de alertas configurado: {channel_id}")
             
             if not channel_id:
-                print(f"      ❌ Canal de partidas não configurado")
+                print(f"      ❌ Canal de alertas não configurado")
                 continue
             
             channel = guild.get_channel(int(channel_id))
