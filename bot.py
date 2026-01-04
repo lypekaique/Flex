@@ -859,6 +859,39 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
             await interaction.followup.send("❌ Erro ao configurar cargo.", ephemeral=True)
         return
     
+    # Validação especial para piorzin (precisa de cargo, não de canal)
+    if tipo == 'piorzin':
+        if cargo is None:
+            await interaction.followup.send(
+                "❌ Você precisa especificar um **cargo** para o piorzin!\n"
+                "Use: `/configurar tipo:piorzin cargo:@SeuCargo`",
+                ephemeral=True
+            )
+            return
+        
+        success = db.set_piorzin_role(guild_id, str(cargo.id))
+        if success:
+            embed = discord.Embed(
+                title="💀 Cargo Piorzin Configurado!",
+                description=f"O cargo {cargo.mention} será dado ao piorzin semanal",
+                color=discord.Color.dark_red()
+            )
+            embed.add_field(
+                name="💀 Como funciona?",
+                value=(
+                    "**Sistema de Ranking Semanal:**\n"
+                    "• O ranking é baseado no **Piorzin Score** (votos de pior jogador)\n"
+                    "• Toda **segunda-feira às 00:00** o ranking reseta\n"
+                    "• O **1º lugar** da semana recebe o cargo automaticamente\n"
+                    "• O cargo é removido do piorzin anterior"
+                ),
+                inline=False
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        else:
+            await interaction.followup.send("❌ Erro ao configurar cargo.", ephemeral=True)
+        return
+    
     # Para outros tipos, precisa de canal
     if canal is None:
         await interaction.followup.send(
@@ -872,7 +905,7 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
     
     if tipo not in ['alertas', 'score', 'comandos', 'live', 'votacao']:
         await interaction.followup.send(
-            "❌ Tipo inválido! Use: `alertas`, `score`, `comandos`, `live`, `votacao` ou `top_flex`",
+            "❌ Tipo inválido! Use: `alertas`, `score`, `comandos`, `live`, `votacao`, `top_flex` ou `piorzin`",
             ephemeral=True
         )
         return
@@ -1503,6 +1536,86 @@ async def tops_flex(interaction: discord.Interaction):
         )
     
     embed.set_footer(text="Ganhe Carry Score votando e sendo votado como MVP!")
+    await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="piorzin", description="💀 Ranking semanal dos piores jogadores (Piorzin Score)")
+async def piorzin(interaction: discord.Interaction):
+    """Mostra o ranking semanal de Piorzin Score"""
+    if not await check_command_channel(interaction):
+        return
+    
+    await interaction.response.defer()
+    
+    # Calcula início e fim da semana atual (segunda a domingo)
+    from datetime import timedelta
+    today = datetime.now()
+    days_since_monday = today.weekday()
+    week_start = (today - timedelta(days=days_since_monday)).replace(hour=0, minute=0, second=0, microsecond=0)
+    week_end = (week_start + timedelta(days=6)).replace(hour=23, minute=59, second=59)
+    
+    week_start_str = week_start.strftime('%Y-%m-%d')
+    week_end_str = week_end.strftime('%Y-%m-%d')
+    
+    # Busca ranking da semana
+    ranking = db.get_weekly_piorzin_score_ranking(week_start_str, week_end_str, limit=10)
+    
+    embed = discord.Embed(
+        title="💀 PIORZIN - RANKING SEMANAL",
+        description=(
+            f"**Semana:** {week_start.strftime('%d/%m')} - {week_end.strftime('%d/%m/%Y')}\n"
+            f"Ranking baseado em **Piorzin Score** (votos de pior jogador)\n\n"
+            f"⏰ Reset: **Segunda-feira às 00:00**"
+        ),
+        color=discord.Color.dark_red()
+    )
+    
+    if not ranking:
+        embed.add_field(
+            name="📊 Ranking",
+            value="Nenhum jogador com Piorzin Score esta semana.\nJogue partidas e vote no Piorzin nas derrotas!",
+            inline=False
+        )
+    else:
+        ranking_text = ""
+        for i, player in enumerate(ranking, 1):
+            # Emoji de posição
+            if i == 1:
+                pos_emoji = "💀"
+            elif i == 2:
+                pos_emoji = "☠️"
+            elif i == 3:
+                pos_emoji = "👻"
+            else:
+                pos_emoji = f"**{i}º**"
+            
+            ranking_text += f"{pos_emoji} <@{player['discord_id']}> - **{player['total_score']}** pontos ({player['games']} votos)\n"
+        
+        embed.add_field(
+            name="📊 Ranking",
+            value=ranking_text,
+            inline=False
+        )
+    
+    # Mostra último vencedor
+    guild_id = str(interaction.guild_id)
+    last_winner = db.get_last_piorzin_winner(guild_id)
+    if last_winner:
+        embed.add_field(
+            name="🏅 Último Piorzin",
+            value=f"<@{last_winner['discord_id']}> - {last_winner['total_score']} pontos\nSemana: {last_winner['week_start']} a {last_winner['week_end']}",
+            inline=False
+        )
+    
+    # Mostra cargo configurado
+    piorzin_role = db.get_piorzin_role(guild_id)
+    if piorzin_role:
+        embed.add_field(
+            name="🎖️ Prêmio",
+            value=f"O 1º lugar recebe o cargo <@&{piorzin_role}>",
+            inline=False
+        )
+    
+    embed.set_footer(text="Evite ser o Piorzin! Jogue melhor nas derrotas!")
     await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="champban", description="🚫 Veja todas as restrições de campeões ativas")

@@ -267,20 +267,6 @@ class Database:
             )
         ''')
         
-        # Tabela de piorzin score acumulado (para derrotas)
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS piorzin_scores (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                discord_id TEXT NOT NULL,
-                game_id TEXT NOT NULL,
-                score INTEGER NOT NULL,
-                reason TEXT,
-                year INTEGER NOT NULL,
-                earned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(discord_id, game_id)
-            )
-        ''')
-        
         # Tabela para rastrear votações pendentes
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS pending_votes (
@@ -329,9 +315,23 @@ class Database:
             cursor.execute('ALTER TABLE server_configs ADD COLUMN piorzin_role_id TEXT')
             print("✅ Migração piorzin_role_id concluída!")
         
-        # Tabela para histórico de vencedores do top_flex semanal
+        # Tabela de piorzin score acumulado
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS top_flex_winners (
+            CREATE TABLE IF NOT EXISTS piorzin_scores (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                discord_id TEXT NOT NULL,
+                game_id TEXT NOT NULL,
+                score INTEGER NOT NULL,
+                reason TEXT,
+                year INTEGER NOT NULL,
+                earned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(discord_id, game_id)
+            )
+        ''')
+        
+        # Tabela para histórico de vencedores do piorzin semanal
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS piorzin_winners (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 discord_id TEXT NOT NULL,
                 guild_id TEXT NOT NULL,
@@ -343,9 +343,9 @@ class Database:
             )
         ''')
         
-        # Tabela para histórico de vencedores do piorzin semanal
+        # Tabela para histórico de vencedores do top_flex semanal
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS piorzin_winners (
+            CREATE TABLE IF NOT EXISTS top_flex_winners (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 discord_id TEXT NOT NULL,
                 guild_id TEXT NOT NULL,
@@ -2282,129 +2282,6 @@ class Database:
             'total_participants': total_participants
         }
     
-    # ==================== SISTEMA DE PIORZIN SCORE (DERROTAS) ====================
-    
-    def add_piorzin_score(self, discord_id: str, game_id: str, score: int, reason: str = None) -> bool:
-        """Adiciona piorzin score para um jogador (derrotas)"""
-        try:
-            from datetime import datetime
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            year = datetime.now().year
-            
-            cursor.execute('''
-                INSERT OR REPLACE INTO piorzin_scores (discord_id, game_id, score, reason, year)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (discord_id, game_id, score, reason, year))
-            conn.commit()
-            conn.close()
-            print(f"✅ [Piorzin] Adicionado {score} pontos para {discord_id}")
-            return True
-        except Exception as e:
-            print(f"❌ Erro ao adicionar piorzin score: {e}")
-            return False
-    
-    def get_total_piorzin_score(self, discord_id: str, year: int = None) -> int:
-        """Retorna o piorzin score total de um jogador (filtrado por ano)"""
-        from datetime import datetime
-        if year is None:
-            year = datetime.now().year
-        
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT COALESCE(SUM(score), 0) FROM piorzin_scores
-            WHERE discord_id = ? AND year = ?
-        ''', (discord_id, year))
-        
-        result = cursor.fetchone()[0]
-        conn.close()
-        return result
-    
-    def get_piorzin_score_ranking(self, guild_id: str = None, limit: int = 10, year: int = None) -> List[Dict]:
-        """Retorna ranking de piorzin score"""
-        from datetime import datetime
-        if year is None:
-            year = datetime.now().year
-        
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT discord_id, SUM(score) as total_score, COUNT(*) as games
-            FROM piorzin_scores
-            WHERE year = ?
-            GROUP BY discord_id
-            ORDER BY total_score DESC
-            LIMIT ?
-        ''', (year, limit))
-        
-        ranking = []
-        for row in cursor.fetchall():
-            ranking.append({
-                'discord_id': row[0],
-                'total_score': row[1],
-                'games': row[2]
-            })
-        conn.close()
-        return ranking
-    
-    def get_weekly_piorzin_score_ranking(self, week_start: str, week_end: str, limit: int = 10) -> List[Dict]:
-        """Retorna ranking de piorzin score da semana específica"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT discord_id, SUM(score) as total_score, COUNT(*) as games
-            FROM piorzin_scores
-            WHERE date(earned_at) >= ? AND date(earned_at) <= ?
-            GROUP BY discord_id
-            ORDER BY total_score DESC
-            LIMIT ?
-        ''', (week_start, week_end, limit))
-        
-        ranking = []
-        for row in cursor.fetchall():
-            ranking.append({
-                'discord_id': row[0],
-                'total_score': row[1],
-                'games': row[2]
-            })
-        conn.close()
-        return ranking
-    
-    def get_player_current_week_piorzin_position(self, discord_id: str, week_start: str, week_end: str) -> Dict:
-        """Retorna a posição atual do jogador no ranking de piorzin da semana"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT discord_id, SUM(score) as total_score
-            FROM piorzin_scores
-            WHERE date(earned_at) >= ? AND date(earned_at) <= ?
-            GROUP BY discord_id
-            ORDER BY total_score DESC
-        ''', (week_start, week_end))
-        
-        ranking = cursor.fetchall()
-        conn.close()
-        
-        total_participants = len(ranking)
-        
-        for position, (player_id, score) in enumerate(ranking, 1):
-            if player_id == discord_id:
-                return {
-                    'position': position,
-                    'total_score': score,
-                    'total_participants': total_participants
-                }
-        
-        return {
-            'position': 0,
-            'total_score': 0,
-            'total_participants': total_participants
-        }
-    
     def set_top_flex_role(self, guild_id: str, role_id: str) -> bool:
         """Define o cargo de premiação do top_flex para um servidor"""
         try:
@@ -2472,7 +2349,68 @@ class Database:
             }
         return None
     
-    # ==================== SISTEMA DE CARGO PIORZIN ====================
+    # ==================== SISTEMA DE PIORZIN (RANKING DOS PIORES) ====================
+    
+    def add_piorzin_score(self, discord_id: str, game_id: str, score: int, reason: str = None) -> bool:
+        """Adiciona piorzin score para um jogador"""
+        try:
+            from datetime import datetime
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            year = datetime.now().year
+            
+            cursor.execute('''
+                INSERT OR REPLACE INTO piorzin_scores (discord_id, game_id, score, reason, year)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (discord_id, game_id, score, reason, year))
+            conn.commit()
+            conn.close()
+            print(f"✅ [Piorzin] Adicionado {score} pontos para {discord_id}")
+            return True
+        except Exception as e:
+            print(f"❌ Erro ao adicionar piorzin score: {e}")
+            return False
+    
+    def get_total_piorzin_score(self, discord_id: str, year: int = None) -> int:
+        """Retorna o piorzin score total de um jogador"""
+        from datetime import datetime
+        if year is None:
+            year = datetime.now().year
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT COALESCE(SUM(score), 0) FROM piorzin_scores
+            WHERE discord_id = ? AND year = ?
+        ''', (discord_id, year))
+        
+        result = cursor.fetchone()[0]
+        conn.close()
+        return result
+    
+    def get_weekly_piorzin_score_ranking(self, week_start: str, week_end: str, limit: int = 10) -> List[Dict]:
+        """Retorna ranking de piorzin score da semana"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT discord_id, SUM(score) as total_score, COUNT(*) as games
+            FROM piorzin_scores
+            WHERE date(earned_at) >= ? AND date(earned_at) <= ?
+            GROUP BY discord_id
+            ORDER BY total_score DESC
+            LIMIT ?
+        ''', (week_start, week_end, limit))
+        
+        ranking = []
+        for row in cursor.fetchall():
+            ranking.append({
+                'discord_id': row[0],
+                'total_score': row[1],
+                'games': row[2]
+            })
+        conn.close()
+        return ranking
     
     def set_piorzin_role(self, guild_id: str, role_id: str) -> bool:
         """Define o cargo de premiação do piorzin para um servidor"""
