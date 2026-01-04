@@ -708,6 +708,7 @@ async def config_type_autocomplete(
         ('🔴 Live - Notificações de partidas ao vivo', 'live'),
         ('🗳️ Votação - Canal para votação de MVP após partida', 'votacao'),
         ('🏆 Top Flex - Cargo de premiação semanal', 'top_flex'),
+        ('💀 Piorzin - Cargo do pior jogador semanal', 'piorzin'),
     ]
     return [
         app_commands.Choice(name=name, value=value)
@@ -717,9 +718,9 @@ async def config_type_autocomplete(
 
 @bot.tree.command(name="configurar", description="⚙️ [ADMIN] Configure os canais do bot ou veja a configuração atual")
 @app_commands.describe(
-    tipo="Tipo de configuração: alertas, score, comandos, live, votacao ou top_flex",
+    tipo="Tipo de configuração: alertas, score, comandos, live, votacao, top_flex ou piorzin",
     canal="Canal onde serão enviadas as mensagens (para alertas, score, comandos, live, votacao)",
-    cargo="Cargo de premiação (apenas para top_flex)"
+    cargo="Cargo de premiação (apenas para top_flex e piorzin)"
 )
 @app_commands.autocomplete(tipo=config_type_autocomplete)
 @app_commands.checks.has_permissions(administrator=True)
@@ -814,6 +815,19 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
             else:
                 embed.add_field(
                     name="🏆 Cargo Top Flex",
+                    value="❌ Não configurado",
+                    inline=False
+                )
+            
+            if config.get('piorzin_role_id'):
+                embed.add_field(
+                    name="💀 Cargo Piorzin",
+                    value=f"<@&{config['piorzin_role_id']}>\nCargo dado ao piorzin semanal (pior jogador)",
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="💀 Cargo Piorzin",
                     value="❌ Não configurado",
                     inline=False
                 )
@@ -1169,8 +1183,9 @@ async def perfil(interaction: discord.Interaction, usuario: discord.User = None,
         inline=True
     )
     
-    # Busca Carry Score e estatísticas de ranking semanal
+    # Busca Carry Score, Piorzin Score e estatísticas de ranking semanal
     carry_score = db.get_total_carry_score(discord_id, year)
+    piorzin_score = db.get_total_piorzin_score(discord_id, year)
     ranking_stats = db.get_player_average_position(discord_id)
     
     # Calcula semana atual para posição atual
@@ -1182,7 +1197,7 @@ async def perfil(interaction: discord.Interaction, usuario: discord.User = None,
     week_start_str = week_start.strftime('%Y-%m-%d')
     week_end_str = week_end.strftime('%Y-%m-%d')
     
-    # Busca posição atual na semana
+    # Busca posição atual na semana (Carry)
     current_week_pos = db.get_player_current_week_position(discord_id, week_start_str, week_end_str)
     
     # Carry Score com posição
@@ -1190,6 +1205,9 @@ async def perfil(interaction: discord.Interaction, usuario: discord.User = None,
         carry_text = f"🏆 **Carry Score:** {carry_score} (**{current_week_pos['position']}º** de {current_week_pos['total_participants']})"
     else:
         carry_text = f"🏆 **Carry Score:** {carry_score}"
+    
+    # Piorzin Score (sem posição por enquanto, apenas total)
+    piorzin_text = f"💀 **Piorzin Score:** {piorzin_score}"
     
     embed.add_field(
         name="📈 Médias por Partida",
@@ -1199,7 +1217,8 @@ async def perfil(interaction: discord.Interaction, usuario: discord.User = None,
             f"💰 **Gold:** {int(profile_stats['avg_gold']):,}\n"
             f"🌾 **CS:** {profile_stats['avg_cs']:.1f}\n"
             f"👁️ **Visão:** {profile_stats['avg_vision']:.1f}\n"
-            f"{carry_text}"
+            f"{carry_text}\n"
+            f"{piorzin_text}"
         ),
         inline=True
     )
