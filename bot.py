@@ -917,7 +917,7 @@ async def configurar(interaction: discord.Interaction, tipo: str = None, canal: 
     
     channel_id = str(canal.id)
     
-    if tipo not in ['alertas', 'score', 'comandos', 'live', 'votacao']:
+    if tipo not in ['alertas', 'score', 'comandos', 'live', 'votacao', 'top_flex', 'piorzin']:
         await interaction.followup.send(
             "❌ Tipo inválido! Use: `alertas`, `score`, `comandos`, `live`, `votacao`, `top_flex` ou `piorzin`",
             ephemeral=True
@@ -2443,12 +2443,12 @@ async def send_champion_ban_notification(account_id: int, champion_name: str, ba
             
             print(f"      ✅ Membro encontrado: {member.display_name}")
             
-            # Busca canal de partidas
-            channel_id = db.get_match_channel(str(guild.id))
-            print(f"      Canal de partidas configurado: {channel_id}")
+            # Busca canal de ALERTAS (não canal de score)
+            channel_id = db.get_notification_channel(str(guild.id))
+            print(f"      Canal de alertas configurado: {channel_id}")
             
             if not channel_id:
-                print(f"      ❌ Canal de partidas não configurado")
+                print(f"      ❌ Canal de alertas não configurado")
                 continue
             
             channel = guild.get_channel(int(channel_id))
@@ -3142,14 +3142,26 @@ async def send_mvp_voting(game_id: str, guild: discord.Guild, players: List[Dict
         
         # Determina resultado da partida
         first_player = sorted_players[0] if sorted_players else None
-        result_emoji = "✅ VITÓRIA" if first_player and first_player.get('win', False) else "❌ DERROTA"
-        result_color = discord.Color.green() if first_player and first_player.get('win', False) else discord.Color.red()
+        is_victory = bool(first_player and first_player.get('win', False))
+        
+        if is_victory:
+            result_emoji = "✅ VITÓRIA"
+            result_color = discord.Color.green()
+            vote_title = "🗳️ VOTAÇÃO DE MVP"
+            vote_description = "**Partida finalizada!** Vote em quem foi o **MVP** (melhor jogador)."
+            premio_text = "👑 **Voto unânime:** +5 | 🥇 **1º lugar:** +3 | 🥈 **2º lugar:** +2/+1"
+        else:
+            result_emoji = "❌ DERROTA"
+            result_color = discord.Color.red()
+            vote_title = "🗳️ VOTAÇÃO DE PIORZIN"
+            vote_description = "**Partida finalizada!** Vote em quem foi o **PIORZIN** (pior jogador)."
+            premio_text = "💀 **Voto unânime:** +5 | 🥇 **1º lugar:** +3 | 🥈 **2º lugar:** +2/+1"
         
         # Cria embed de votação
         embed = discord.Embed(
-            title=f"🗳️ VOTAÇÃO DE MVP - {result_emoji}",
+            title=f"{vote_title} - {result_emoji}",
             description=(
-                f"**Partida finalizada!** Vote em quem foi o MVP.\n"
+                f"{vote_description}\n"
                 f"⏱️ Votação expira em **5 minutos** | ❌ Não pode votar em si mesmo"
             ),
             color=result_color
@@ -3176,15 +3188,13 @@ async def send_mvp_voting(game_id: str, guild: discord.Guild, players: List[Dict
         )
         
         embed.add_field(
-            name="🏆 Premiação",
-            value=(
-                "👑 **Voto unânime:** +5 | 🥇 **1º lugar:** +3 | 🥈 **2º lugar:** +2"
-            ),
+            name="🏆 Premiação" if is_victory else "💀 Premiação",
+            value=premio_text,
             inline=False
         )
         
         # Cria view com botões de votação
-        view = MVPVotingView(game_id, players, str(guild.id))
+        view = MVPVotingView(game_id, players, str(guild.id), is_victory=is_victory)
         
         message = await channel.send(embed=embed, view=view)
         
@@ -3202,20 +3212,21 @@ async def send_mvp_voting(game_id: str, guild: discord.Guild, players: List[Dict
         traceback.print_exc()
 
 class MVPVotingView(discord.ui.View):
-    """View com botões para votação de MVP"""
+    """View com botões para votação de MVP (vitória) ou Piorzin (derrota)"""
     
-    def __init__(self, game_id: str, players: List[Dict], guild_id: str, message: discord.Message = None):
+    def __init__(self, game_id: str, players: List[Dict], guild_id: str, message: discord.Message = None, is_victory: bool = True):
         super().__init__(timeout=300)  # 5 minutos
         self.game_id = game_id
         self.players = players
         self.guild_id = guild_id
         self.message = message  # Referência à mensagem para editar no timeout
+        self.is_victory = is_victory  # True = MVP/Carry, False = Piorzin
         
         # Adiciona um botão para cada jogador
         for i, player in enumerate(players):
             button = discord.ui.Button(
                 label=player['summoner_name'][:20],  # Limita nome a 20 chars
-                style=discord.ButtonStyle.primary,
+                style=discord.ButtonStyle.primary if is_victory else discord.ButtonStyle.danger,
                 custom_id=f"vote_{game_id}_{player['discord_id']}"
             )
             button.callback = self.create_vote_callback(player['discord_id'], player['summoner_name'])
@@ -3245,8 +3256,9 @@ class MVPVotingView(discord.ui.View):
             # Registra o voto
             db.add_mvp_vote(self.game_id, voter_id, voted_discord_id)
             
+            vote_type = "MVP" if self.is_victory else "Piorzin"
             await interaction.response.send_message(
-                f"✅ Você votou em **{summoner_name}** como MVP!",
+                f"✅ Você votou em **{summoner_name}** como {vote_type}!",
                 ephemeral=True
             )
             
@@ -3264,7 +3276,7 @@ class MVPVotingView(discord.ui.View):
         return callback
     
     async def finalize_voting(self, interaction: discord.Interaction):
-        """Finaliza a votação e distribui carry score"""
+        """Finaliza a votação e distribui carry score (vitória) ou piorzin score (derrota)"""
         try:
             vote_counts = db.get_vote_count_for_game(self.game_id)
             
@@ -3275,17 +3287,24 @@ class MVPVotingView(discord.ui.View):
             sorted_votes = sorted(vote_counts.items(), key=lambda x: x[1], reverse=True)
             total_voters = len(self.players)
             
-            results_text = "**Resultado da Votação:**\n\n"
+            score_name = "Carry Score" if self.is_victory else "Piorzin Score"
+            vote_type = "MVP" if self.is_victory else "Piorzin"
+            title_emoji = "🏆" if self.is_victory else "💀"
+            
+            results_text = f"**Resultado da Votação de {vote_type}:**\n\n"
             
             # Verifica se é voto unânime (4+ votos na mesma pessoa - não pode votar em si mesmo)
             # Unânime = total_voters - 1 (pois o vencedor não vota em si mesmo)
             unanimous_threshold = total_voters - 1 if total_voters > 1 else 1
             
             if len(sorted_votes) == 1 and sorted_votes[0][1] >= unanimous_threshold:
-                # Voto unânime - +5 carry score
+                # Voto unânime - +5
                 winner_id = sorted_votes[0][0]
-                db.add_carry_score(winner_id, self.game_id, 5, "Voto unânime de MVP")
-                results_text += f"👑 **VOTO UNÂNIME!** <@{winner_id}> recebeu **+5 Carry Score**!"
+                if self.is_victory:
+                    db.add_carry_score(winner_id, self.game_id, 5, f"Voto unânime de {vote_type}")
+                else:
+                    db.add_piorzin_score(winner_id, self.game_id, 5, f"Voto unânime de {vote_type}")
+                results_text += f"👑 **VOTO UNÂNIME!** <@{winner_id}> recebeu **+5 {score_name}**!"
             else:
                 # Distribui pontos normalmente
                 first_place_votes = sorted_votes[0][1] if sorted_votes else 0
@@ -3296,13 +3315,19 @@ class MVPVotingView(discord.ui.View):
                 if len(first_place_winners) > 1:
                     # Empate no primeiro lugar - +2 cada
                     for winner_id in first_place_winners:
-                        db.add_carry_score(winner_id, self.game_id, 2, "Empate em 1º lugar MVP")
-                        results_text += f"🥇 <@{winner_id}> - **{first_place_votes} votos** → **+2 Carry Score** (empate)\n"
+                        if self.is_victory:
+                            db.add_carry_score(winner_id, self.game_id, 2, f"Empate em 1º lugar {vote_type}")
+                        else:
+                            db.add_piorzin_score(winner_id, self.game_id, 2, f"Empate em 1º lugar {vote_type}")
+                        results_text += f"🥇 <@{winner_id}> - **{first_place_votes} votos** → **+2 {score_name}** (empate)\n"
                 else:
                     # Primeiro lugar único - +3
                     winner_id = first_place_winners[0]
-                    db.add_carry_score(winner_id, self.game_id, 3, "1º lugar MVP")
-                    results_text += f"🥇 <@{winner_id}> - **{first_place_votes} votos** → **+3 Carry Score**\n"
+                    if self.is_victory:
+                        db.add_carry_score(winner_id, self.game_id, 3, f"1º lugar {vote_type}")
+                    else:
+                        db.add_piorzin_score(winner_id, self.game_id, 3, f"1º lugar {vote_type}")
+                    results_text += f"🥇 <@{winner_id}> - **{first_place_votes} votos** → **+3 {score_name}**\n"
                     
                     # Segundo lugar - +2 se tiver 2+ votos, +1 se tiver 1 voto
                     if len(sorted_votes) > 1:
@@ -3311,21 +3336,27 @@ class MVPVotingView(discord.ui.View):
                         
                         for second_id in second_place_winners:
                             if second_place_votes >= 2:
-                                db.add_carry_score(second_id, self.game_id, 2, "2º lugar MVP (2+ votos)")
-                                results_text += f"🥈 <@{second_id}> - **{second_place_votes} votos** → **+2 Carry Score**\n"
+                                if self.is_victory:
+                                    db.add_carry_score(second_id, self.game_id, 2, f"2º lugar {vote_type} (2+ votos)")
+                                else:
+                                    db.add_piorzin_score(second_id, self.game_id, 2, f"2º lugar {vote_type} (2+ votos)")
+                                results_text += f"🥈 <@{second_id}> - **{second_place_votes} votos** → **+2 {score_name}**\n"
                             else:
                                 # 1 voto = +1 ponto
-                                db.add_carry_score(second_id, self.game_id, 1, "2º lugar MVP (1 voto)")
-                                results_text += f"🥈 <@{second_id}> - **{second_place_votes} voto** → **+1 Carry Score**\n"
+                                if self.is_victory:
+                                    db.add_carry_score(second_id, self.game_id, 1, f"2º lugar {vote_type} (1 voto)")
+                                else:
+                                    db.add_piorzin_score(second_id, self.game_id, 1, f"2º lugar {vote_type} (1 voto)")
+                                results_text += f"🥈 <@{second_id}> - **{second_place_votes} voto** → **+1 {score_name}**\n"
             
             # Fecha a votação
             db.close_pending_vote(self.game_id, self.guild_id)
             
             # Atualiza a mensagem original
             embed = discord.Embed(
-                title="🏆 VOTAÇÃO ENCERRADA",
+                title=f"{title_emoji} VOTAÇÃO ENCERRADA",
                 description=results_text,
-                color=discord.Color.green()
+                color=discord.Color.green() if self.is_victory else discord.Color.red()
             )
             
             # Desabilita todos os botões
