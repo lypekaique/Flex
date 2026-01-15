@@ -1183,31 +1183,14 @@ async def perfil(interaction: discord.Interaction, usuario: discord.User = None,
         inline=True
     )
     
-    # Busca Carry Score, Piorzin Score e estatísticas de ranking semanal
-    carry_score = db.get_total_carry_score(discord_id, year)
-    piorzin_score = db.get_total_piorzin_score(discord_id, year)
+    # Busca máximo histórico de Carry Score e Piorzin Score
+    max_carry = db.get_max_carry_score(discord_id)
+    max_piorzin = db.get_max_piorzin_score(discord_id)
     ranking_stats = db.get_player_average_position(discord_id)
     
-    # Calcula semana atual para posição atual
-    from datetime import timedelta
-    today = datetime.now()
-    days_since_monday = today.weekday()
-    week_start = (today - timedelta(days=days_since_monday)).replace(hour=0, minute=0, second=0, microsecond=0)
-    week_end = (week_start + timedelta(days=6)).replace(hour=23, minute=59, second=59)
-    week_start_str = week_start.strftime('%Y-%m-%d')
-    week_end_str = week_end.strftime('%Y-%m-%d')
-    
-    # Busca posição atual na semana (Carry)
-    current_week_pos = db.get_player_current_week_position(discord_id, week_start_str, week_end_str)
-    
-    # Carry Score com posição
-    if current_week_pos['position'] > 0:
-        carry_text = f"🏆 **Carry Score:** {carry_score} (**{current_week_pos['position']}º** de {current_week_pos['total_participants']})"
-    else:
-        carry_text = f"🏆 **Carry Score:** {carry_score}"
-    
-    # Piorzin Score (sem posição por enquanto, apenas total)
-    piorzin_text = f"💀 **Piorzin Score:** {piorzin_score}"
+    # Texto do máximo histórico
+    carry_text = f"🏆 **Máx Carry:** {max_carry}"
+    piorzin_text = f"💀 **Máx Piorzin:** {max_piorzin}"
     
     embed.add_field(
         name="📈 Médias por Partida",
@@ -2200,6 +2183,88 @@ async def purge_media(interaction: discord.Interaction):
             await button_interaction.response.edit_message(embed=cancel_embed, view=None)
     
     view = ConfirmPurgeView()
+    await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+@bot.tree.command(name="reset_scores", description="🗑️ [ADMIN] Reseta Carry Score e/ou Piorzin Score")
+@app_commands.describe(
+    tipo="Escolha qual score resetar"
+)
+@app_commands.choices(tipo=[
+    app_commands.Choice(name="🏆 Carry Score - Resetar todos os pontos de MVP", value="carry"),
+    app_commands.Choice(name="💀 Piorzin Score - Resetar todos os pontos de Piorzin", value="piorzin"),
+    app_commands.Choice(name="🔄 Ambos - Resetar Carry e Piorzin", value="ambos")
+])
+@app_commands.checks.has_permissions(administrator=True)
+async def reset_scores(interaction: discord.Interaction, tipo: str):
+    """[ADMIN] Reseta Carry Score e/ou Piorzin Score"""
+    await interaction.response.defer(ephemeral=True)
+    
+    if tipo == "carry":
+        title = "🏆 RESET DE CARRY SCORE"
+        desc = "Você está prestes a **DELETAR TODOS OS CARRY SCORES**!"
+        what_reset = "✅ Todos os Carry Scores de todos os usuários"
+    elif tipo == "piorzin":
+        title = "💀 RESET DE PIORZIN SCORE"
+        desc = "Você está prestes a **DELETAR TODOS OS PIORZIN SCORES**!"
+        what_reset = "✅ Todos os Piorzin Scores de todos os usuários"
+    else:
+        title = "🔄 RESET DE CARRY E PIORZIN"
+        desc = "Você está prestes a **DELETAR TODOS OS CARRY E PIORZIN SCORES**!"
+        what_reset = "✅ Todos os Carry Scores\n✅ Todos os Piorzin Scores"
+    
+    embed = discord.Embed(
+        title=f"⚠️ {title}",
+        description=(
+            f"{desc}\n\n"
+            f"**O que será resetado:**\n"
+            f"{what_reset}\n\n"
+            f"**O que NÃO será afetado:**\n"
+            f"❌ Partidas e estatísticas\n"
+            f"❌ Contas vinculadas\n"
+            f"❌ Configurações do servidor\n\n"
+            f"⚠️ **ESTA AÇÃO NÃO PODE SER DESFEITA!**"
+        ),
+        color=discord.Color.red()
+    )
+    
+    class ConfirmResetScoresView(discord.ui.View):
+        def __init__(self, reset_tipo: str):
+            super().__init__(timeout=60)
+            self.reset_tipo = reset_tipo
+        
+        @discord.ui.button(label="✅ CONFIRMAR RESET", style=discord.ButtonStyle.danger)
+        async def confirm(self, button_interaction: discord.Interaction, button: discord.ui.Button):
+            await button_interaction.response.defer()
+            
+            results = []
+            
+            if self.reset_tipo in ["carry", "ambos"]:
+                success = db.reset_all_carry_scores()
+                results.append(f"🏆 Carry Score: {'✅ Resetado' if success else '❌ Erro'}")
+            
+            if self.reset_tipo in ["piorzin", "ambos"]:
+                success = db.reset_all_piorzin_scores()
+                results.append(f"💀 Piorzin Score: {'✅ Resetado' if success else '❌ Erro'}")
+            
+            result_embed = discord.Embed(
+                title="✅ RESET CONCLUÍDO!",
+                description="\n".join(results),
+                color=discord.Color.green()
+            )
+            result_embed.set_footer(text=f"Reset executado por {button_interaction.user.name}")
+            await button_interaction.edit_original_response(embed=result_embed, view=None)
+            print(f"⚠️ [ADMIN] {button_interaction.user.name} resetou scores: {self.reset_tipo}")
+        
+        @discord.ui.button(label="❌ CANCELAR", style=discord.ButtonStyle.secondary)
+        async def cancel(self, button_interaction: discord.Interaction, button: discord.ui.Button):
+            cancel_embed = discord.Embed(
+                title="❌ Reset Cancelado",
+                description="Nenhuma alteração foi feita.",
+                color=discord.Color.blue()
+            )
+            await button_interaction.response.edit_message(embed=cancel_embed, view=None)
+    
+    view = ConfirmResetScoresView(tipo)
     await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 async def send_match_notification(lol_account_id: int, stats: Dict):

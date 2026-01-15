@@ -2479,6 +2479,60 @@ class Database:
             }
         return None
     
+    def get_max_carry_score(self, discord_id: str) -> int:
+        """Retorna o máximo de Carry Score que o jogador já teve em uma única partida/votação"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT COALESCE(MAX(score), 0) FROM carry_scores
+            WHERE discord_id = ?
+        ''', (discord_id,))
+        result = cursor.fetchone()[0]
+        conn.close()
+        return result
+    
+    def get_max_piorzin_score(self, discord_id: str) -> int:
+        """Retorna o máximo de Piorzin Score que o jogador já teve em uma única partida/votação"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT COALESCE(MAX(score), 0) FROM piorzin_scores
+            WHERE discord_id = ?
+        ''', (discord_id,))
+        result = cursor.fetchone()[0]
+        conn.close()
+        return result
+    
+    def reset_all_carry_scores(self) -> bool:
+        """Reseta todos os Carry Scores (apaga todos os registros)"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM carry_scores')
+            deleted = cursor.rowcount
+            conn.commit()
+            conn.close()
+            print(f"✅ [Reset] {deleted} registros de Carry Score deletados")
+            return True
+        except Exception as e:
+            print(f"❌ Erro ao resetar Carry Scores: {e}")
+            return False
+    
+    def reset_all_piorzin_scores(self) -> bool:
+        """Reseta todos os Piorzin Scores (apaga todos os registros)"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM piorzin_scores')
+            deleted = cursor.rowcount
+            conn.commit()
+            conn.close()
+            print(f"✅ [Reset] {deleted} registros de Piorzin Score deletados")
+            return True
+        except Exception as e:
+            print(f"❌ Erro ao resetar Piorzin Scores: {e}")
+            return False
+    
     def save_weekly_ranking(self, week_start: str, week_end: str, ranking: List[Dict]) -> bool:
         """Salva o ranking semanal de todos os participantes"""
         try:
