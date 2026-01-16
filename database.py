@@ -960,6 +960,14 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
         
+        # Debug: mostra o game_id sendo buscado
+        print(f"🔍 [DB] Buscando mensagem para game_id={game_id} (tipo: {type(game_id)})")
+        
+        # Primeiro, lista todos os game_ids no banco para debug
+        cursor.execute('SELECT DISTINCT game_id FROM live_games_notified WHERE message_id IS NOT NULL')
+        all_game_ids = [row[0] for row in cursor.fetchall()]
+        print(f"🔍 [DB] Game IDs no banco: {all_game_ids}")
+        
         if guild_id:
             cursor.execute('''
                 SELECT message_id, channel_id, guild_id
@@ -979,11 +987,13 @@ class Database:
         conn.close()
         
         if result:
+            print(f"✅ [DB] Mensagem encontrada: message_id={result[0]}")
             return {
                 'message_id': result[0],
                 'channel_id': result[1],
                 'guild_id': result[2]
             }
+        print(f"⚠️ [DB] Nenhuma mensagem encontrada para game_id={game_id}")
         return None
     
     def get_live_game_players(self, game_id: str, guild_id: str = None) -> List[Dict]:
