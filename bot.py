@@ -4209,9 +4209,16 @@ async def check_live_games():
                     print(f"⏭️ [Live Games] Apenas 1 jogador na partida {game_id}, pulando (mínimo 2 jogadores)")
                     continue
                 
-                # Marca como sendo processada
+                # Marca como sendo processada ANTES de qualquer verificação adicional
                 _processing_games.add(game_id)
                 print(f"🔒 [Live Games] Partida {game_id} marcada como sendo processada")
+                
+                # SEGUNDA VERIFICAÇÃO: Verifica novamente se já existe mensagem (pode ter sido criada entre a primeira verificação e agora)
+                existing_message_recheck = db.get_live_game_message_by_game_id(game_id, None)
+                if existing_message_recheck and existing_message_recheck.get('message_id'):
+                    print(f"⏭️ [Live Games] Partida {game_id} já tem mensagem (verificação dupla), pulando...")
+                    _processing_games.discard(game_id)
+                    continue
                 
                 try:
                     # Cria nova mensagem para partidas com 2+ jogadores
