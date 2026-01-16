@@ -3299,44 +3299,65 @@ class MVPVotingView(discord.ui.View):
     
     def create_vote_callback(self, voted_discord_id: str, summoner_name: str):
         async def callback(interaction: discord.Interaction):
-            voter_id = str(interaction.user.id)
-            
-            # Verifica se o votante está na lista de jogadores
-            player_ids = [p['discord_id'] for p in self.players]
-            if voter_id not in player_ids:
+            try:
+                voter_id = str(interaction.user.id)
+                voted_id = str(voted_discord_id)
+                
+                # Verifica se o votante está na lista de jogadores
+                player_ids = [str(p['discord_id']) for p in self.players]
+                if voter_id not in player_ids:
+                    await interaction.response.send_message(
+                        "❌ Apenas jogadores que participaram da partida podem votar!",
+                        ephemeral=True
+                    )
+                    return
+                
+                # Verifica se está votando em si mesmo
+                if voter_id == voted_id:
+                    await interaction.response.send_message(
+                        "❌ Você não pode votar em si mesmo!",
+                        ephemeral=True
+                    )
+                    return
+                
+                # Verifica se já votou
+                existing_votes = db.get_votes_for_game(self.game_id)
+                already_voted = any(v['voter'] == voter_id for v in existing_votes)
+                if already_voted:
+                    await interaction.response.send_message(
+                        "❌ Você já votou nesta partida!",
+                        ephemeral=True
+                    )
+                    return
+                
+                # Registra o voto
+                db.add_mvp_vote(self.game_id, voter_id, voted_id)
+                
+                vote_type = "MVP" if self.is_victory else "Piorzin"
                 await interaction.response.send_message(
-                    "❌ Apenas jogadores que participaram da partida podem votar!",
+                    f"✅ Você votou em **{summoner_name}** como {vote_type}!",
                     ephemeral=True
                 )
-                return
-            
-            # Verifica se está votando em si mesmo
-            if voter_id == voted_discord_id:
-                await interaction.response.send_message(
-                    "❌ Você não pode votar em si mesmo!",
-                    ephemeral=True
-                )
-                return
-            
-            # Registra o voto
-            db.add_mvp_vote(self.game_id, voter_id, voted_discord_id)
-            
-            vote_type = "MVP" if self.is_victory else "Piorzin"
-            await interaction.response.send_message(
-                f"✅ Você votou em **{summoner_name}** como {vote_type}!",
-                ephemeral=True
-            )
-            
-            # Verifica se todos votaram (total_players - 1 porque não pode votar em si mesmo)
-            votes = db.get_votes_for_game(self.game_id)
-            total_players = len(self.players)
-            max_votes = total_players  # Cada jogador pode votar 1x
-            
-            print(f"🗳️ [Votação] Votos: {len(votes)}/{max_votes} para partida {self.game_id}")
-            
-            if len(votes) >= max_votes:
-                print(f"✅ [Votação] Todos votaram! Finalizando votação...")
-                await self.finalize_voting(interaction)
+                
+                # Verifica se todos votaram
+                votes = db.get_votes_for_game(self.game_id)
+                total_players = len(self.players)
+                max_votes = total_players  # Cada jogador pode votar 1x
+                
+                print(f"🗳️ [Votação] Votos: {len(votes)}/{max_votes} para partida {self.game_id}")
+                
+                if len(votes) >= max_votes:
+                    print(f"✅ [Votação] Todos votaram! Finalizando votação...")
+                    await self.finalize_voting(interaction)
+            except Exception as e:
+                print(f"❌ [Votação] Erro no callback de voto: {e}")
+                import traceback
+                traceback.print_exc()
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        "❌ Erro ao processar voto. Tente novamente.",
+                        ephemeral=True
+                    )
         
         return callback
     
