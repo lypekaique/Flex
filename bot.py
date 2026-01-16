@@ -1186,7 +1186,6 @@ async def perfil(interaction: discord.Interaction, usuario: discord.User = None,
     # Busca máximo histórico de Carry Score e Piorzin Score
     max_carry = db.get_max_carry_score(discord_id)
     max_piorzin = db.get_max_piorzin_score(discord_id)
-    ranking_stats = db.get_player_average_position(discord_id)
     
     # Texto do máximo histórico
     carry_text = f"🏆 **Máx Carry:** {max_carry}"
@@ -1205,20 +1204,6 @@ async def perfil(interaction: discord.Interaction, usuario: discord.User = None,
         ),
         inline=True
     )
-    
-    # Estatísticas de ranking semanal (histórico)
-    if ranking_stats['weeks_played'] > 0:
-        embed.add_field(
-            name="📊 Histórico Semanal",
-            value=(
-                f"📅 **Semanas:** {ranking_stats['weeks_played']}\n"
-                f"📍 **Média Posição:** {ranking_stats['avg_position']}º\n"
-                f"🥇 **Melhor:** {ranking_stats['best_position']}º\n"
-                f"👑 **1º Lugar:** {ranking_stats['first_places']}x\n"
-                f"🏅 **Top 3:** {ranking_stats['top3_count']}x"
-            ),
-            inline=True
-        )
     
     # Top 3 campeões
     if top_champions:
